@@ -1,0 +1,18 @@
+wheel
+paramiko
+loguru
+psutil
+cimetrics>=0.2.1
+openapi-spec-validator
+PyJWT
+docutils
+python-iptables
+py-spy
+GitPython
+docker
+better_exceptions
+pyasn1
+Jinja2
+httpx == 0.21.*
+locust
+pyOpenSSL

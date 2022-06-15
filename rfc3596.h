@@ -1,0 +1,65 @@
+// Copyright (c) Microsoft Corporation. All rights reserved.
+// Licensed under the Apache 2.0 License.
+#pragma once
+
+#include "rfc1035.h"
+
+namespace RFC3596 // https://www.rfc-editor.org/rfc/rfc3596.html
+{
+  enum class Type
+  {
+    AAAA = 28
+  };
+
+  class AAAA : public RFC1035::RDataFormat
+  {
+  public:
+    std::array<uint16_t, 8> address;
+
+    AAAA(const std::string& data)
+    {
+      // Data format RFC 3513: https://www.rfc-editor.org/rfc/rfc3513.html
+      std::vector<std::string> tokens;
+      std::istringstream f(data);
+      std::string tmp;
+      size_t total_size = 0;
+      int i = 0;
+      while (std::getline(f, tmp, ':'))
+      {
+        auto st = std::stoi(tmp, 0, 16);
+        if (st > 0xFFFF)
+          throw std::runtime_error("invalid IPv6 address");
+        address[i++] = st;
+        if (i > 8)
+          throw std::runtime_error("excess tokens in IPv6 address");
+      }
+    }
+
+    AAAA(const std::vector<uint8_t>& data)
+    {
+      if (data.size() != 8)
+        throw std::runtime_error("invalid rdata for AAAA record");
+      for (size_t i = 0; i < address.size(); i++)
+        address[i] = data[i];
+    }
+
+    virtual operator std::vector<uint8_t>() const override
+    {
+      std::vector<uint8_t> r;
+      for (const auto& n : address)
+      {
+        r.push_back(n >> 8);
+        r.push_back(n & 0xFF);
+      }
+      return r;
+    }
+
+    virtual operator std::string() const override
+    {
+      std::string r = std::to_string(address[0]);
+      for (size_t i = 1; i < 8; i++)
+        r += ":" + std::to_string(address[i]);
+      return r;
+    }
+  };
+}
