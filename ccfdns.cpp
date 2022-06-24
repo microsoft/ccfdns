@@ -25,82 +25,119 @@
 using namespace aDNS;
 using namespace RFC1035;
 
-namespace RFC1025
+#define DECLARE_JSON_STRINGIFIED(TYPE, PATTERN) \
+  inline void to_json(nlohmann::json& j, const TYPE& t) \
+  { \
+    j = nlohmann::json::string_t(t); \
+  } \
+  inline void from_json(const nlohmann::json& j, TYPE& t) \
+  { \
+    if (!j.is_string()) \
+    { \
+      throw JsonParseError(fmt::format( \
+        "Cannot parse " #TYPE ": Expected string, got {}", j.dump())); \
+    } \
+    t = TYPE(j.get<std::string>()); \
+  } \
+  inline std::string schema_name(const Name*) \
+  { \
+    return #TYPE; \
+  } \
+  inline void fill_json_schema(nlohmann::json& schema, const Name*) \
+  { \
+    schema["type"] = "string"; \
+    schema["pattern"] = PATTERN; \
+  }
+
+namespace RFC1035
 {
-  DECLARE_JSON_TYPE(Name);
-  DECLARE_JSON_REQUIRED_FIELDS(Name, labels)
+  DECLARE_JSON_STRINGIFIED(Name, "^[A-Za-z0-9]+(\\.[A-Za-z0-9]+)+$");
+
+  DECLARE_JSON_TYPE(ResourceRecord);
+  DECLARE_JSON_REQUIRED_FIELDS(ResourceRecord, name, type, class_, ttl, rdata);
 }
 
-namespace aDNS
+namespace kv::serialisers
 {
-  DECLARE_JSON_TYPE_WITH_OPTIONAL_FIELDS(Zone::Record)
-  DECLARE_JSON_REQUIRED_FIELDS(Zone::Record, name, type, data)
-  DECLARE_JSON_OPTIONAL_FIELDS(Zone::Record, ttl, class_)
+  template <>
+  struct BlitSerialiser<ResourceRecord>
+  {
+    static SerialisedEntry to_serialised(const ResourceRecord& record)
+    {
+      const auto data = (std::vector<uint8_t>)record;
+      return SerialisedEntry(data.begin(), data.end());
+    }
 
-  DECLARE_JSON_TYPE(Zone)
-  DECLARE_JSON_REQUIRED_FIELDS(Zone, records)
+    static ResourceRecord from_serialised(const SerialisedEntry& data)
+    {
+      size_t pos = 0;
+      return ResourceRecord({data.data(), data.data() + data.size()}, pos);
+    }
+  };
 }
 
 namespace ccfdns
 {
-  struct Update
+  struct AddRecord
   {
     struct In
     {
-      std::string name;
-      Zone zone;
+      Name origin;
+      ResourceRecord record;
     };
   };
 
-  DECLARE_JSON_TYPE(Update::In)
-  DECLARE_JSON_REQUIRED_FIELDS(Update::In, name, zone)
-
-  struct ZoneRequest
-  {
-    struct Out
-    {
-      std::string name;
-      Zone zone;
-    };
-  };
-
-  DECLARE_JSON_TYPE(ZoneRequest::Out)
-  DECLARE_JSON_REQUIRED_FIELDS(ZoneRequest::Out, name, zone)
-
-  using ZoneMap = kv::Map<Name, Zone>;
-  static constexpr auto ZONES = "zones";
+  DECLARE_JSON_TYPE(AddRecord::In)
+  DECLARE_JSON_REQUIRED_FIELDS(AddRecord::In, origin, record)
 
   class CCFDNS : public Resolver
   {
-  protected:
-    ccf::endpoints::EndpointContext* ctx;
-
   public:
     CCFDNS() : Resolver() {}
     virtual ~CCFDNS() {}
 
-    void set_endpoint_context(ccf::endpoints::EndpointContext* ctx)
-    {
-      this->ctx = ctx;
-    }
+    using Records = ccf::ServiceSet<ResourceRecord>;
 
-    virtual void update(const Name& origin, const Zone& zone) override
+    virtual void add(kv::Tx& tx, const Name& origin, const ResourceRecord& r)
     {
-      auto tbl = ctx->tx.template rw<ZoneMap>(ZONES);
-      tbl->put(origin, zone);
-
-      Resolver::update(origin, zone);
-    }
-
-    virtual Zone zone(const Name& origin) override
-    {
-      auto tbl = ctx->tx.template ro<ZoneMap>(ZONES);
-      auto z = tbl->get(origin);
-      if (!z)
+      if (!origin.is_absolute())
       {
-        throw std::runtime_error("No such zone");
+        throw std::runtime_error("Origin not absolute");
       }
-      return *z;
+
+      nlohmann::json rj;
+      to_json(rj, r);
+      LOG_DEBUG_FMT("Add: {}: {}", (std::string)origin, rj.dump());
+
+      std::string table_name =
+        (std::string)origin + " " + std::to_string(r.type);
+
+      auto records = tx.rw<Records>(table_name);
+      records->insert(r);
+
+      add(origin, r);
+    }
+
+    virtual void remove(kv::Tx& tx, const Name& origin, const ResourceRecord& r)
+    {
+      std::string table_name =
+        (std::string)origin + "-" + std::to_string(r.type);
+
+      auto records = tx.rw<Records>(table_name);
+      records->remove(r);
+
+      remove(origin, r);
+    }
+
+  protected:
+    virtual void add(const Name& origin, const ResourceRecord& r) override
+    {
+      Resolver::add(origin, r);
+    }
+
+    virtual void remove(const Name& origin, const ResourceRecord& r) override
+    {
+      Resolver::remove(origin, r);
     }
   };
 
@@ -132,12 +169,11 @@ namespace ccfdns
         "This CCF sample app implements a simple DNS over HTTPS server.";
       openapi_info.document_version = "0.0.0";
 
-      auto update = [this](auto& ctx, nlohmann::json&& params) {
-        const auto in = params.get<Update::In>();
+      auto add = [this](auto& ctx, nlohmann::json&& params) {
         try
         {
-          ccfdns.set_endpoint_context(&ctx);
-          ccfdns.update(in.name, in.zone);
+          const auto in = params.get<AddRecord::In>();
+          ccfdns.add(ctx.tx, in.origin, in.record);
           return ccf::make_success();
         }
         catch (std::exception& ex)
@@ -148,49 +184,19 @@ namespace ccfdns
       };
 
       make_endpoint(
-        "/update", HTTP_POST, ccf::json_adapter(update), ccf::no_auth_required)
-        .set_auto_schema<Update::In, void>()
-        .install();
-
-      auto zone = [this](auto& ctx) {
-        const auto parsed_query =
-          http::parse_query(ctx.rpc_ctx->get_request_query());
-        std::string name, error_reason;
-        if (!http::get_query_value(parsed_query, "name", name, error_reason))
-        {
-          return ccf::make_error(
-            HTTP_STATUS_BAD_REQUEST,
-            ccf::errors::InvalidQueryParameterValue,
-            "Value 'name' missing.");
-        }
-
-        try
-        {
-          ccfdns.set_endpoint_context(&ctx);
-          Zone z = ccfdns.zone(name);
-          return ccf::make_success(ZoneRequest::Out{.name = name, .zone = z});
-        }
-        catch (std::exception& ex)
-        {
-          return ccf::make_error(
-            HTTP_STATUS_BAD_REQUEST, ccf::errors::InternalError, ex.what());
-        }
-      };
-
-      make_endpoint("/zone", HTTP_GET, zone, ccf::no_auth_required)
-        .set_auto_schema<void, ZoneRequest::Out>()
+        "/add", HTTP_POST, ccf::json_adapter(add), ccf::no_auth_required)
+        .set_auto_schema<AddRecord::In, void>()
         .install();
 
       auto dns_query = [this](auto& ctx) {
-        const auto parsed_query =
-          http::parse_query(ctx.rpc_ctx->get_request_query());
-        std::string p = get_param(parsed_query, "dns");
-        auto bytes = crypto::raw_from_b64url(p);
-        LOG_INFO_FMT("query: {}", ds::to_hex(bytes));
-
         try
         {
-          ccfdns.set_endpoint_context(&ctx);
+          const auto parsed_query =
+            http::parse_query(ctx.rpc_ctx->get_request_query());
+          std::string query_b64 = get_param(parsed_query, "dns");
+          auto bytes = crypto::raw_from_b64url(query_b64);
+          LOG_INFO_FMT("query: {}", ds::to_hex(bytes));
+
           auto reply = ccfdns.reply(Message(bytes));
 
           ctx.rpc_ctx->set_response_status(HTTP_STATUS_OK);
@@ -221,7 +227,7 @@ namespace ccfapp
   std::unique_ptr<ccf::endpoints::EndpointRegistry> make_user_endpoints(
     ccfapp::AbstractNodeContext& context)
   {
-    logger::config::level() = logger::MOST_VERBOSE;
+    logger::config::level() = logger::TRACE;
     return std::make_unique<ccfdns::Handlers>(context);
   }
 }

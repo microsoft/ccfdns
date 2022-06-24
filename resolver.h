@@ -60,30 +60,15 @@ namespace aDNS
     ASTERISK = static_cast<uint16_t>(RFC1035::QClass::ASTERISK),
   };
 
-  // A string representation of zone files
-  struct Zone
-  {
-    struct Record
-    {
-      std::string name;
-      std::optional<std::string> ttl;
-      std::optional<std::string> class_;
-      std::string type;
-      std::string data;
-    };
-
-    std::vector<Record> records;
-  };
-
   class Resolver
   {
   public:
     Resolver();
     virtual ~Resolver();
 
-    virtual void update(const Name& origin, const Zone& zone);
+    virtual void add(const Name& origin, const ResourceRecord& record);
 
-    virtual Zone zone(const Name& origin);
+    virtual void remove(const Name& origin, const ResourceRecord& record);
 
     virtual Message reply(const Message& msg);
 
@@ -91,10 +76,6 @@ namespace aDNS
       const Name& qname, QType qtype, QClass qclass) const;
 
   protected:
-    struct DomainTree;
-    std::shared_ptr<DomainTree> root;
-
-    std::shared_ptr<DomainTree> find(const Name& origin) const;
-    std::shared_ptr<DomainTree> find_or_create(const Name& origin);
+    std::map<Name, std::vector<ResourceRecord>> cache;
   };
 }

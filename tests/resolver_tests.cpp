@@ -3,17 +3,15 @@
 
 #include "resolver.h"
 #include "rfc1035.h"
+#include "rfc4034.h"
 
-#define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
+#define DOCTEST_CONFIG_IMPLEMENT
 #include <doctest/doctest.h>
 
 using namespace aDNS;
 using namespace RFC1035;
 
-std::vector<uint8_t> str2vec(const std::string& s)
-{
-  return {s.data(), s.data() + s.size()};
-}
+static uint32_t default_ttl = 3600;
 
 class TestResolver : public Resolver
 {
@@ -21,17 +19,12 @@ public:
   TestResolver() : Resolver() {}
   virtual ~TestResolver() {}
 
-  std::map<Name, Zone> zones;
+  std::map<Name, std::vector<ResourceRecord>> zones;
 
-  virtual void update(const Name& origin, const Zone& zone) override
+  virtual void add(const Name& origin, const ResourceRecord& r) override
   {
-    zones[origin] = zone;
-    Resolver::update(origin, zone);
-  }
-
-  virtual Zone zone(const Name& name) override
-  {
-    return zones[name];
+    zones[origin].push_back(r);
+    Resolver::add(origin, r);
   }
 };
 
@@ -48,31 +41,57 @@ RFC1035::Message mk_question(const std::string& name, aDNS::QType type)
   return r;
 }
 
+ResourceRecord RR(
+  const Name& name,
+  aDNS::Type type,
+  aDNS::Class class_,
+  std::vector<uint8_t>&& data)
+{
+  return ResourceRecord(
+    name,
+    static_cast<uint16_t>(type),
+    static_cast<uint16_t>(class_),
+    default_ttl,
+    data);
+}
+
 TEST_CASE("Basic lookups")
 {
   TestResolver s;
 
-  Zone d;
-  d.records.push_back({.name = "www", .type = "A", .data = "93.184.216.34"});
-  d.records.push_back(
-    {.name = "wwwv6",
-     .type = "AAAA",
-     .data = "FEDC:BA98:7654:3210:FEDC:BA98:7654:3210"});
-  d.records.push_back(
-    {.name = "www",
-     .type = "AAAA",
-     .data = "FEDC:BA98:7654:3210:FEDC:BA98:7654:3211"});
-  d.records.push_back(
-    {.name = "sub", .type = "NS", .data = "ns1.elsewhere.com."});
+  Name origin("example.com.");
 
-  {
-    REQUIRE_NOTHROW(s.update(Name("example.com."), d));
-  }
+  REQUIRE_NOTHROW(s.add(
+    origin,
+    RR(
+      Name("www"),
+      aDNS::Type::A,
+      aDNS::Class::IN,
+      RFC1035::A("93.184.216.34"))));
 
-  {
-    auto z = s.zone(Name("example.com."));
-    REQUIRE(z.records.size() == d.records.size());
-  }
+  REQUIRE_NOTHROW(s.add(
+    origin,
+    RR(
+      Name("wwwv6"),
+      aDNS::Type::AAAA,
+      aDNS::Class::IN,
+      RFC3596::AAAA("FEDC:BA98:7654:3210:FEDC:BA98:7654:3210"))));
+
+  REQUIRE_NOTHROW(s.add(
+    origin,
+    RR(
+      Name("www"),
+      aDNS::Type::AAAA,
+      aDNS::Class::IN,
+      RFC3596::AAAA("FEDC:BA98:7654:3210:FEDC:BA98:7654:3211"))));
+
+  REQUIRE_NOTHROW(s.add(
+    origin,
+    RR(
+      Name("sub"),
+      aDNS::Type::NS,
+      aDNS::Class::IN,
+      RFC1035::NS("ns1.elsewhere.com."))));
 
   {
     RFC1035::Message msg = mk_question("www.example.com.", aDNS::QType::A);
@@ -121,17 +140,17 @@ TEST_CASE("DNSSEC RRs")
 {
   TestResolver s;
 
-  Zone d;
-  d.records.push_back(
-    {.name = "mykey",
-     .type = "DNSKEY",
-     .data = "256 3 5 "
-             "AQPSKmynfzW4kyBv015MUG2DeIQ3Cbl+BBZH4b/"
-             "0PY1kxkmvHjcZc8nokfzj31GajIQKY+"
-             "5CptLr3buXA10hWqTkF7H6RfoRqXQeogmMHfpftf6zMv1LyBUgia7za6ZEzOJBOzt"
-             "yvhjL742iU/TpPSEDhm2SNKLijfUppn1UaNvv4w=="});
-
-  REQUIRE_NOTHROW(s.update(Name("example.com."), d));
+  REQUIRE_NOTHROW(s.add(
+    Name("example.com."),
+    RR(
+      Name("mykey"),
+      aDNS::Type::DNSKEY,
+      aDNS::Class::IN,
+      RFC4034::DNSKEY("256 3 5 "
+                      "AQPSKmynfzW4kyBv015MUG2DeIQ3Cbl+BBZH4b/"
+                      "0PY1kxkmvHjcZc8nokfzj31GajIQKY+"
+                      "5CptLr3buXA10hWqTkF7H6RfoRqXQeogmMHfpftf6zMv1LyBUgia7za6"
+                      "ZEzOJBOztyvhjL742iU/TpPSEDhm2SNKLijfUppn1UaNvv4w=="))));
 
   {
     RFC1035::Message msg =
@@ -143,4 +162,15 @@ TEST_CASE("DNSSEC RRs")
     std::cout << sd << std::endl;
     REQUIRE(sd.starts_with("256 3 5 AQPSK"));
   }
+}
+
+int main(int argc, char** argv)
+{
+  logger::config::default_init();
+  doctest::Context context;
+  context.applyCommandLine(argc, argv);
+  int res = context.run();
+  if (context.shouldExit())
+    return res;
+  return res;
 }

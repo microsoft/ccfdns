@@ -109,10 +109,7 @@ namespace RFC1035 // https://datatracker.ietf.org/doc/html/rfc1035
   public:
     std::vector<Label> labels;
 
-    Name()
-    {
-      labels.push_back(Label());
-    }
+    Name() {}
 
     Name(const std::string& s)
     {
@@ -374,10 +371,10 @@ namespace RFC1035
 
     /// Two octets containing one of the RR type codes.  This field specifies
     /// the meaning of the data in the RDATA field.
-    Type type;
+    uint16_t type;
 
     /// Two octets which specify the class of the data in the RDATA field.
-    Class class_;
+    uint16_t class_;
 
     /// A 32 bit unsigned integer that specifies the time interval (in
     /// seconds) that the resource record may be cached before it should be
@@ -399,8 +396,8 @@ namespace RFC1035
 
     ResourceRecord(
       const Name& name,
-      Type type,
-      Class class_,
+      uint16_t type,
+      uint16_t class_,
       uint32_t ttl,
       const std::vector<uint8_t>& rdata) :
       name(name),
@@ -416,10 +413,9 @@ namespace RFC1035
 
     ResourceRecord(const std::vector<uint8_t>& bytes, size_t& pos)
     {
-      uint8_t len = get<uint8_t>(bytes, pos);
       name = Name(bytes, pos);
-      type = static_cast<Type>(get<uint16_t>(bytes, pos));
-      class_ = static_cast<Class>(get<uint16_t>(bytes, pos));
+      type = get<uint16_t>(bytes, pos);
+      class_ = get<uint16_t>(bytes, pos);
       ttl = get<uint32_t>(bytes, pos);
       rdata = get<uint8_t, uint16_t>(bytes, pos);
       rdlength = rdata.size();
@@ -428,12 +424,15 @@ namespace RFC1035
     operator std::vector<uint8_t>() const
     {
       std::vector<uint8_t> r;
+      put(name, r);
       put(type, r);
       put(class_, r);
       put(ttl, r);
       put(rdata, r);
       return r;
     }
+
+    bool operator==(const ResourceRecord& other) const = default;
   };
 
   // https://datatracker.ietf.org/doc/html/rfc1035#section-4
@@ -535,7 +534,7 @@ namespace RFC1035
     Header(const std::vector<uint8_t>& bytes, size_t& pos)
     {
       id = get<uint16_t>(bytes, pos);
-      uint8_t qr_opcode_aa_tc_rd = get<uint16_t>(bytes, pos);
+      uint8_t qr_opcode_aa_tc_rd = get<uint8_t>(bytes, pos);
       qr = (qr_opcode_aa_tc_rd & 0x80) != 0;
       opcode = static_cast<OPCode>((qr_opcode_aa_tc_rd & 0x78) >> 3);
       if (opcode > 2)
@@ -566,7 +565,7 @@ namespace RFC1035
       uint8_t qr_opcode_aa_tc_rd = ((uint8_t)qr) << 7 | ((uint8_t)opcode) << 3 |
         ((uint8_t)aa) << 2 | ((uint8_t)tc) << 1 | ((uint8_t)rd);
       uint8_t ra_z_rcode = ((uint8_t)ra) << 7 | ((uint8_t)rcode);
-      put(qr_opcode_aa_tc_rd << 8 | ra_z_rcode, r);
+      put((uint16_t)(qr_opcode_aa_tc_rd << 8 | ra_z_rcode), r);
       put(qdcount, r);
       put(ancount, r);
       put(nscount, r);
@@ -598,8 +597,9 @@ namespace RFC1035
 
     Question(const std::vector<uint8_t>& bytes, size_t& pos)
     {
-      uint8_t len = get<uint8_t>(bytes, pos);
-      qname = Name(bytes, pos);
+      qname = Name(bytes, pos, SIZE_MAX);
+      if (!qname.is_absolute())
+        throw std::runtime_error("relative name in question");
       qtype = static_cast<QType>(get<uint16_t>(bytes, pos));
       qclass = static_cast<QClass>(get<uint16_t>(bytes, pos));
     }

@@ -10,7 +10,12 @@ inline T get(const std::vector<uint8_t>& bytes, size_t& pos)
 {
   T r = 0;
   for (size_t i = 0; i < sizeof(T); i++)
+  {
+    if (pos >= bytes.size())
+      throw std::runtime_error(
+        "deserialization failed: insufficient number of bytes");
     r = r << 8 | bytes[pos++];
+  }
   return r;
 }
 
@@ -53,16 +58,15 @@ inline std::vector<T> get(const std::vector<uint8_t>& bytes, size_t& pos)
 template <typename T>
 inline void put(const T& x, std::vector<uint8_t>& r)
 {
-  for (size_t i = 0; i < sizeof(x); i++)
+  for (size_t i = 0; i < sizeof(T); i++)
   {
-    r.push_back((x >> i) & 0xFF);
+    r.push_back((x >> 8 * (sizeof(T) - 1 - i)) & 0xFF);
   }
 }
 
 template <typename T>
 inline void put(const std::vector<T>& vec, std::vector<uint8_t>& r)
 {
-  r.push_back((uint8_t)vec.size());
   for (const auto& elem : vec)
   {
     std::vector<uint8_t> t = elem;
@@ -73,6 +77,6 @@ inline void put(const std::vector<T>& vec, std::vector<uint8_t>& r)
 template <>
 inline void put(const std::vector<uint8_t>& vec, std::vector<uint8_t>& r)
 {
-  r.push_back((uint8_t)vec.size());
+  put((uint16_t)vec.size(), r);
   r.insert(std::end(r), std::begin(vec), std::end(vec));
 }
