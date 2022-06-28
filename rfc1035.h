@@ -128,15 +128,18 @@ namespace RFC1035 // https://datatracker.ietf.org/doc/html/rfc1035
         labels.push_back(Label());
     }
 
-    Name(const std::vector<uint8_t>& bytes, size_t& pos, size_t num_labels)
+    Name(
+      const std::vector<uint8_t>& bytes,
+      size_t& pos,
+      size_t num_labels = SIZE_MAX)
     {
       parse_bytes(bytes, pos, num_labels);
     }
 
-    Name(const std::vector<uint8_t>& bytes, size_t num_labels)
+    Name(const std::vector<uint8_t>& bytes)
     {
       size_t pos = 0;
-      parse_bytes(bytes, pos, num_labels);
+      parse_bytes(bytes, pos, SIZE_MAX);
     }
 
     Name(const Name& prefix, const Name& suffix)

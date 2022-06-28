@@ -3,10 +3,14 @@
 
 #include "resolver.h"
 
-#include "ccf/ds/logger.h"
 #include "rfc1035.h"
 #include "rfc3596.h"
+#include "rfc4034.h"
+#include "rfc6891.h"
 
+#include <ccf/ds/logger.h>
+#include <ccf/kv/map.h>
+#include <ccf/tx.h>
 #include <cstddef>
 #include <memory>
 #include <sstream>
@@ -28,7 +32,9 @@ namespace aDNS
 
     {static_cast<uint16_t>(RFC3596::Type::AAAA), aDNS::Type::AAAA},
 
-    {static_cast<uint16_t>(RFC4034::Type::DNSKEY), aDNS::Type::DNSKEY}};
+    {static_cast<uint16_t>(RFC4034::Type::DNSKEY), aDNS::Type::DNSKEY},
+
+    {static_cast<uint16_t>(RFC6891::Type::OPT), aDNS::Type::OPT}};
 
   static const std::map<uint16_t, aDNS::QType> supported_qtypes = {
     {static_cast<uint16_t>(RFC1035::QType::ASTERISK), aDNS::QType::ASTERISK},
@@ -105,9 +111,10 @@ namespace aDNS
     {"AAAA", aDNS::Type::AAAA},
 
     {"DNSKEY", aDNS::Type::DNSKEY},
+    {"OPT", aDNS::Type::OPT},
   };
 
-  static inline aDNS::Type type_from_string(const std::string& s)
+  aDNS::Type type_from_string(const std::string& s)
   {
     auto mit = string_to_type_map.find(s);
     if (mit == string_to_type_map.end())
@@ -117,7 +124,7 @@ namespace aDNS
     return mit->second;
   };
 
-  static inline std::string string_from_type(const uint16_t& t)
+  std::string string_from_type(const uint16_t& t)
   {
     for (const auto& [name, type] : string_to_type_map)
     {
@@ -164,45 +171,6 @@ namespace aDNS
 
   Resolver::~Resolver() {}
 
-  void Resolver::add(const Name& origin, const ResourceRecord& record)
-  {
-    LOG_TRACE_FMT(
-      "Add '{}' type '{}' to '{}'",
-      (std::string)record.name,
-      string_from_type(record.type),
-      (std::string)origin);
-
-    auto oit = cache.find(origin);
-    if (oit == cache.end())
-    {
-      oit = cache.insert(cache.end(), {origin, std::vector<ResourceRecord>()});
-    }
-
-    ResourceRecord rs(record);
-    rs.name.strip_suffix(origin);
-    oit->second.push_back(rs);
-  }
-
-  void Resolver::remove(const Name& origin, const ResourceRecord& record)
-  {
-    LOG_TRACE_FMT(
-      "Remove '{}' type '{}' from '{}'",
-      (std::string)record.name,
-      string_from_type(record.type),
-      (std::string)origin);
-
-    auto oit = cache.find(origin);
-    if (oit == cache.end())
-    {
-      return;
-    }
-
-    ResourceRecord rs(record);
-    rs.name.strip_suffix(origin);
-
-    std::erase_if(oit->second, [&rs](const auto& r) { return r == rs; });
-  }
-
   Message Resolver::reply(const Message& msg)
   {
     Message r;
@@ -230,18 +198,8 @@ namespace aDNS
     return r;
   }
 
-  static bool type_in_qtype(uint16_t t, QType qt)
-  {
-    return qt == QType::ASTERISK || t == static_cast<uint16_t>(qt);
-  }
-
-  static bool class_in_qclass(uint16_t c, QClass qc)
-  {
-    return qc == QClass::ASTERISK || c == static_cast<uint16_t>(qc);
-  }
-
   std::vector<ResourceRecord> Resolver::resolve(
-    const Name& qname, QType qtype, QClass qclass) const
+    const Name& qname, QType qtype, QClass qclass)
   {
     std::vector<ResourceRecord> r;
 
@@ -261,7 +219,8 @@ namespace aDNS
 
     Name origin = qname;
     Name entry;
-    for (size_t i = 0; i < qname.labels.size(); i++)
+    bool done = false;
+    for (size_t i = 0; i < qname.labels.size() && !done; i++)
     {
       LOG_DEBUG_FMT(
         "Looking for '{}' type '{}' in '{}'",
@@ -269,27 +228,18 @@ namespace aDNS
         string_from_type(static_cast<uint16_t>(qtype)),
         (std::string)origin);
 
-      auto cit = cache.find(origin);
-      if (cit != cache.end())
-      {
-        for (const auto& rr : cit->second)
+      for_each(origin, qtype, qclass, [&origin, &entry, &r](const auto& rr) {
+        if (rr.name == entry)
         {
-          LOG_TRACE_FMT(
-            "{} =?= {} : {}",
-            (std::string)rr.name,
-            (std::string)entry,
-            rr.name == entry);
-          if (
-            type_in_qtype(rr.type, qtype) &&
-            class_in_qclass(rr.class_, qclass) && rr.name == entry)
-          {
-            LOG_DEBUG_FMT("Found a match!");
-            r.push_back(rr);
-            r.back().name += origin;
-          }
+          LOG_DEBUG_FMT("Found a match!");
+          r.push_back(rr);
+          r.back().name += origin;
         }
+        return true;
+      });
+
+      if (r.size() > 0)
         break; // Continue collecting matches in longer origins?
-      }
 
       entry.labels.push_back(origin.labels.front());
       origin.labels.erase(origin.labels.begin());

@@ -112,33 +112,73 @@ namespace ccfdns
       std::string table_name =
         (std::string)origin + " " + std::to_string(r.type);
 
-      auto records = tx.rw<Records>(table_name);
-      records->insert(r);
+      ResourceRecord rs(r);
+      rs.name.strip_suffix(origin);
 
-      add(origin, r);
+      LOG_TRACE_FMT(
+        "Add '{}' type '{}' to '{}'",
+        (std::string)rs.name,
+        string_from_type(rs.type),
+        (std::string)origin);
+
+      auto records = tx.rw<Records>(table_name);
+      records->insert(rs);
     }
 
     virtual void remove(kv::Tx& tx, const Name& origin, const ResourceRecord& r)
     {
+      if (!origin.is_absolute())
+      {
+        throw std::runtime_error("Origin not absolute");
+      }
+
       std::string table_name =
         (std::string)origin + "-" + std::to_string(r.type);
 
-      auto records = tx.rw<Records>(table_name);
-      records->remove(r);
+      ResourceRecord rs(r);
+      rs.name.strip_suffix(origin);
 
-      remove(origin, r);
+      LOG_TRACE_FMT(
+        "Remove '{}' type '{}' to '{}'",
+        (std::string)rs.name,
+        string_from_type(rs.type),
+        (std::string)origin);
+
+      auto records = tx.rw<Records>(table_name);
+      records->remove(rs);
+    }
+
+    using Resolver::reply;
+
+    virtual Message reply(
+      ccf::endpoints::EndpointContext& ctx, const Message& msg)
+    {
+      this->ctx = &ctx;
+      return reply(msg);
+    }
+
+    virtual void for_each(
+      const Name& origin,
+      aDNS::QType qtype,
+      aDNS::QClass qclass,
+      const std::function<bool(const ResourceRecord&)>& f) override
+    {
+      std::string table_name = (std::string)origin + "-" +
+        string_from_type(static_cast<uint16_t>(qtype));
+
+      auto records = ctx->tx.ro<Records>(table_name);
+      records->foreach([&qclass, &qtype, &f](const auto& rr) {
+        if (
+          !type_in_qtype(rr.type, qtype) || !class_in_qclass(rr.class_, qclass))
+        {
+          return true;
+        }
+        return f(rr);
+      });
     }
 
   protected:
-    virtual void add(const Name& origin, const ResourceRecord& r) override
-    {
-      Resolver::add(origin, r);
-    }
-
-    virtual void remove(const Name& origin, const ResourceRecord& r) override
-    {
-      Resolver::remove(origin, r);
-    }
+    ccf::endpoints::EndpointContext* ctx;
   };
 
   CCFDNS ccfdns;
@@ -197,7 +237,7 @@ namespace ccfdns
           auto bytes = crypto::raw_from_b64url(query_b64);
           LOG_INFO_FMT("query: {}", ds::to_hex(bytes));
 
-          auto reply = ccfdns.reply(Message(bytes));
+          auto reply = ccfdns.reply(ctx, Message(bytes));
 
           ctx.rpc_ctx->set_response_status(HTTP_STATUS_OK);
           ctx.rpc_ctx->set_response_header(

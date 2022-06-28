@@ -82,8 +82,7 @@ sudo apt install bind9-dnsutils
 In theory:
 
 ```
-dig +https +https-get=/app/dns-query +tls-ca=workspace/sandbox_common/service_cert.pem @127.0.0.1 -p 8000 cwinter.adns.ccf.dev A
+dig +https-get=/app/dns-query +noedns @127.0.0.1 -p 8000 cwinter.adns.ccf.dev A
 ```
 
-But it seems to require HTTP/2 which we don't have in CCF yet.
-
+But it seems to require HTTP/2 which we don't have in CCF yet. (Also `+tls-ca=workspace/sandbox_common/service_cert.pem` ?)

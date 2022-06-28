@@ -5,10 +5,9 @@
 #include "rfc1035.h"
 #include "rfc3596.h"
 #include "rfc4034.h"
+#include "rfc6891.h"
 
-#include <ccf/ds/json.h>
-#include <ccf/ds/logger.h>
-#include <ccf/kv/map.h>
+#include <functional>
 #include <memory>
 #include <stdexcept>
 
@@ -31,6 +30,7 @@ namespace aDNS
     RRSIG = static_cast<uint16_t>(RFC4034::Type::RRSIG),
     NSEC = static_cast<uint16_t>(RFC4034::Type::NSEC),
     DS = static_cast<uint16_t>(RFC4034::Type::DS),
+    OPT = static_cast<uint16_t>(RFC6891::Type::OPT),
   };
 
   enum class QType : uint16_t
@@ -46,8 +46,13 @@ namespace aDNS
     RRSIG = static_cast<uint16_t>(RFC4034::Type::RRSIG),
     NSEC = static_cast<uint16_t>(RFC4034::Type::NSEC),
     DS = static_cast<uint16_t>(RFC4034::Type::DS),
+    OPT = static_cast<uint16_t>(RFC6891::Type::OPT),
     ASTERISK = static_cast<uint16_t>(RFC1035::QType::ASTERISK),
   };
+
+  std::string string_from_type(const uint16_t& type);
+
+  Type type_from_string(const std::string& s);
 
   enum class Class : uint16_t
   {
@@ -60,22 +65,31 @@ namespace aDNS
     ASTERISK = static_cast<uint16_t>(RFC1035::QClass::ASTERISK),
   };
 
+  inline bool type_in_qtype(uint16_t t, QType qt)
+  {
+    return qt == QType::ASTERISK || t == static_cast<uint16_t>(qt);
+  }
+
+  inline bool class_in_qclass(uint16_t c, QClass qc)
+  {
+    return qc == QClass::ASTERISK || c == static_cast<uint16_t>(qc);
+  }
+
   class Resolver
   {
   public:
     Resolver();
     virtual ~Resolver();
 
-    virtual void add(const Name& origin, const ResourceRecord& record);
-
-    virtual void remove(const Name& origin, const ResourceRecord& record);
-
     virtual Message reply(const Message& msg);
 
     virtual std::vector<ResourceRecord> resolve(
-      const Name& qname, QType qtype, QClass qclass) const;
+      const Name& qname, QType qtype, QClass qclass);
 
-  protected:
-    std::map<Name, std::vector<ResourceRecord>> cache;
+    virtual void for_each(
+      const Name& origin,
+      QType qtype,
+      QClass qclass,
+      const std::function<bool(const ResourceRecord&)>& f) = 0;
   };
 }

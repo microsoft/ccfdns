@@ -6,6 +6,7 @@
 #include "rfc4034.h"
 
 #define DOCTEST_CONFIG_IMPLEMENT
+#include <ccf/ds/logger.h>
 #include <doctest/doctest.h>
 
 using namespace aDNS;
@@ -21,11 +22,28 @@ public:
 
   std::map<Name, std::vector<ResourceRecord>> zones;
 
-  virtual void add(const Name& origin, const ResourceRecord& r) override
+  virtual void add(const Name& origin, const ResourceRecord& r)
   {
     zones[origin].push_back(r);
-    Resolver::add(origin, r);
   }
+
+  virtual void for_each(
+    const Name& origin,
+    aDNS::QType qtype,
+    aDNS::QClass qclass,
+    const std::function<bool(const ResourceRecord&)>& f) override
+  {
+    auto oit = zones.find(origin);
+    if (oit != zones.end())
+    {
+      for (const auto& rr : oit->second)
+      {
+        if (type_in_qtype(rr.type, qtype) && class_in_qclass(rr.class_, qclass))
+          if (!f(rr))
+            break;
+      }
+    }
+  };
 };
 
 RFC1035::Message mk_question(const std::string& name, aDNS::QType type)
@@ -131,8 +149,7 @@ TEST_CASE("Basic lookups")
     REQUIRE(response.answers.size() > 0);
     NS ns(response.answers[0].rdata);
     std::cout << (std::string)ns.nsdname << std::endl;
-    REQUIRE(
-      Name(response.answers[0].rdata, SIZE_MAX) == Name("ns1.elsewhere.com."));
+    REQUIRE(Name(response.answers[0].rdata) == Name("ns1.elsewhere.com."));
   }
 }
 
