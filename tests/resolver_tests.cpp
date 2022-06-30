@@ -5,8 +5,9 @@
 #include "rfc1035.h"
 #include "rfc4034.h"
 
-#define DOCTEST_CONFIG_IMPLEMENT
 #include <ccf/ds/logger.h>
+
+#define DOCTEST_CONFIG_IMPLEMENT
 #include <doctest/doctest.h>
 
 using namespace aDNS;
@@ -63,7 +64,7 @@ ResourceRecord RR(
   const Name& name,
   aDNS::Type type,
   aDNS::Class class_,
-  std::vector<uint8_t>&& data)
+  small_vector<uint16_t>&& data)
 {
   return ResourceRecord(
     name,
@@ -116,7 +117,7 @@ TEST_CASE("Basic lookups")
     auto response = s.reply(msg);
     REQUIRE(response.answers.size() > 0);
     REQUIRE(
-      response.answers[0].rdata == std::vector<uint8_t>{93, 184, 216, 34});
+      response.answers[0].rdata == small_vector<uint16_t>{93, 184, 216, 34});
   }
 
   {
@@ -126,7 +127,7 @@ TEST_CASE("Basic lookups")
     /* clang-format off */
     REQUIRE(
       response.answers[0].rdata ==
-      std::vector<uint8_t>{
+      small_vector<uint16_t>{
         0xFE, 0xDC, 0xBA, 0x98, 0x76, 0x54, 0x32, 0x10, 0xFE, 0xDC, 0xBA, 0x98, 0x76, 0x54, 0x32, 0x10});
     /* clang-format on */
   }
@@ -138,7 +139,7 @@ TEST_CASE("Basic lookups")
     /* clang-format off */
     REQUIRE(
       response.answers[0].rdata ==
-      std::vector<uint8_t>{
+      small_vector<uint16_t>{
         0xFE, 0xDC, 0xBA, 0x98, 0x76, 0x54, 0x32, 0x10, 0xFE, 0xDC, 0xBA, 0x98, 0x76, 0x54, 0x32, 0x11});
     /* clang-format on */
   }

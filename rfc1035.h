@@ -3,6 +3,7 @@
 #pragma once
 
 #include "serialization.h"
+#include "small_vector.h"
 
 #include <array>
 #include <cstdint>
@@ -28,8 +29,7 @@ namespace RFC1035 // https://datatracker.ietf.org/doc/html/rfc1035
     {
       if (s.size() > MAX_LABEL_SIZE)
         throw std::runtime_error("invalid label size (string)");
-
-      data = {s.data(), s.data() + s.size()};
+      data = small_vector<uint8_t>(s.size(), (uint8_t*)s.data());
     }
 
     Label(const std::vector<uint8_t>& bytes, size_t& pos)
@@ -39,12 +39,29 @@ namespace RFC1035 // https://datatracker.ietf.org/doc/html/rfc1035
         bytes[pos] > MAX_LABEL_SIZE)
         throw std::runtime_error("invalid label size (bytes)");
 
-      data.resize(bytes[pos]);
+      data = small_vector<uint8_t>(bytes[pos]);
       for (size_t i = 0; i < bytes[pos]; i++)
-      {
         data[i] = bytes[pos + 1 + i];
-      }
       pos += data.size() + 1;
+    }
+
+    template <typename T>
+    Label(const small_vector<T>& bytes, size_t& pos)
+    {
+      if (
+        pos >= bytes.size() || pos + bytes[pos] >= bytes.size() ||
+        bytes[pos] > MAX_LABEL_SIZE)
+        throw std::runtime_error("invalid label size (small_vector)");
+
+      data = small_vector<uint8_t>(bytes[pos]);
+      for (size_t i = 0; i < bytes[pos]; i++)
+        data[i] = bytes[pos + 1 + i];
+      pos += data.size() + 1;
+    }
+
+    Label(const Label& other)
+    {
+      data = other.data;
     }
 
     bool empty() const
@@ -60,12 +77,16 @@ namespace RFC1035 // https://datatracker.ietf.org/doc/html/rfc1035
     void put(std::vector<uint8_t>& r) const
     {
       r.push_back(data.size());
-      r.insert(r.end(), data.begin(), data.end());
+      for (uint8_t i = 0; i < data.size(); i++)
+        r.push_back(data[i]);
     }
 
     operator std::string() const
     {
-      return std::string(data.data(), data.data() + data.size());
+      std::string r;
+      for (uint8_t i = 0; i < data.size(); i++)
+        r += std::to_string(data[i]);
+      return r;
     }
 
     uint8_t operator[](size_t i) const
@@ -73,8 +94,19 @@ namespace RFC1035 // https://datatracker.ietf.org/doc/html/rfc1035
       return data[i];
     }
 
+    Label& operator=(const Label& other)
+    {
+      data = other.data;
+      return *this;
+    }
+
+    operator small_vector<uint8_t>() const
+    {
+      return data;
+    }
+
   protected:
-    std::vector<uint8_t> data;
+    small_vector<uint8_t> data;
   };
 
   inline bool operator==(const RFC1035::Label& x, const RFC1035::Label& y)
@@ -142,6 +174,17 @@ namespace RFC1035 // https://datatracker.ietf.org/doc/html/rfc1035
       parse_bytes(bytes, pos, SIZE_MAX);
     }
 
+    Name(const small_vector<uint16_t>& bytes, size_t& pos)
+    {
+      parse_bytes(bytes, pos, SIZE_MAX);
+    }
+
+    Name(const small_vector<uint16_t>& bytes)
+    {
+      size_t pos = 0;
+      parse_bytes(bytes, pos, SIZE_MAX);
+    }
+
     Name(const Name& prefix, const Name& suffix)
     {
       labels = prefix.labels;
@@ -149,10 +192,47 @@ namespace RFC1035 // https://datatracker.ietf.org/doc/html/rfc1035
         labels.push_back(l);
     }
 
+    Name(const std::vector<Label>& labels)
+    {
+      this->labels = labels;
+    }
+
+    Name(std::vector<Label>&& labels) : labels(std::move(labels)) {}
+
     void put(std::vector<uint8_t>& r) const
     {
       for (const auto& label : labels)
         label.put(r);
+    }
+
+    operator small_vector<uint16_t, small_vector<uint8_t, uint8_t>>() const
+    {
+      small_vector<uint16_t, small_vector<uint8_t>> r(labels.size());
+      uint16_t i = 0;
+      for (const auto& l : labels)
+        r[i++] = (small_vector<uint8_t>)l;
+      return r;
+    }
+
+    operator small_vector<uint16_t>() const
+    {
+      small_vector<uint16_t> r(byte_size());
+      uint16_t p = 0;
+      for (const auto& l : labels)
+      {
+        r[p++] = l.size();
+        for (uint8_t i = 0; i < l.size(); i++)
+          r[p++] = l[i];
+      }
+      return r;
+    }
+
+    uint16_t byte_size() const
+    {
+      uint16_t sz = 0;
+      for (const auto& l : labels)
+        sz += l.size() + 1;
+      return sz;
     }
 
     bool is_absolute() const
@@ -170,7 +250,7 @@ namespace RFC1035 // https://datatracker.ietf.org/doc/html/rfc1035
           first = false;
         else
           r += ".";
-        r += l;
+        r += (std::string)l;
       }
       return r;
     }
@@ -207,21 +287,36 @@ namespace RFC1035 // https://datatracker.ietf.org/doc/html/rfc1035
 
     Name operator+(const Name& other) const
     {
-      Name r;
-      r.labels = labels;
-      r.labels.insert(labels.end(), other.labels.begin(), other.labels.end());
-      return r;
+      std::vector<Label> lbls = labels;
+      for (const auto& l : other.labels)
+        lbls.push_back(l);
+      return Name(lbls);
     }
 
     Name& operator+=(const Name& other)
     {
-      labels.insert(labels.end(), other.labels.begin(), other.labels.end());
+      for (const auto& l : other.labels)
+        labels.push_back(l);
       return *this;
     }
 
   protected:
     void parse_bytes(
       const std::vector<uint8_t>& bytes, size_t& pos, size_t num_labels)
+    {
+      size_t total_size = 0;
+      do
+      {
+        labels.push_back(Label(bytes, pos));
+        total_size += labels.back().size();
+        if (total_size > MAX_NAME_SIZE)
+          throw std::runtime_error("excessive name length");
+      } while (labels.back().size() > 0 && pos < bytes.size() &&
+               labels.size() < num_labels);
+    }
+
+    void parse_bytes(
+      const small_vector<uint16_t>& bytes, size_t& pos, size_t num_labels)
     {
       size_t total_size = 0;
       do
@@ -385,15 +480,14 @@ namespace RFC1035
     /// used for the transaction in progress, and should not be cached.
     uint32_t ttl = 0;
 
-    /// An unsigned 16 bit integer that specifies the length in octets of the
-    /// RDATA field.
-    uint16_t rdlength = 0;
-
-    /// A variable length string of octets that describes the resource. The
-    /// format of this information varies according to the TYPE and CLASS of
-    /// the resource record. For example, the if the TYPE is A and the CLASS
-    /// is IN, the RDATA field is a 4 octet ARPA Internet address.
-    std::vector<uint8_t> rdata;
+    /// rdlength: An unsigned 16 bit integer that specifies the length in octets
+    /// of the RDATA field.
+    /// rdata: A variable length string of octets that
+    /// describes the resource. The format of this information varies according
+    /// to the TYPE and CLASS of the resource record. For example, the if the
+    /// TYPE is A and the CLASS is IN, the RDATA field is a 4 octet ARPA
+    /// Internet address.
+    small_vector<uint16_t> rdata;
 
     ResourceRecord() = default;
 
@@ -402,17 +496,13 @@ namespace RFC1035
       uint16_t type,
       uint16_t class_,
       uint32_t ttl,
-      const std::vector<uint8_t>& rdata) :
+      const small_vector<uint16_t>& rdata) :
       name(name),
       type(type),
       class_(class_),
       ttl(ttl),
       rdata(rdata)
-    {
-      if (rdata.size() > (1 << 16))
-        throw std::runtime_error("excessive data");
-      rdlength = rdata.size();
-    }
+    {}
 
     ResourceRecord(const std::vector<uint8_t>& bytes, size_t& pos)
     {
@@ -420,8 +510,7 @@ namespace RFC1035
       type = get<uint16_t>(bytes, pos);
       class_ = get<uint16_t>(bytes, pos);
       ttl = get<uint32_t>(bytes, pos);
-      rdata = get<uint8_t, uint16_t>(bytes, pos);
-      rdlength = rdata.size();
+      rdata = small_vector<uint16_t, uint8_t>(bytes, pos);
     }
 
     operator std::vector<uint8_t>() const
@@ -431,7 +520,7 @@ namespace RFC1035
       put(type, r);
       put(class_, r);
       put(ttl, r);
-      put(rdata, r);
+      rdata.put(r);
       return r;
     }
 
@@ -657,7 +746,7 @@ namespace RFC1035
   {
   public:
     RDataFormat() {}
-    virtual operator std::vector<uint8_t>() const = 0;
+    virtual operator small_vector<uint16_t>() const = 0;
     virtual operator std::string() const = 0;
   };
 
@@ -684,7 +773,7 @@ namespace RFC1035
       }
     }
 
-    A(const std::vector<uint8_t>& data)
+    A(const small_vector<uint16_t>& data)
     {
       if (data.size() != 4)
         throw std::runtime_error("invalid rdata for A record");
@@ -692,9 +781,9 @@ namespace RFC1035
         address[i] = data[i];
     }
 
-    virtual operator std::vector<uint8_t>() const override
+    virtual operator small_vector<uint16_t>() const override
     {
-      return {address.begin(), address.end()};
+      return small_vector<uint16_t>((uint16_t)address.size(), &address[0]);
     }
 
     virtual operator std::string() const override
@@ -714,17 +803,15 @@ namespace RFC1035
       nsdname = data;
     }
 
-    NS(const std::vector<uint8_t>& data)
+    NS(const small_vector<uint16_t>& data)
     {
       size_t pos = 0;
       nsdname = Name(data, pos);
     }
 
-    virtual operator std::vector<uint8_t>() const override
+    virtual operator small_vector<uint16_t>() const override
     {
-      std::vector<uint8_t> r;
-      nsdname.put(r);
-      return r;
+      return nsdname;
     }
 
     virtual operator std::string() const override
@@ -743,11 +830,14 @@ namespace RFC1035
       cname = data;
     }
 
-    virtual operator std::vector<uint8_t>() const override
+    CNAME(const small_vector<uint16_t>& data)
     {
-      std::vector<uint8_t> r;
-      cname.put(r);
-      return r;
+      cname = Name(data);
+    }
+
+    virtual operator small_vector<uint16_t>() const override
+    {
+      return cname;
     }
 
     virtual operator std::string() const override
@@ -766,9 +856,17 @@ namespace RFC1035
       txt_data = data;
     }
 
-    virtual operator std::vector<uint8_t>() const override
+    TXT(const small_vector<uint16_t>& data)
     {
-      return {txt_data.data(), txt_data.data() + txt_data.size()};
+      txt_data = {&data[0], &data[0] + data.size()};
+    }
+
+    virtual operator small_vector<uint16_t>() const override
+    {
+      if (txt_data.size() > 65535)
+        throw std::runtime_error("excessive string length");
+      return small_vector<uint16_t>(
+        (uint16_t)txt_data.size(), (uint8_t*)txt_data.data());
     }
 
     virtual operator std::string() const override

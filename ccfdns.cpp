@@ -35,19 +35,47 @@ using namespace RFC1035;
     if (!j.is_string()) \
     { \
       throw JsonParseError(fmt::format( \
-        "Cannot parse " #TYPE ": Expected string, got {}", j.dump())); \
+        "Cannot parse " #TYPE ": expected string, got {}", j.dump())); \
     } \
     t = TYPE(j.get<std::string>()); \
   } \
-  inline std::string schema_name(const Name*) \
+  inline std::string schema_name(const TYPE*) \
   { \
     return #TYPE; \
   } \
-  inline void fill_json_schema(nlohmann::json& schema, const Name*) \
+  inline void fill_json_schema(nlohmann::json& schema, const TYPE*) \
   { \
     schema["type"] = "string"; \
     schema["pattern"] = PATTERN; \
   }
+
+inline void to_json(nlohmann::json& j, const small_vector<uint16_t>& t)
+{
+  j = t.to_base64();
+}
+
+inline void from_json(const nlohmann::json& j, small_vector<uint16_t>& t)
+{
+  if (!j.is_string())
+  {
+    throw JsonParseError(fmt::format(
+      "Cannot parse small_vector<uint16_t>: expected base64-encoded string, "
+      "got {}",
+      j.dump()));
+  }
+  t = small_vector<uint16_t>::from_base64(j.get<std::string>());
+}
+
+inline std::string schema_name(const small_vector<uint16_t>*)
+{
+  return "small_vector<uint16_t>";
+}
+
+inline void fill_json_schema(
+  nlohmann::json& schema, const small_vector<uint16_t>*)
+{
+  schema["type"] = "small_vector<uint16_t>";
+}
 
 namespace RFC1035
 {

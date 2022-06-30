@@ -43,13 +43,14 @@ namespace RFC3596 // https://www.rfc-editor.org/rfc/rfc3596.html
         address[i] = data[i];
     }
 
-    virtual operator std::vector<uint8_t>() const override
+    virtual operator small_vector<uint16_t>() const override
     {
-      std::vector<uint8_t> r;
-      for (const auto& n : address)
+      small_vector<uint16_t> r(2 * address.size());
+      for (size_t i = 0; i < address.size(); i++)
       {
-        r.push_back(n >> 8);
-        r.push_back(n & 0xFF);
+        auto& n = address[i];
+        r[2 * i] = n >> 8;
+        r[2 * i + 1] = n & 0xFF;
       }
       return r;
     }

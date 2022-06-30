@@ -49,9 +49,7 @@ inline std::vector<T> get(const std::vector<uint8_t>& bytes, size_t& pos)
   SIZE_TYPE sz = get<SIZE_TYPE>(bytes, pos);
   std::vector<T> r((size_t)sz);
   for (SIZE_TYPE i = 0; i < sz; i++)
-  {
     r[i] = get<T>(bytes, pos);
-  }
   return r;
 }
 
@@ -59,9 +57,7 @@ template <typename T>
 inline void put(const T& x, std::vector<uint8_t>& r)
 {
   for (size_t i = 0; i < sizeof(T); i++)
-  {
     r.push_back((x >> 8 * (sizeof(T) - 1 - i)) & 0xFF);
-  }
 }
 
 template <typename T>

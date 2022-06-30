@@ -37,7 +37,7 @@ namespace RFC6891 // https://datatracker.ietf.org/doc/html/rfc6891
       // TODO
     }
 
-    virtual operator std::vector<uint8_t>() const override
+    virtual operator small_vector<uint16_t>() const override
     {
       std::vector<uint8_t> r;
       for (const auto& opt : options)
@@ -46,7 +46,9 @@ namespace RFC6891 // https://datatracker.ietf.org/doc/html/rfc6891
         put(opt.length, r);
         put(opt.data, r);
       }
-      return r;
+      if (r.size() > 255)
+        throw std::runtime_error("OPT rdata size too large");
+      return small_vector<uint16_t>(r.size(), r.data());
     }
 
     virtual operator std::string() const override
