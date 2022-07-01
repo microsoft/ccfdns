@@ -79,10 +79,11 @@ inline void fill_json_schema(
 
 namespace RFC1035
 {
+  DECLARE_JSON_ENUM(aDNS::Type, {{aDNS::Type::A, "A"}});
   DECLARE_JSON_STRINGIFIED(Name, "^[A-Za-z0-9]+(\\.[A-Za-z0-9]+)+$");
 
   DECLARE_JSON_TYPE(ResourceRecord);
-  DECLARE_JSON_REQUIRED_FIELDS(ResourceRecord, name, type, class_, ttl, rdata);
+  DECLARE_JSON_REQUIRED_FIELDS(ResourceRecord, owner, type, class_, ttl, rdata);
 }
 
 namespace kv::serialisers
@@ -141,16 +142,23 @@ namespace ccfdns
         (std::string)origin + " " + std::to_string(r.type);
 
       ResourceRecord rs(r);
-      rs.name.strip_suffix(origin);
+      rs.owner.strip_suffix(origin);
 
       LOG_TRACE_FMT(
         "Add '{}' type '{}' to '{}'",
-        (std::string)rs.name,
-        string_from_type(rs.type),
+        (std::string)rs.owner,
+        string_from_type(static_cast<aDNS::Type>(rs.type)),
         (std::string)origin);
 
       auto records = tx.rw<Records>(table_name);
       records->insert(rs);
+
+      Resolver::on_add(origin, rs);
+    }
+
+    virtual void add(const Name& origin, const ResourceRecord& rr) override
+    {
+      add(ctx->tx, origin, rr);
     }
 
     virtual void remove(kv::Tx& tx, const Name& origin, const ResourceRecord& r)
@@ -164,12 +172,12 @@ namespace ccfdns
         (std::string)origin + "-" + std::to_string(r.type);
 
       ResourceRecord rs(r);
-      rs.name.strip_suffix(origin);
+      rs.owner.strip_suffix(origin);
 
       LOG_TRACE_FMT(
         "Remove '{}' type '{}' to '{}'",
-        (std::string)rs.name,
-        string_from_type(rs.type),
+        (std::string)rs.owner,
+        string_from_type(static_cast<aDNS::Type>(rs.type)),
         (std::string)origin);
 
       auto records = tx.rw<Records>(table_name);
@@ -187,17 +195,18 @@ namespace ccfdns
 
     virtual void for_each(
       const Name& origin,
-      aDNS::QType qtype,
       aDNS::QClass qclass,
+      aDNS::QType qtype,
       const std::function<bool(const ResourceRecord&)>& f) override
     {
-      std::string table_name = (std::string)origin + "-" +
-        string_from_type(static_cast<uint16_t>(qtype));
+      std::string table_name =
+        (std::string)origin + "-" + string_from_qtype(qtype);
 
       auto records = ctx->tx.ro<Records>(table_name);
       records->foreach([&qclass, &qtype, &f](const auto& rr) {
         if (
-          !type_in_qtype(rr.type, qtype) || !class_in_qclass(rr.class_, qclass))
+          !is_type_in_qtype(rr.type, qtype) ||
+          !is_class_in_qclass(rr.class_, qclass))
         {
           return true;
         }

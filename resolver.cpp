@@ -7,13 +7,21 @@
 #include "rfc3596.h"
 #include "rfc4034.h"
 #include "rfc6891.h"
+#include "small_vector.h"
 
+#include <ccf/crypto/hash_provider.h>
+#include <ccf/crypto/key_pair.h>
+#include <ccf/crypto/md_type.h>
+#include <ccf/crypto/sha256_hash.h>
 #include <ccf/ds/logger.h>
 #include <ccf/kv/map.h>
 #include <ccf/tx.h>
+#include <chrono>
 #include <cstddef>
 #include <memory>
+#include <set>
 #include <sstream>
+#include <stdexcept>
 
 #define FMT_HEADER_ONLY
 #include <fmt/format.h>
@@ -33,6 +41,9 @@ namespace aDNS
     {static_cast<uint16_t>(RFC3596::Type::AAAA), aDNS::Type::AAAA},
 
     {static_cast<uint16_t>(RFC4034::Type::DNSKEY), aDNS::Type::DNSKEY},
+    {static_cast<uint16_t>(RFC4034::Type::DS), aDNS::Type::DS},
+    {static_cast<uint16_t>(RFC4034::Type::RRSIG), aDNS::Type::RRSIG},
+    {static_cast<uint16_t>(RFC4034::Type::NSEC), aDNS::Type::NSEC},
 
     {static_cast<uint16_t>(RFC6891::Type::OPT), aDNS::Type::OPT}};
 
@@ -45,6 +56,10 @@ namespace aDNS
 
   static const std::map<uint16_t, aDNS::QClass> supported_qclasses = {
     {static_cast<uint16_t>(RFC1035::QClass::ASTERISK), aDNS::QClass::ASTERISK}};
+
+  static const std::map<std::string, aDNS::Class> string_to_class_map = {
+    {"IN", aDNS::Class::IN},
+  };
 
   static inline aDNS::Type get_supported_type(uint16_t t)
   {
@@ -100,45 +115,50 @@ namespace aDNS
       is_supported_class(t);
   }
 
-  static const std::map<std::string, aDNS::Type> string_to_type_map = {
-    {"A", aDNS::Type::A},
-    {"NS", aDNS::Type::NS},
-    {"CNAME", aDNS::Type::CNAME},
-    {"SOA", aDNS::Type::SOA},
-    {"MX", aDNS::Type::MX},
-    {"TXT", aDNS::Type::TXT},
-
-    {"AAAA", aDNS::Type::AAAA},
-
-    {"DNSKEY", aDNS::Type::DNSKEY},
-    {"OPT", aDNS::Type::OPT},
-  };
-
-  aDNS::Type type_from_string(const std::string& s)
+  aDNS::Type type_from_string(const std::string& type_string)
   {
-    auto mit = string_to_type_map.find(s);
-    if (mit == string_to_type_map.end())
-    {
-      throw std::runtime_error(fmt::format("unknown type '{}'", s));
-    }
-    return mit->second;
-  };
+#define TFSF(RFC) \
+  { \
+    for (const auto& [t, s] : RFC::type_string_map) \
+    { \
+      if (s == type_string) \
+        return static_cast<aDNS::Type>(t); \
+    } \
+  }
 
-  std::string string_from_type(const uint16_t& t)
-  {
-    for (const auto& [name, type] : string_to_type_map)
-    {
-      if (static_cast<uint16_t>(type) == t)
-      {
-        return name;
-      }
-    }
+    TFSF(RFC1035);
+    TFSF(RFC3596);
+    TFSF(RFC4034);
+    TFSF(RFC6891);
 
     throw std::runtime_error(
-      fmt::format("unknown type '{}'", std::to_string((uint16_t)t)));
+      fmt::format("unknown type string '{}'", type_string));
+  }
+
+  std::string string_from_type(const aDNS::Type& t)
+  {
+#define SFTF(RFC) \
+  { \
+    auto mit = RFC::type_string_map.find(static_cast<RFC::Type>(t)); \
+    if (mit != RFC::type_string_map.end()) \
+      return mit->second; \
+  }
+
+    SFTF(RFC1035);
+    SFTF(RFC3596);
+    SFTF(RFC4034);
+    SFTF(RFC6891);
+
+    throw std::runtime_error(
+      fmt::format("unknown type {}", std::to_string(static_cast<uint16_t>(t))));
   };
 
-  static inline aDNS::QType qtype_from_string(const std::string& s)
+  std::string string_from_qtype(const aDNS::QType& t)
+  {
+    return t == QType::ASTERISK ? "*" : string_from_type(static_cast<Type>(t));
+  }
+
+  aDNS::QType qtype_from_string(const std::string& s)
   {
     static const std::map<std::string, aDNS::QType> smap = {
       {"*", aDNS::QType::ASTERISK},
@@ -167,7 +187,61 @@ namespace aDNS
     return mit->second;
   }
 
-  Resolver::Resolver() {}
+  std::string string_from_class(const uint16_t& class_)
+  {
+    for (const auto& [name, c] : string_to_class_map)
+    {
+      if (static_cast<uint16_t>(c) == class_)
+      {
+        return name;
+      }
+    }
+
+    throw std::runtime_error(
+      fmt::format("unknown class '{}'", std::to_string((uint16_t)class_)));
+  };
+
+  std::shared_ptr<RDataFormat> rdata(
+    Type t, const small_vector<uint16_t>& rdata)
+  {
+    // clang-format off
+    switch (t)
+    {
+      case Type::A: return std::make_shared<RFC1035::A>(rdata); break;
+      case Type::NS: return std::make_shared<RFC1035::NS>(rdata); break;
+      case Type::CNAME: return std::make_shared<RFC1035::CNAME>(rdata); break;
+      case Type::SOA: return std::make_shared<RFC1035::SOA>(rdata); break;
+      case Type::MX: return std::make_shared<RFC1035::MX>(rdata); break;
+      case Type::TXT: return std::make_shared<RFC1035::TXT>(rdata); break;
+
+      case Type::AAAA: return std::make_shared<RFC3596::AAAA>(rdata); break;
+
+      case Type::DNSKEY: return std::make_shared<RFC4034::DNSKEY>(rdata); break;
+      case Type::DS: return std::make_shared<RFC4034::DS>(rdata); break;
+      case Type::RRSIG: return std::make_shared<RFC4034::RRSIG>(rdata); break;
+      case Type::NSEC: return std::make_shared<RFC4034::NSEC>(rdata); break;
+
+      case Type::OPT: return std::make_shared<RFC6891::OPT>(rdata); break;
+
+      default: throw std::runtime_error("unsupported rdata format");
+    }
+    // clang-format on
+  }
+
+  static std::string string_from_resource_record(const ResourceRecord& rr)
+  {
+    std::string r = rr.owner;
+    r += " " + string_from_class(rr.class_);
+    r += " " + std::to_string(rr.ttl);
+    r += " " + string_from_type(static_cast<Type>(rr.type));
+    r += " " + (std::string)*rdata(static_cast<Type>(rr.type), rr.rdata);
+    return r;
+  }
+
+  Resolver::Resolver()
+  {
+    // TODO: install (public) key for root?
+  }
 
   Resolver::~Resolver() {}
 
@@ -201,7 +275,7 @@ namespace aDNS
   std::vector<ResourceRecord> Resolver::resolve(
     const Name& qname, QType qtype, QClass qclass)
   {
-    std::vector<ResourceRecord> r;
+    std::vector<ResourceRecord> rrs;
 
     LOG_TRACE_FMT("resolve: {}", (std::string)qname);
 
@@ -225,26 +299,213 @@ namespace aDNS
       LOG_DEBUG_FMT(
         "Looking for '{}' type '{}' in '{}'",
         (std::string)entry,
-        string_from_type(static_cast<uint16_t>(qtype)),
+        string_from_qtype(static_cast<QType>(qtype)),
         (std::string)origin);
 
-      for_each(origin, qtype, qclass, [&origin, &entry, &r](const auto& rr) {
-        if (rr.name == entry)
+      for_each(origin, qclass, qtype, [&origin, &entry, &rrs](const auto& rr) {
+        if (rr.owner == entry)
         {
-          LOG_DEBUG_FMT("Found a match!");
-          r.push_back(rr);
-          r.back().name += origin;
+          LOG_DEBUG_FMT("found match");
+          rrs.push_back(rr);
+          rrs.back().owner += origin;
         }
         return true;
       });
 
-      if (r.size() > 0)
+      if (rrs.size() > 0)
         break; // Continue collecting matches in longer origins?
 
       entry.labels.push_back(origin.labels.front());
       origin.labels.erase(origin.labels.begin());
     }
 
+    return rrs;
+  }
+
+  static RFC4034::SigningFunction make_signing_function(
+    std::shared_ptr<crypto::KeyPair> signing_key)
+  {
+    RFC4034::SigningFunction r = [signing_key](
+                                   RFC4034::Algorithm algorithm,
+                                   const std::vector<uint8_t>& data_to_sign) {
+      if (algorithm != RFC4034::Algorithm::ECDSAP384SHA384)
+        throw std::runtime_error(
+          fmt::format("algorithm {} not supported", algorithm));
+      return signing_key->sign(data_to_sign, crypto::MDType::SHA384);
+    };
     return r;
+  }
+
+  void Resolver::sign(const Name& origin)
+  {
+    LOG_DEBUG_FMT("(Re)signing {}", (std::string)origin);
+
+    auto kit = zone_signing_keys.find(origin);
+    if (kit == zone_signing_keys.end())
+    {
+      auto [ekit, ok] =
+        zone_signing_keys.emplace(origin, crypto::make_key_pair());
+      if (!ok)
+        throw std::runtime_error("error creating zone signing key");
+      kit = ekit;
+    }
+    auto zone_signing_key = kit->second;
+
+    std::vector<ResourceRecord> dnskey_rrs =
+      resolve(origin, QType::DNSKEY, QClass::IN);
+
+    if (dnskey_rrs.empty())
+    {
+      auto zspk = zone_signing_key->public_key_der();
+      auto key_tag = RFC4034::keytag(zspk.data(), zspk.size());
+
+      ResourceRecord dnskey_rr(
+        origin,
+        static_cast<uint16_t>(Type::DNSKEY),
+        static_cast<uint16_t>(Class::IN),
+        default_ttl,
+        RFC4034::DNSKEY(
+          0x0100,
+          RFC4034::Algorithm::ECDSAP384SHA384,
+          small_vector<uint16_t>(zspk.size(), zspk.data())));
+      ignore_on_add = true;
+      add(origin, dnskey_rr);
+      dnskey_rrs.push_back(dnskey_rr);
+    }
+
+    if (dnskey_rrs.size() > 1)
+      throw std::runtime_error("too many DNSKEY records");
+
+    RFC4034::DNSKEY dnskey_rdata(dnskey_rrs[0].rdata);
+
+    std::vector<ResourceRecord> ds_rrs = resolve(origin, QType::DS, QClass::IN);
+
+    if (ds_rrs.empty())
+    {
+      auto hp = crypto::make_hash_provider();
+
+      auto key_tag = RFC4034::keytag(
+        &dnskey_rdata.public_key[0], dnskey_rdata.public_key.size());
+      auto pk_digest = hp->Hash(
+        &dnskey_rdata.public_key[0],
+        dnskey_rdata.public_key.size(),
+        crypto::MDType::SHA384);
+
+      ResourceRecord ds_rr(
+        origin,
+        static_cast<uint16_t>(Type::DS),
+        static_cast<uint16_t>(Class::IN),
+        default_ttl,
+        RFC4034::DS(
+          key_tag,
+          RFC4034::Algorithm::ECDSAP384SHA384,
+          RFC4034::DigestType::SHA384,
+          pk_digest));
+
+      ignore_on_add = true;
+      add(origin, ds_rr);
+      ds_rrs.push_back(ds_rr);
+    }
+
+    if (ds_rrs.size() > 1)
+      throw std::runtime_error("too many DS records");
+
+    RFC4034::DS ds_rdata(ds_rrs[0].rdata);
+
+    {
+      // Check that we're using the right key
+      auto zspk = zone_signing_key->public_key_der();
+      auto key_tag = RFC4034::keytag(zspk.data(), zspk.size());
+      if (ds_rdata.key_tag != key_tag)
+        throw std::runtime_error("key tag mismatch");
+      if (dnskey_rdata.public_key.size() != zspk.size())
+        throw std::runtime_error("public key size mismatch");
+      for (size_t i = 0; i < zspk.size(); i++)
+        if (dnskey_rdata.public_key[i] != zspk[i])
+          throw std::runtime_error("public key mismatch");
+    }
+
+    for (const auto& [_, c] : supported_classes)
+    {
+      for (const auto& [_, t] : supported_types)
+      {
+        if (
+          t == Type::SOA || t == Type::DNSKEY || t == Type::RRSIG ||
+          t == Type::NSEC || t == Type::DS)
+          continue;
+
+        std::vector<ResourceRecord> records;
+
+        for_each(
+          origin,
+          static_cast<QClass>(c),
+          static_cast<QType>(t),
+          [&records](const auto& rr) {
+            // Check: TTL must be the same for all in rrset?
+            records.push_back(rr);
+            return true;
+          });
+
+        LOG_DEBUG_FMT(
+          "Sign {} {} {}: {} records",
+          (std::string)origin,
+          string_from_class(static_cast<uint16_t>(c)),
+          string_from_type(t),
+          records.size());
+
+        auto rrsig_rdata = RFC4034::sign(
+          make_signing_function(zone_signing_key),
+          ds_rdata.key_tag,
+          RFC4034::Algorithm::ECDSAP384SHA384,
+          68400,
+          origin,
+          static_cast<uint16_t>(c),
+          static_cast<uint16_t>(t),
+          records);
+
+        ignore_on_add = true;
+        add(
+          origin,
+          ResourceRecord(
+            origin,
+            static_cast<uint16_t>(Type::RRSIG),
+            static_cast<uint16_t>(c),
+            default_ttl,
+            rrsig_rdata));
+      }
+    }
+  }
+
+  void Resolver::on_add(const Name& origin, const ResourceRecord& rr)
+  {
+    if (ignore_on_add)
+    {
+      ignore_on_add = false;
+      return;
+    }
+
+    auto t = static_cast<Type>(rr.type);
+    LOG_DEBUG_FMT(
+      "{}: on_add: {}", (std::string)origin, string_from_resource_record(rr));
+    switch (t)
+    {
+      case Type::A:
+      case Type::NS:
+      case Type::CNAME:
+      case Type::SOA:
+      case Type::MX:
+      case Type::TXT:
+      case Type::AAAA:
+      case Type::RRSIG:
+      case Type::NSEC:
+      case Type::OPT:
+        sign(origin);
+        break;
+      default:
+      {
+        LOG_DEBUG_FMT("Ignoring update to {} record", string_from_type(t));
+        break;
+      }
+    }
   }
 }

@@ -20,6 +20,8 @@ namespace RFC6891 // https://datatracker.ietf.org/doc/html/rfc6891
     OPT = 41
   };
 
+  inline std::map<Type, std::string> type_string_map = {{Type::OPT, "OPT"}};
+
   class OPT : public RFC1035::RDataFormat
   {
     struct Option
@@ -36,6 +38,13 @@ namespace RFC6891 // https://datatracker.ietf.org/doc/html/rfc6891
     {
       // TODO
     }
+
+    OPT(const small_vector<uint16_t>& data)
+    {
+      // TODO
+    }
+
+    virtual ~OPT() = default;
 
     virtual operator small_vector<uint16_t>() const override
     {

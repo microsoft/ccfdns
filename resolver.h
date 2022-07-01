@@ -11,6 +11,11 @@
 #include <memory>
 #include <stdexcept>
 
+namespace crypto
+{
+  class KeyPair;
+}
+
 namespace aDNS
 {
   using Name = RFC1035::Name;
@@ -50,9 +55,11 @@ namespace aDNS
     ASTERISK = static_cast<uint16_t>(RFC1035::QType::ASTERISK),
   };
 
-  std::string string_from_type(const uint16_t& type);
+  std::string string_from_type(const Type& type);
+  std::string string_from_qtype(const QType& type);
 
   Type type_from_string(const std::string& s);
+  QType qtype_from_string(const std::string& s);
 
   enum class Class : uint16_t
   {
@@ -65,12 +72,12 @@ namespace aDNS
     ASTERISK = static_cast<uint16_t>(RFC1035::QClass::ASTERISK),
   };
 
-  inline bool type_in_qtype(uint16_t t, QType qt)
+  inline bool is_type_in_qtype(uint16_t t, QType qt)
   {
     return qt == QType::ASTERISK || t == static_cast<uint16_t>(qt);
   }
 
-  inline bool class_in_qclass(uint16_t c, QClass qc)
+  inline bool is_class_in_qclass(uint16_t c, QClass qc)
   {
     return qc == QClass::ASTERISK || c == static_cast<uint16_t>(qc);
   }
@@ -88,8 +95,23 @@ namespace aDNS
 
     virtual void for_each(
       const Name& origin,
-      QType qtype,
       QClass qclass,
+      QType qtype,
       const std::function<bool(const ResourceRecord&)>& f) = 0;
+
+    virtual void sign(const Name& origin);
+
+    virtual void on_add(const Name& origin, const ResourceRecord& rr);
+
+    virtual void add(const Name& origin, const ResourceRecord& rr) = 0;
+
+  protected:
+    uint32_t default_ttl = 86400;
+    bool ignore_on_add = false;
+    std::map<
+      Name,
+      std::shared_ptr<crypto::KeyPair>,
+      RFC4034::CanonicalNameOrdering>
+      zone_signing_keys;
   };
 }

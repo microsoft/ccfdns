@@ -11,6 +11,8 @@ namespace RFC3596 // https://www.rfc-editor.org/rfc/rfc3596.html
     AAAA = 28
   };
 
+  inline std::map<Type, std::string> type_string_map = {{Type::AAAA, "AAAA"}};
+
   class AAAA : public RFC1035::RDataFormat
   {
   public:
@@ -35,13 +37,15 @@ namespace RFC3596 // https://www.rfc-editor.org/rfc/rfc3596.html
       }
     }
 
-    AAAA(const std::vector<uint8_t>& data)
+    AAAA(const small_vector<uint16_t>& data)
     {
-      if (data.size() != 8)
+      if (data.size() != 16)
         throw std::runtime_error("invalid rdata for AAAA record");
       for (size_t i = 0; i < address.size(); i++)
         address[i] = data[i];
     }
+
+    virtual ~AAAA() = default;
 
     virtual operator small_vector<uint16_t>() const override
     {

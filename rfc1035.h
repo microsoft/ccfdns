@@ -85,7 +85,7 @@ namespace RFC1035 // https://datatracker.ietf.org/doc/html/rfc1035
     {
       std::string r;
       for (uint8_t i = 0; i < data.size(); i++)
-        r += std::to_string(data[i]);
+        r += (char)data[i];
       return r;
     }
 
@@ -105,6 +105,21 @@ namespace RFC1035 // https://datatracker.ietf.org/doc/html/rfc1035
       return data;
     }
 
+    void lower()
+    {
+      for (size_t i = 0; i < size(); i++)
+        data[i] = std::tolower(data[i]);
+    }
+
+    Label lowered() const
+    {
+      Label r;
+      r.data = data;
+      for (size_t i = 0; i < size(); i++)
+        r.data[i] = std::tolower(data[i]);
+      return r;
+    }
+
   protected:
     small_vector<uint8_t> data;
   };
@@ -114,24 +129,11 @@ namespace RFC1035 // https://datatracker.ietf.org/doc/html/rfc1035
     if (x.size() != y.size())
       return false;
 
-    for (size_t i = 1; i < x.size(); i++)
+    for (size_t i = 0; i < x.size(); i++)
       if (std::tolower(x[i]) != std::tolower(y[i]))
         return false;
 
     return true;
-  }
-
-  inline bool operator<(const RFC1035::Label& x, const RFC1035::Label& y)
-  {
-    if (x.size() < y.size())
-      return true;
-    else if (x.size() > y.size())
-      return false;
-    else
-      for (size_t i = 1; i < x.size(); i++)
-        if (std::tolower(x[i]) < std::tolower(y[i]))
-          return true;
-    return false;
   }
 
   static constexpr size_t MAX_NAME_SIZE = 255;
@@ -174,9 +176,12 @@ namespace RFC1035 // https://datatracker.ietf.org/doc/html/rfc1035
       parse_bytes(bytes, pos, SIZE_MAX);
     }
 
-    Name(const small_vector<uint16_t>& bytes, size_t& pos)
+    Name(
+      const small_vector<uint16_t>& bytes,
+      size_t& pos,
+      size_t num_labels = SIZE_MAX)
     {
-      parse_bytes(bytes, pos, SIZE_MAX);
+      parse_bytes(bytes, pos, num_labels);
     }
 
     Name(const small_vector<uint16_t>& bytes)
@@ -235,11 +240,13 @@ namespace RFC1035 // https://datatracker.ietf.org/doc/html/rfc1035
       return sz;
     }
 
+    /// Indicates whether the name is absolute (fully qualified).
     bool is_absolute() const
     {
       return labels.back().empty();
     }
 
+    /// Converts the name to its string representation.
     operator std::string() const
     {
       std::string r;
@@ -255,6 +262,7 @@ namespace RFC1035 // https://datatracker.ietf.org/doc/html/rfc1035
       return r;
     }
 
+    /// Indicates whether the name starts with the given prefix.
     bool starts_with(const Name& prefix) const
     {
       if (prefix.labels.size() > labels.size())
@@ -283,6 +291,20 @@ namespace RFC1035 // https://datatracker.ietf.org/doc/html/rfc1035
     {
       if (ends_with(suffix))
         labels.resize(labels.size() - suffix.labels.size());
+    }
+
+    Name lowered() const
+    {
+      std::vector<Label> llabels;
+      for (const auto& l : labels)
+        llabels.push_back(l.lowered());
+      return Name(llabels);
+    }
+
+    void lower()
+    {
+      for (auto& l : labels)
+        l.lower();
     }
 
     Name operator+(const Name& other) const
@@ -341,27 +363,6 @@ namespace RFC1035 // https://datatracker.ietf.org/doc/html/rfc1035
 
     return true;
   }
-
-  inline bool operator<(const RFC1035::Name& x, const RFC1035::Name& y)
-  {
-    if (x.labels.size() < y.labels.size())
-      return true;
-    else if (x.labels.size() > y.labels.size())
-      return false;
-
-    auto tit = x.labels.begin();
-    auto oit = y.labels.begin();
-
-    while (tit != x.labels.end() && oit != y.labels.begin())
-    {
-      if (*tit != *oit)
-        return *tit < *oit;
-      tit++;
-      oit++;
-    }
-
-    return false;
-  }
 }
 
 template <>
@@ -402,7 +403,27 @@ namespace RFC1035
     ASTERISK = 255, // A request for all records
   };
 
+  inline std::map<Type, std::string> type_string_map = {
+    {Type::A, "A"},
+    {Type::NS, "NS"},
+    {Type::MD, "MD"},
+    {Type::MF, "MF"},
+    {Type::CNAME, "CNAME"},
+    {Type::SOA, "SOA"},
+    {Type::MB, "MB"},
+    {Type::MG, "MG"},
+    {Type::MR, "MR"},
+    {Type::NULL_, "NULL"},
+    {Type::WKS, "WKS"},
+    {Type::PTR, "PTR"},
+    {Type::HINFO, "HINFO"},
+    {Type::MINFO, "MINFO"},
+    {Type::MX, "MX"},
+    {Type::TXT, "TXT"},
+  };
+
 }
+
 template <>
 inline void put(const RFC1035::Type& x, std::vector<uint8_t>& r)
 {
@@ -465,7 +486,7 @@ namespace RFC1035
   struct ResourceRecord
   {
     /// A domain name to which this resource record pertains.
-    Name name;
+    Name owner;
 
     /// Two octets containing one of the RR type codes.  This field specifies
     /// the meaning of the data in the RDATA field.
@@ -497,7 +518,7 @@ namespace RFC1035
       uint16_t class_,
       uint32_t ttl,
       const small_vector<uint16_t>& rdata) :
-      name(name),
+      owner(name),
       type(type),
       class_(class_),
       ttl(ttl),
@@ -506,7 +527,7 @@ namespace RFC1035
 
     ResourceRecord(const std::vector<uint8_t>& bytes, size_t& pos)
     {
-      name = Name(bytes, pos);
+      owner = Name(bytes, pos);
       type = get<uint16_t>(bytes, pos);
       class_ = get<uint16_t>(bytes, pos);
       ttl = get<uint32_t>(bytes, pos);
@@ -516,7 +537,7 @@ namespace RFC1035
     operator std::vector<uint8_t>() const
     {
       std::vector<uint8_t> r;
-      put(name, r);
+      put(owner, r);
       put(type, r);
       put(class_, r);
       put(ttl, r);
@@ -746,6 +767,7 @@ namespace RFC1035
   {
   public:
     RDataFormat() {}
+    virtual ~RDataFormat() {}
     virtual operator small_vector<uint16_t>() const = 0;
     virtual operator std::string() const = 0;
   };
@@ -791,6 +813,8 @@ namespace RFC1035
       return std::to_string(address[0]) + "." + std::to_string(address[1]) +
         "." + std::to_string(address[2]) + "." + std::to_string(address[3]);
     }
+
+    virtual ~A() = default;
   };
 
   class NS : public RDataFormat
@@ -818,6 +842,78 @@ namespace RFC1035
     {
       return nsdname;
     }
+
+    virtual ~NS() = default;
+  };
+
+  class SOA : public RDataFormat
+  {
+  public:
+    Name mname;
+    Name rname;
+    uint32_t serial;
+    uint32_t refresh;
+    uint32_t retry;
+    uint32_t expire;
+    uint32_t minimum;
+
+    SOA(const std::string& data)
+    {
+      std::stringstream s(data);
+      std::string tmp;
+      s >> tmp;
+      mname = Name(tmp);
+      if (!mname.is_absolute())
+        throw std::runtime_error("invalid SOA record: mname not absolute");
+      s >> tmp;
+      rname = Name(tmp);
+      if (!rname.is_absolute())
+        throw std::runtime_error("invalid SOA record: rname not absolute");
+      s >> serial;
+      s >> refresh;
+      s >> retry;
+      s >> expire;
+      s >> minimum;
+    }
+
+    SOA(const small_vector<uint16_t>& data)
+    {
+      size_t pos = 0;
+      mname = Name(data, pos);
+      if (!mname.is_absolute())
+        throw std::runtime_error("invalid SOA record: mname not absolute");
+      rname = Name(data, pos);
+      if (!rname.is_absolute())
+        throw std::runtime_error("invalid SOA record: rname not absolute");
+      serial = get<uint32_t>(data, pos);
+      refresh = get<uint32_t>(data, pos);
+      retry = get<uint32_t>(data, pos);
+      expire = get<uint32_t>(data, pos);
+      minimum = get<uint32_t>(data, pos);
+    }
+
+    virtual operator small_vector<uint16_t>() const override
+    {
+      std::vector<uint8_t> r;
+      put(mname, r);
+      put(rname, r);
+      put(serial, r);
+      put(refresh, r);
+      put(retry, r);
+      put(expire, r);
+      put(minimum, r);
+      return small_vector<uint16_t>(r.size(), r.data());
+    }
+
+    virtual operator std::string() const override
+    {
+      return (std::string)mname + " " + (std::string)rname + " " +
+        std::to_string(serial) + " " + std::to_string(refresh) + " " +
+        std::to_string(retry) + " " + std::to_string(expire) + " " +
+        std::to_string(minimum);
+    }
+
+    virtual ~SOA() = default;
   };
 
   class CNAME : public RDataFormat
@@ -844,35 +940,76 @@ namespace RFC1035
     {
       return cname;
     }
+
+    virtual ~CNAME() = default;
+  };
+
+  class MX : public RDataFormat
+  {
+  public:
+    uint16_t preference;
+    Name exchange;
+
+    MX(const std::string& data)
+    {
+      std::stringstream s(data);
+      std::string tmp;
+      s >> preference;
+      s >> tmp;
+      exchange = Name(tmp);
+    }
+
+    MX(const small_vector<uint16_t>& data)
+    {
+      size_t pos = 0;
+      preference = get<uint16_t>(data, pos);
+      exchange = Name(data, pos);
+    }
+
+    virtual operator small_vector<uint16_t>() const override
+    {
+      std::vector<uint8_t> r;
+      put(preference, r);
+      put(exchange, r);
+      return small_vector<uint16_t>((uint16_t)r.size(), (uint8_t*)r.data());
+    }
+
+    virtual operator std::string() const override
+    {
+      return std::to_string(preference) + " " + (std::string)exchange;
+    }
+
+    virtual ~MX() = default;
   };
 
   class TXT : public RDataFormat
   {
   public:
-    std::string txt_data;
+    std::string txt;
 
     TXT(const std::string& data)
     {
-      txt_data = data;
+      txt = data;
     }
 
     TXT(const small_vector<uint16_t>& data)
     {
-      txt_data = {&data[0], &data[0] + data.size()};
+      txt = {&data[0], &data[0] + data.size()};
     }
 
     virtual operator small_vector<uint16_t>() const override
     {
-      if (txt_data.size() > 65535)
+      if (txt.size() > 65535)
         throw std::runtime_error("excessive string length");
-      return small_vector<uint16_t>(
-        (uint16_t)txt_data.size(), (uint8_t*)txt_data.data());
+      return small_vector<uint16_t>((uint16_t)txt.size(), (uint8_t*)txt.data());
     }
 
     virtual operator std::string() const override
     {
-      return txt_data;
+      return txt;
     }
+
+    virtual ~TXT() = default;
   };
 
 } // namespace RFC1035

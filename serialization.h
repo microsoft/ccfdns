@@ -5,8 +5,8 @@
 #include <cstdint>
 #include <vector>
 
-template <typename T>
-inline T get(const std::vector<uint8_t>& bytes, size_t& pos)
+template <typename T, typename V = std::vector<uint8_t>>
+inline T get(const V& bytes, size_t& pos)
 {
   T r = 0;
   for (size_t i = 0; i < sizeof(T); i++)
@@ -19,9 +19,8 @@ inline T get(const std::vector<uint8_t>& bytes, size_t& pos)
   return r;
 }
 
-template <typename T>
-inline std::vector<T> get_n(
-  const std::vector<uint8_t>& bytes, size_t& pos, size_t n)
+template <typename T, typename V = std::vector<uint8_t>>
+inline std::vector<T> get_n(const V& bytes, size_t& pos, size_t n)
 {
   std::vector<T> r(n);
   for (size_t i = 0; i < n; i++)

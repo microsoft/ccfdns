@@ -2,16 +2,23 @@
 // Licensed under the Apache 2.0 License.
 #pragma once
 
-#include "ccf/crypto/base64.h"
-#include "ccf/ds/hex.h"
 #include "rfc1035.h"
 #include "serialization.h"
+#include "small_vector.h"
 
+#include <ccf/crypto/base64.h>
+#include <ccf/ds/hex.h>
 #include <cstdint>
+#include <set>
 #include <span>
 #include <stdexcept>
 #include <string>
 #include <vector>
+
+namespace crypto
+{
+  class KeyPair;
+}
 
 namespace RFC4034 // https://datatracker.ietf.org/doc/html/rfc4034
 {
@@ -23,57 +30,193 @@ namespace RFC4034 // https://datatracker.ietf.org/doc/html/rfc4034
     DS = 43,
   };
 
+  inline std::map<Type, std::string> type_string_map = {
+    {Type::DNSKEY, "DNSKEY"},
+    {Type::RRSIG, "RRSIG"},
+    {Type::NSEC, "NSEC"},
+    {Type::DS, "DS"}};
+
+  // https://datatracker.ietf.org/doc/html/rfc4034#appendix-A.1
+  // https://datatracker.ietf.org/doc/html/rfc6944
+  /// https://www.iana.org/assignments/dns-sec-alg-numbers/dns-sec-alg-numbers.xhtml
+  enum class Algorithm : uint8_t
+  {
+    DELETE = 0, // Not for zone signing.
+    RSAMD5 = 1, // Must not implement.
+    DH = 2, // Not for zone signing.
+    DSA = 3,
+    RESERVED1 = 4,
+    RSASHA1 = 5, // Technically mandatory.
+    DSA_NSEC3_SHA1 = 6,
+    RSASHA1_NSEC3_SHA1 = 7,
+    RSASHA256 = 8,
+    RESERVED2 = 9,
+    RSASHA512 = 10,
+    RESERVED3 = 11,
+    ECC_GOST = 12,
+    ECDSAP256SHA256 = 13,
+    ECDSAP384SHA384 = 14,
+    ED25519 = 15,
+    ED448 = 16,
+
+    // 17-122 Unassigned
+    // 123-251 Reserved
+
+    INDIRECT = 252, // Not for zone signing.
+    PRIVATE_DNS = 253,
+    PRIVATE_OID = 254,
+    RESERVED_2 = 255,
+  };
+
+  static std::map<Algorithm, std::string> algorithm_mnemonic_map = {
+    {Algorithm::DELETE, "DELETE"},
+    {Algorithm::RSAMD5, "RSAMD5"},
+    {Algorithm::DH, "DH"},
+    {Algorithm::DSA, "DSA"},
+    {Algorithm::RESERVED1, "RESERVED1"},
+    {Algorithm::RSASHA1, "RSASHA1"},
+    {Algorithm::DSA_NSEC3_SHA1, "DSA_NSEC3_SHA1"},
+    {Algorithm::RSASHA1_NSEC3_SHA1, "RSASHA1_NSEC3_SHA1"},
+    {Algorithm::RSASHA256, "RSASHA256"},
+    {Algorithm::RESERVED2, "RESERVED2"},
+    {Algorithm::RSASHA512, "RSASHA512"},
+    {Algorithm::RESERVED3, "RESERVED3"},
+    {Algorithm::ECC_GOST, "ECC_GOST"},
+    {Algorithm::ECDSAP256SHA256, "ECDSAP256SHA256"},
+    {Algorithm::ECDSAP384SHA384, "ECDSAP384SHA384"},
+    {Algorithm::ED25519, "ED25519"},
+    {Algorithm::ED448, "ED448"},
+    {Algorithm::INDIRECT, "INDIRECT"},
+    {Algorithm::PRIVATE_DNS, "PRIVATEDNS"},
+    {Algorithm::PRIVATE_OID, "PRIVATEOID"},
+  };
+
+  inline std::string algorithm_mnemonic(Algorithm a)
+  {
+    auto mit = algorithm_mnemonic_map.find(a);
+    if (mit == algorithm_mnemonic_map.end())
+      throw std::runtime_error("unknown algorithm");
+    return mit->second;
+  }
+
+  inline Algorithm algorithm_id(const std::string& mnemonic)
+  {
+    for (const auto& [id, m] : algorithm_mnemonic_map)
+    {
+      if (m == mnemonic)
+        return id;
+    }
+
+    throw std::runtime_error("unknown algorithm mnemonic");
+  }
+
+  // https://datatracker.ietf.org/doc/html/rfc4034#appendix-A.2
+  enum class DigestType : uint8_t
+  {
+    RESERVED = 0,
+    SHA1 = 1,
+    SHA256 = 2, // RFC 4509
+    GOST_R = 3, // RFC 5933
+    SHA384 = 4 // RFC 6605
+  };
+
+  // https://datatracker.ietf.org/doc/html/rfc4034#section-2
   class DNSKEY : public RFC1035::RDataFormat
   {
   public:
     uint16_t flags;
     uint8_t protocol;
-    uint8_t algorithm;
-    std::vector<uint8_t> public_key;
+    Algorithm algorithm;
+    small_vector<uint16_t> public_key;
 
     DNSKEY(const std::string& data)
     {
       std::stringstream s(data);
-      unsigned t;
+      uint64_t t;
       s >> flags;
       s >> t;
       if (t > 0xFF)
-        throw std::runtime_error("invalid protocol in DNSKEY rdata");
+        throw std::runtime_error("invalid protocol in DNSKEY protocol");
       protocol = t;
-      s >> t;
-      if (t > 0xFF)
-        throw std::runtime_error("invalid algorithm in DNSKEY rdata");
-      algorithm = t;
+      std::string ts;
+      s >> ts;
+      try
+      {
+        algorithm = algorithm_id(ts);
+      }
+      catch (...)
+      {
+        algorithm = static_cast<Algorithm>(std::stoi(ts));
+      }
       std::string public_key_b64;
       s >> public_key_b64;
-      public_key = crypto::raw_from_b64(public_key_b64);
+      public_key = small_vector<uint16_t>::from_base64(public_key_b64);
+      enforce_invariants();
     }
 
-    DNSKEY(const std::vector<uint8_t>& data)
+    DNSKEY(const small_vector<uint16_t>& data)
     {
       if (data.size() < 5)
         throw std::runtime_error("DNSKEY rdata too short");
       flags = data[0] << 8 | data[1];
       protocol = data[2];
-      algorithm = data[3];
-      public_key = std::vector<uint8_t>(data.begin() + 4, data.end());
+      algorithm = static_cast<Algorithm>(data[3]);
+      public_key = small_vector<uint16_t>(data.size() - 4, &data[4]);
+      enforce_invariants();
     }
 
-    virtual operator std::vector<uint8_t>() const override
+    DNSKEY(
+      uint16_t flags,
+      Algorithm algorithm,
+      const small_vector<uint16_t>& public_key) :
+      flags(flags),
+      protocol(3),
+      algorithm(algorithm),
+      public_key(public_key)
     {
-      std::vector<uint8_t> r;
-      r.push_back(flags >> 8);
-      r.push_back(flags & 0x00FF);
-      r.push_back(protocol);
-      r.push_back(algorithm);
-      r.insert(r.end(), public_key.begin(), public_key.end());
+      enforce_invariants();
+    }
+
+    virtual ~DNSKEY() = default;
+
+    virtual operator small_vector<uint16_t>() const override
+    {
+      small_vector<uint16_t> r(
+        sizeof(flags) + sizeof(protocol) + sizeof(algorithm) +
+        public_key.size());
+      uint16_t pos = 0;
+      r[pos++] = flags >> 8;
+      r[pos++] = flags & 0x00FF;
+      r[pos++] = protocol;
+      r[pos++] = static_cast<uint8_t>(algorithm);
+      for (uint16_t i = 0; i < public_key.size(); i++)
+        r[pos++] = public_key[i];
       return r;
     }
 
     virtual operator std::string() const override
     {
       return std::to_string(flags) + " " + std::to_string(protocol) + " " +
-        std::to_string(algorithm) + " " + crypto::b64_from_raw(public_key);
+        std::to_string(static_cast<uint8_t>(algorithm)) + " " +
+        public_key.to_base64();
+    }
+
+    bool is_zone_key() const
+    {
+      return flags & 0x0100;
+    }
+
+    bool is_secure_entry_point() const
+    {
+      return flags & 0x0001;
+    }
+
+  protected:
+    void enforce_invariants()
+    {
+      flags &= 0x0101; // ... must be ignored
+      if (protocol != 3)
+        throw std::runtime_error("invalid DNSKEY protocol");
     }
   };
 
@@ -115,7 +258,7 @@ namespace RFC4034 // https://datatracker.ietf.org/doc/html/rfc4034
       signature = crypto::raw_from_b64(signature_b64);
     }
 
-    RRSIG(const std::vector<uint8_t>& data)
+    RRSIG(const small_vector<uint16_t>& data)
     {
       if (data.size() < 8)
         throw std::runtime_error("DNSKEY rdata too short");
@@ -128,10 +271,34 @@ namespace RFC4034 // https://datatracker.ietf.org/doc/html/rfc4034
       signature_inception = get<decltype(signature_inception)>(data, pos);
       key_tag = get<decltype(key_tag)>(data, pos);
       signer_name = RFC1035::Name(data, pos, labels);
-      signature = get_n<uint8_t>(data, pos, data.size() - pos);
+      signature =
+        std::vector<uint8_t>(&data[pos], &data[pos] + data.size() - pos);
     }
 
-    virtual operator std::vector<uint8_t>() const override
+    RRSIG(
+      uint16_t type_covered,
+      uint8_t algorithm,
+      uint8_t labels,
+      uint32_t original_ttl,
+      uint32_t signature_expiration,
+      uint32_t signature_inception,
+      uint16_t key_tag,
+      const RFC1035::Name& signer_name,
+      const std::vector<uint8_t>& signature) :
+      type_covered(type_covered),
+      algorithm(algorithm),
+      labels(labels),
+      original_ttl(original_ttl),
+      signature_expiration(signature_expiration),
+      signature_inception(signature_inception),
+      key_tag(key_tag),
+      signer_name(signer_name),
+      signature(signature)
+    {}
+
+    virtual ~RRSIG() = default;
+
+    virtual operator small_vector<uint16_t>() const override
     {
       std::vector<uint8_t> r;
       put(type_covered, r);
@@ -143,16 +310,24 @@ namespace RFC4034 // https://datatracker.ietf.org/doc/html/rfc4034
       put(key_tag, r);
       put(signer_name, r);
       put(signature, r);
-      return r;
+      if (r.size() > 255)
+        throw std::runtime_error("RRSIG rdata too large");
+      return small_vector<uint16_t>(r.size(), r.data());
     }
 
     virtual operator std::string() const override
     {
-      return std::to_string(type_covered) + " " + std::to_string(algorithm) +
-        " " + std::to_string(labels) + " " + std::to_string(original_ttl) +
-        " " + std::to_string(signature_expiration) + " " +
-        std::to_string(signature_inception) + " " + std::to_string(key_tag) +
-        " " + (std::string)signer_name + " " + crypto::b64_from_raw(signature);
+      std::string r;
+      r += std::to_string(type_covered);
+      r += " " + std::to_string(algorithm);
+      r += " " + std::to_string(labels);
+      r += " " + std::to_string(original_ttl);
+      r += " " + std::to_string(signature_expiration);
+      r += " " + std::to_string(signature_inception);
+      r += " " + std::to_string(key_tag);
+      r += " " + (std::string)signer_name;
+      r += " " + crypto::b64_from_raw(signature);
+      return r;
     }
   };
 
@@ -186,12 +361,14 @@ namespace RFC4034 // https://datatracker.ietf.org/doc/html/rfc4034
       throw std::runtime_error("NIY");
     }
 
-    NSEC(const std::vector<uint8_t>& data)
+    NSEC(const small_vector<uint16_t>& data)
     {
       throw std::runtime_error("NIY");
     }
 
-    virtual operator std::vector<uint8_t>() const override
+    virtual ~NSEC() = default;
+
+    virtual operator small_vector<uint16_t>() const override
     {
       throw std::runtime_error("NIY");
     }
@@ -206,44 +383,167 @@ namespace RFC4034 // https://datatracker.ietf.org/doc/html/rfc4034
   {
   public:
     uint16_t key_tag;
-    uint8_t algorithm;
-    uint8_t digest_type;
+    Algorithm algorithm;
+    DigestType digest_type;
     std::vector<uint8_t> digest;
+
+    DS(
+      uint16_t key_tag,
+      Algorithm algorithm,
+      DigestType digest_type,
+      const std::vector<uint8_t>& digest) :
+      key_tag(key_tag),
+      algorithm(algorithm),
+      digest_type(digest_type),
+      digest(digest)
+    {}
 
     DS(const std::string& data)
     {
       std::stringstream s(data);
+      uint8_t tmp;
       s >> key_tag;
-      s >> algorithm;
-      s >> digest_type;
+      s >> tmp;
+      algorithm = static_cast<Algorithm>(tmp);
+      s >> tmp;
+      digest_type = static_cast<DigestType>(tmp);
       std::string t;
       s >> t;
       digest = ds::from_hex(t);
     }
 
-    DS(const std::vector<uint8_t>& data)
+    DS(const small_vector<uint16_t>& data)
     {
       size_t pos = 0;
       key_tag = get<decltype(key_tag)>(data, pos);
-      algorithm = get<decltype(algorithm)>(data, pos);
-      digest_type = get<decltype(digest_type)>(data, pos);
-      digest = {data.begin() + pos, data.end()};
+      algorithm = static_cast<Algorithm>(get<uint8_t>(data, pos));
+      digest_type = static_cast<DigestType>(get<uint8_t>(data, pos));
+      digest.reserve(data.size() - pos);
+      while (pos < data.size())
+        digest.push_back(data[pos++]);
     }
 
-    virtual operator std::vector<uint8_t>() const override
+    virtual ~DS() = default;
+
+    virtual operator small_vector<uint16_t>() const override
     {
       std::vector<uint8_t> r;
       put(key_tag, r);
-      put(algorithm, r);
-      put(digest_type, r);
+      put(static_cast<uint8_t>(algorithm), r);
+      put(static_cast<uint8_t>(digest_type), r);
       put(digest, r);
-      return r;
+      if (r.size() > 65535)
+        throw std::runtime_error("DS rdata size too large");
+      return small_vector<uint16_t>(r.size(), r.data());
     }
 
     virtual operator std::string() const override
     {
-      return std::to_string(key_tag) + " " + std::to_string(algorithm) + " " +
-        std::to_string(digest_type) + " " + ds::to_hex(digest);
+      return std::to_string(key_tag) + " " +
+        std::to_string(static_cast<uint8_t>(algorithm)) + " " +
+        std::to_string(static_cast<uint8_t>(digest_type)) + " " +
+        ds::to_hex(digest);
     }
   };
+
+  // Appendix B
+  inline unsigned int keytag(unsigned char key[], unsigned int keysize)
+  {
+    uint32_t ac;
+    unsigned int i;
+
+    for (ac = 0, i = 0; i < keysize; ++i)
+      ac += (i & 1) ? key[i] : key[i] << 8;
+
+    ac += (ac >> 16) & 0xFFFF;
+
+    return ac & 0xFFFF;
+  }
+
+  // https://datatracker.ietf.org/doc/html/rfc4034#section-6.1
+
+  inline bool operator<(const RFC1035::Label& x, const RFC1035::Label& y)
+  {
+    size_t i = 0;
+    do
+    {
+      if (i >= x.size() && i < y.size())
+        return true;
+      if (i >= y.size())
+        return false;
+      uint8_t lx = std::tolower(x[i]);
+      uint8_t ly = std::tolower(y[i]);
+      if (lx == ly)
+        i++;
+      else
+        return lx < ly;
+    } while (i < x.size() || i < y.size());
+
+    return false;
+  }
+
+  inline bool operator<(const RFC1035::Name& x, const RFC1035::Name& y)
+  {
+    auto xit = x.labels.rbegin();
+    auto yit = y.labels.rbegin();
+
+    do
+    {
+      if (xit == x.labels.rend() && yit != y.labels.rend())
+        return true;
+      if (yit == y.labels.rend())
+        return false;
+      if (*xit == *yit)
+      {
+        xit++;
+        yit++;
+      }
+      else
+        return *xit < *yit;
+    } while (xit != x.labels.rend() || yit != y.labels.rend());
+
+    return false;
+  }
+
+  struct CanonicalNameOrdering
+  {
+    bool operator()(const RFC1035::Name& x, const RFC1035::Name& y) const
+    {
+      return operator<(x, y);
+    }
+  };
+
+  inline bool operator<(
+    const RFC1035::ResourceRecord& x, const RFC1035::ResourceRecord& y)
+  {
+    auto xs = (std::vector<uint8_t>)x;
+    auto ys = (std::vector<uint8_t>)y;
+    return false;
+  }
+
+  struct CanonicalRROrdering
+  {
+    bool operator()(
+      const RFC1035::ResourceRecord& x, const RFC1035::ResourceRecord& y) const
+    {
+      return operator<(x, y);
+    }
+  };
+
+  typedef std::set<RFC1035::ResourceRecord, RFC4034::CanonicalRROrdering>
+    CanonicalRRSet;
+
+  typedef std::function<std::vector<uint8_t>(
+    Algorithm, const std::vector<uint8_t>&)>
+    SigningFunction;
+
+  RFC4034::RRSIG sign(
+    const SigningFunction& signing_function,
+    unsigned int keytag,
+    Algorithm algorithm,
+    uint32_t original_ttl,
+    const RFC1035::Name& origin,
+    uint16_t class_,
+    uint16_t type_,
+    const std::vector<RFC1035::ResourceRecord>& records);
 }

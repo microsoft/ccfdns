@@ -5,6 +5,7 @@
 #include "serialization.h"
 
 #include <ccf/crypto/base64.h>
+#include <ccf/ds/hex.h>
 #include <cstdint>
 #include <initializer_list>
 #include <string>
@@ -154,3 +155,29 @@ protected:
   T size_;
   E* data;
 };
+
+namespace ds
+{
+  template <>
+  inline std::string to_hex(const char& b)
+  {
+    return fmt::format("{:02x}", b);
+  }
+
+  template <>
+  inline std::string to_hex(const unsigned char& b)
+  {
+    return fmt::format("{:02x}", b);
+  }
+
+  template <typename T, typename E>
+  inline static std::string to_hex(const small_vector<T, E>& data)
+  {
+    std::string r;
+    for (T i = 0; i < data.size(); i++)
+    {
+      r += ds::to_hex(data[i]);
+    }
+    return r;
+  }
+}

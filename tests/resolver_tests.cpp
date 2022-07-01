@@ -9,6 +9,7 @@
 
 #define DOCTEST_CONFIG_IMPLEMENT
 #include <doctest/doctest.h>
+#include <random>
 
 using namespace aDNS;
 using namespace RFC1035;
@@ -21,17 +22,19 @@ public:
   TestResolver() : Resolver() {}
   virtual ~TestResolver() {}
 
-  std::map<Name, std::vector<ResourceRecord>> zones;
+  std::map<Name, std::vector<ResourceRecord>, RFC4034::CanonicalNameOrdering>
+    zones;
 
-  virtual void add(const Name& origin, const ResourceRecord& r)
+  virtual void add(const Name& origin, const ResourceRecord& r) override
   {
     zones[origin].push_back(r);
+    Resolver::on_add(origin, r);
   }
 
   virtual void for_each(
     const Name& origin,
-    aDNS::QType qtype,
     aDNS::QClass qclass,
+    aDNS::QType qtype,
     const std::function<bool(const ResourceRecord&)>& f) override
   {
     auto oit = zones.find(origin);
@@ -39,7 +42,9 @@ public:
     {
       for (const auto& rr : oit->second)
       {
-        if (type_in_qtype(rr.type, qtype) && class_in_qclass(rr.class_, qclass))
+        if (
+          is_type_in_qtype(rr.type, qtype) &&
+          is_class_in_qclass(rr.class_, qclass))
           if (!f(rr))
             break;
       }
@@ -74,11 +79,50 @@ ResourceRecord RR(
     data);
 }
 
+TEST_CASE("Name ordering")
+{
+  // https://datatracker.ietf.org/doc/html/rfc4034#section-6.1
+
+  REQUIRE(RFC4034::operator<(Name("a.example"), Name("z.example")));
+  REQUIRE(RFC4034::operator<(Name("yljkjljk.a.example"), Name("*.z.example")));
+  REQUIRE(RFC4034::operator<(Name("yljkjljk.a.example"), Name("Z.a.example")));
+
+  std::vector<Name> names = {
+    Name("example"),
+    Name("a.example"),
+    Name("yljkjljk.a.example"),
+    Name("Z.a.example"),
+    Name("zABC.a.EXAMPLE"),
+    Name("z.example"),
+    Name("\001.z.example"),
+    Name("*.z.example"),
+    Name("\200.z.example")};
+
+  std::vector<Name> shuffled = names;
+  auto rng = std::default_random_engine{};
+  std::shuffle(std::begin(shuffled), std::end(shuffled), rng);
+
+  std::sort(shuffled.begin(), shuffled.end(), RFC4034::CanonicalNameOrdering());
+
+  REQUIRE(names.size() == shuffled.size());
+  for (size_t i = 0; i < names.size(); i++)
+    REQUIRE(names[i] == shuffled[i]);
+}
+
 TEST_CASE("Basic lookups")
 {
   TestResolver s;
 
   Name origin("example.com.");
+
+  REQUIRE_NOTHROW(s.add(
+    origin,
+    RR(
+      origin,
+      aDNS::Type::SOA,
+      aDNS::Class::IN,
+      RFC1035::SOA(
+        "ns1.example.com. joe.example.com. 4 604800 86400 2419200 604800"))));
 
   REQUIRE_NOTHROW(s.add(
     origin,
@@ -158,17 +202,18 @@ TEST_CASE("DNSSEC RRs")
 {
   TestResolver s;
 
+  std::string demo_key_b64 =
+    "AQPSKmynfzW4kyBv015MUG2DeIQ3Cbl+BBZH4b/0PY1kxkmvHjcZc8nokfzj31GajIQKY+"
+    "5CptLr3buXA10hWqTkF7H6RfoRqXQeogmMHfpftf6zMv1LyBUgia7za6ZEzOJBOztyvhjL742i"
+    "U/TpPSEDhm2SNKLijfUppn1UaNvv4w==";
+
   REQUIRE_NOTHROW(s.add(
     Name("example.com."),
     RR(
       Name("mykey"),
       aDNS::Type::DNSKEY,
       aDNS::Class::IN,
-      RFC4034::DNSKEY("256 3 5 "
-                      "AQPSKmynfzW4kyBv015MUG2DeIQ3Cbl+BBZH4b/"
-                      "0PY1kxkmvHjcZc8nokfzj31GajIQKY+"
-                      "5CptLr3buXA10hWqTkF7H6RfoRqXQeogmMHfpftf6zMv1LyBUgia7za6"
-                      "ZEzOJBOztyvhjL742iU/TpPSEDhm2SNKLijfUppn1UaNvv4w=="))));
+      RFC4034::DNSKEY("256 3 5 " + demo_key_b64))));
 
   {
     RFC1035::Message msg =
@@ -178,7 +223,7 @@ TEST_CASE("DNSSEC RRs")
     RFC4034::DNSKEY dnskey(response.answers[0].rdata);
     std::string sd = dnskey;
     std::cout << sd << std::endl;
-    REQUIRE(sd.starts_with("256 3 5 AQPSK"));
+    REQUIRE(sd == "256 3 5 " + demo_key_b64);
   }
 }
 
