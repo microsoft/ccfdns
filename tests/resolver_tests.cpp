@@ -22,13 +22,33 @@ public:
   TestResolver() : Resolver() {}
   virtual ~TestResolver() {}
 
-  std::map<Name, std::vector<ResourceRecord>, RFC4034::CanonicalNameOrdering>
+  std::map<
+    Name,
+    std::set<ResourceRecord, RFC4034::CanonicalRROrdering>,
+    RFC4034::CanonicalNameOrdering>
     zones;
 
-  virtual void add(const Name& origin, const ResourceRecord& r) override
+  virtual void add(const Name& origin, const ResourceRecord& rr) override
   {
-    zones[origin].push_back(r);
-    Resolver::on_add(origin, r);
+    ResourceRecord rs(rr);
+    if (!rs.name.is_absolute())
+      rs.name += origin;
+
+    LOG_DEBUG_FMT("Add: {}", string_from_resource_record(rs));
+
+    zones[origin].insert(rs);
+    Resolver::on_add(origin, rs);
+  }
+
+  virtual void remove(const Name& origin, const ResourceRecord& rr) override
+  {
+    ResourceRecord rs(rr);
+    if (!rs.name.is_absolute())
+      rs.name += origin;
+
+    LOG_DEBUG_FMT("Remove: {}", string_from_resource_record(rs));
+
+    zones[origin].erase(rs);
   }
 
   virtual void for_each(
@@ -50,6 +70,19 @@ public:
       }
     }
   };
+
+  virtual void show(const Name& origin) const
+  {
+    LOG_DEBUG_FMT("Current entries in {}:", (std::string)origin);
+    auto oit = zones.find(origin);
+    if (oit != zones.end())
+    {
+      for (const auto& rr : oit->second)
+        LOG_DEBUG_FMT(" {}", string_from_resource_record(rr));
+    }
+    else
+      LOG_DEBUG_FMT("<empty>");
+  }
 };
 
 RFC1035::Message mk_question(const std::string& name, aDNS::QType type)
@@ -86,6 +119,10 @@ TEST_CASE("Name ordering")
   REQUIRE(RFC4034::operator<(Name("a.example"), Name("z.example")));
   REQUIRE(RFC4034::operator<(Name("yljkjljk.a.example"), Name("*.z.example")));
   REQUIRE(RFC4034::operator<(Name("yljkjljk.a.example"), Name("Z.a.example")));
+  REQUIRE(RFC4034::operator<(Name("example.com."), Name("www.example.com.")));
+  REQUIRE(RFC4034::operator<(Name("example.com."), Name("wwwv6.example.com.")));
+  REQUIRE(
+    !RFC4034::operator<(Name("wwwv6.example.com."), Name("www.example.com.")));
 
   std::vector<Name> names = {
     Name("example"),
@@ -193,14 +230,17 @@ TEST_CASE("Basic lookups")
     auto response = s.reply(msg);
     REQUIRE(response.answers.size() > 0);
     NS ns(response.answers[0].rdata);
-    std::cout << (std::string)ns.nsdname << std::endl;
     REQUIRE(Name(response.answers[0].rdata) == Name("ns1.elsewhere.com."));
   }
+
+  s.show(origin);
 }
 
 TEST_CASE("DNSSEC RRs")
 {
   TestResolver s;
+
+  Name origin("example.com.");
 
   std::string demo_key_b64 =
     "AQPSKmynfzW4kyBv015MUG2DeIQ3Cbl+BBZH4b/0PY1kxkmvHjcZc8nokfzj31GajIQKY+"
@@ -208,7 +248,7 @@ TEST_CASE("DNSSEC RRs")
     "U/TpPSEDhm2SNKLijfUppn1UaNvv4w==";
 
   REQUIRE_NOTHROW(s.add(
-    Name("example.com."),
+    origin,
     RR(
       Name("mykey"),
       aDNS::Type::DNSKEY,
@@ -222,9 +262,27 @@ TEST_CASE("DNSSEC RRs")
     REQUIRE(response.answers.size() > 0);
     RFC4034::DNSKEY dnskey(response.answers[0].rdata);
     std::string sd = dnskey;
-    std::cout << sd << std::endl;
     REQUIRE(sd == "256 3 5 " + demo_key_b64);
   }
+
+  REQUIRE_NOTHROW(s.add(
+    origin,
+    RR(
+      origin,
+      aDNS::Type::SOA,
+      aDNS::Class::IN,
+      RFC1035::SOA(
+        "ns1.example.com. joe.example.com. 4 604800 86400 2419200 604800"))));
+
+  REQUIRE_NOTHROW(s.add(
+    origin,
+    RR(
+      Name("www"),
+      aDNS::Type::A,
+      aDNS::Class::IN,
+      RFC1035::A("93.184.216.34"))));
+
+  s.show(origin);
 }
 
 int main(int argc, char** argv)

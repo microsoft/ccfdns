@@ -3,6 +3,7 @@
 
 #include "rfc4034.h"
 
+#include "resolver.h"
 #include "rfc1035.h"
 #include "rfc3596.h"
 
@@ -21,14 +22,16 @@ namespace RFC4034
       name += origin;
   }
 
-  static ResourceRecord canonicalize(
-    const Name& origin, const ResourceRecord& rr)
+  ResourceRecord canonicalize(
+    const Name& origin,
+    const ResourceRecord& rr,
+    const std::function<std::string(const Type&)>& type2str)
   {
     // https://datatracker.ietf.org/doc/html/rfc4034#section-6.2
 
     ResourceRecord cr;
-    cr.owner = rr.owner;
-    lower_and_expand(origin, cr.owner);
+    cr.name = rr.name;
+    lower_and_expand(origin, cr.name);
     cr.class_ = rr.class_;
     cr.type = rr.type;
     cr.ttl = rr.ttl;
@@ -74,21 +77,21 @@ namespace RFC4034
       }
       case U(RFC4034::Type::RRSIG):
       {
-        auto rdata = RFC4034::RRSIG(rr.rdata);
+        auto rdata = RFC4034::RRSIG(rr.rdata, type2str);
         lower_and_expand(origin, rdata.signer_name);
         cr.rdata = rdata;
         break;
       }
       case U(RFC4034::Type::NSEC):
       {
-        auto rdata = RFC4034::NSEC(rr.rdata);
+        auto rdata = RFC4034::NSEC(rr.rdata, type2str);
         lower_and_expand(origin, rdata.next_domain_name);
         cr.rdata = rdata;
         break;
       }
       case U(RFC1035::Type::A):
       case U(RFC3596::Type::AAAA):
-        /* Nothing to do */
+        cr.rdata = rr.rdata;
         break;
       default:
         throw std::runtime_error(
@@ -99,13 +102,15 @@ namespace RFC4034
 
   typedef std::set<ResourceRecord, RFC4034::CanonicalRROrdering> CanonicalRRSet;
 
-  static CanonicalRRSet canonicalize(
-    const Name& origin, const std::vector<ResourceRecord>& records)
+  CanonicalRRSet canonicalize(
+    const Name& origin,
+    const std::vector<ResourceRecord>& records,
+    const std::function<std::string(const Type&)>& type2str)
   {
     // https://datatracker.ietf.org/doc/html/rfc4034#section-6.3
     CanonicalRRSet r;
     for (const auto& rr : records)
-      r.insert(canonicalize(origin, rr));
+      r.insert(canonicalize(origin, rr, type2str));
     return r;
   }
 
@@ -136,7 +141,7 @@ namespace RFC4034
     for (const auto& rr : rrset)
     {
       std::vector<uint8_t> rr_i;
-      put(rr.owner, rr_i);
+      put(rr.name, rr_i);
       put(rr.type, rr_i);
       put(rr.class_, rr_i);
       put(rr.ttl, rr_i);
@@ -154,7 +159,8 @@ namespace RFC4034
     const RFC1035::Name& origin,
     uint16_t class_,
     uint16_t type,
-    const std::vector<RFC1035::ResourceRecord>& records)
+    const CanonicalRRSet& rrset,
+    const std::function<std::string(const Type&)>& type2str)
   {
     auto& owner = origin; // Correct if we are authoritative?
 
@@ -163,8 +169,6 @@ namespace RFC4034
     uint32_t sig_inception = duration_cast<std::chrono::seconds>(tp).count();
     uint32_t sig_expiration =
       duration_cast<std::chrono::seconds>(tp + std::chrono::days(90)).count();
-
-    auto crrset = RFC4034::canonicalize(origin, records);
 
     std::vector<uint8_t> signature = compute_rrset_signature(
       signing_function,
@@ -176,7 +180,7 @@ namespace RFC4034
       sig_expiration,
       keytag,
       owner,
-      crrset);
+      rrset);
 
     return RRSIG(
       type,
@@ -187,6 +191,107 @@ namespace RFC4034
       sig_inception,
       keytag,
       owner,
-      signature);
+      signature,
+      type2str);
+  }
+
+  NSEC::TypeBitMaps::TypeBitMaps(
+    const std::string& data,
+    const std::function<Type(const std::string&)>& str2type,
+    const std::function<std::string(const Type&)>& type2str) :
+    type2str(type2str)
+  {
+    std::stringstream s(data);
+    std::string t;
+    while (s)
+    {
+      s >> t;
+      insert(static_cast<uint16_t>(str2type(t)));
+    }
+  }
+
+  NSEC::TypeBitMaps::TypeBitMaps(
+    const small_vector<uint16_t>& data,
+    size_t& pos,
+    const std::function<std::string(const Type&)>& type2str) :
+    type2str(type2str)
+  {
+    while (pos < data.size())
+    {
+      uint8_t wndw = get<uint8_t>(data, pos);
+      auto bitmap = small_vector<uint8_t>(data, pos);
+      windows.push_back({wndw, bitmap});
+    }
+  }
+
+  NSEC::TypeBitMaps::operator small_vector<uint16_t>() const
+  {
+    std::vector<uint8_t> t;
+    put(t);
+    return small_vector<uint16_t>(t.size(), t.data());
+  }
+
+  NSEC::TypeBitMaps::operator std::string() const
+  {
+    bool first = true;
+    std::string r;
+    for (const auto& w : windows)
+    {
+      for (uint8_t i = 0; i < w.bitmap.size(); i++)
+      {
+        uint8_t bi = w.bitmap[i];
+        uint8_t type_no = i << 3;
+        while (bi != 0)
+        {
+          if (bi & 0x01)
+          {
+            if (first)
+              first = false;
+            else
+              r += " ";
+            Type t = static_cast<Type>(w.window_block_no << 8 | type_no);
+            r += type2str(t);
+          }
+          bi >>= 1;
+          type_no++;
+        }
+      }
+    }
+    return r;
+  }
+
+  void NSEC::TypeBitMaps::insert(uint16_t type)
+  {
+    uint8_t window = type >> 8;
+    uint8_t lower = type & 0xFF;
+
+    uint8_t window_index = 0;
+    for (; window_index < windows.size(); window_index++)
+    {
+      if (windows[window_index].window_block_no == window)
+      {
+        break;
+      }
+    }
+    if (window_index >= windows.size())
+    {
+      windows.push_back({window, {}});
+      window_index = windows.size() - 1;
+    }
+
+    auto& entry = windows[window_index];
+    uint8_t oct_inx = lower >> 3;
+    if (entry.bitmap.size() <= oct_inx)
+      entry.bitmap.resize(oct_inx + 1, 0);
+    entry.bitmap[oct_inx] |= 1 << (lower & 0x07);
+  }
+
+  void NSEC::TypeBitMaps::put(std::vector<uint8_t>& r) const
+  {
+    for (const auto& w : windows)
+    {
+      ::put(w.window_block_no, r);
+      w.bitmap.put(r);
+    }
   }
 }

@@ -57,6 +57,7 @@ namespace aDNS
 
   std::string string_from_type(const Type& type);
   std::string string_from_qtype(const QType& type);
+  std::string string_from_resource_record(const ResourceRecord& rr);
 
   Type type_from_string(const std::string& s);
   QType qtype_from_string(const std::string& s);
@@ -104,6 +105,8 @@ namespace aDNS
     virtual void on_add(const Name& origin, const ResourceRecord& rr);
 
     virtual void add(const Name& origin, const ResourceRecord& rr) = 0;
+
+    virtual void remove(const Name& origin, const ResourceRecord& rr) = 0;
 
   protected:
     uint32_t default_ttl = 86400;

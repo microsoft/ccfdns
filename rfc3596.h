@@ -4,6 +4,8 @@
 
 #include "rfc1035.h"
 
+#include <ccf/ds/hex.h>
+
 namespace RFC3596 // https://www.rfc-editor.org/rfc/rfc3596.html
 {
   enum class Type
@@ -42,7 +44,7 @@ namespace RFC3596 // https://www.rfc-editor.org/rfc/rfc3596.html
       if (data.size() != 16)
         throw std::runtime_error("invalid rdata for AAAA record");
       for (size_t i = 0; i < address.size(); i++)
-        address[i] = data[i];
+        address[i] = data[2 * i] << 8 | data[2 * i + 1];
     }
 
     virtual ~AAAA() = default;
@@ -61,9 +63,9 @@ namespace RFC3596 // https://www.rfc-editor.org/rfc/rfc3596.html
 
     virtual operator std::string() const override
     {
-      std::string r = std::to_string(address[0]);
+      std::string r = fmt::format("{:04x}", address[0]);
       for (size_t i = 1; i < 8; i++)
-        r += ":" + std::to_string(address[i]);
+        r += ":" + fmt::format("{:04x}", address[i]);
       return r;
     }
   };

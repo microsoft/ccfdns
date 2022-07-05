@@ -56,7 +56,10 @@ template <typename T>
 inline void put(const T& x, std::vector<uint8_t>& r)
 {
   for (size_t i = 0; i < sizeof(T); i++)
-    r.push_back((x >> 8 * (sizeof(T) - 1 - i)) & 0xFF);
+  {
+    uint8_t b = (x >> 8 * (sizeof(T) - 1 - i)) & 0xFF;
+    r.push_back(b);
+  }
 }
 
 template <typename T>

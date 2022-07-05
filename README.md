@@ -32,7 +32,7 @@ Sandbox:
 via json for now, for `www.example.com`:
 
 ```
-curl -v -k https://127.0.0.1:8000/app/add -X POST -H "Content-Type: application/json" -d '{"origin": "example.com.", "record": { "name": "www", "type": 1 , "class_": 1, "ttl": 3600, "rdata": [1, 2, 3, 4] }}'
+curl -v -k https://127.0.0.1:8000/app/add -X POST -H "Content-Type: application/json" -d '{"origin": "example.com.", "record": { "name": "www", "type": 1 , "class_": 1, "ttl": 3600, "rdata": "AQIDBA==" }}'
 ```
 
 

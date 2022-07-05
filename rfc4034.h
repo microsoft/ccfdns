@@ -233,7 +233,13 @@ namespace RFC4034 // https://datatracker.ietf.org/doc/html/rfc4034
     RFC1035::Name signer_name;
     std::vector<uint8_t> signature;
 
-    RRSIG(const std::string& data)
+    std::function<std::string(const Type&)> type2str;
+
+    RRSIG(
+      const std::string& data,
+      const std::function<Type(const std::string&)>& str2type,
+      const std::function<std::string(const Type&)>& type2str) :
+      type2str(type2str)
     {
       std::stringstream s(data);
       unsigned t;
@@ -258,7 +264,10 @@ namespace RFC4034 // https://datatracker.ietf.org/doc/html/rfc4034
       signature = crypto::raw_from_b64(signature_b64);
     }
 
-    RRSIG(const small_vector<uint16_t>& data)
+    RRSIG(
+      const small_vector<uint16_t>& data,
+      const std::function<std::string(const Type&)>& type2str) :
+      type2str(type2str)
     {
       if (data.size() < 8)
         throw std::runtime_error("DNSKEY rdata too short");
@@ -284,7 +293,8 @@ namespace RFC4034 // https://datatracker.ietf.org/doc/html/rfc4034
       uint32_t signature_inception,
       uint16_t key_tag,
       const RFC1035::Name& signer_name,
-      const std::vector<uint8_t>& signature) :
+      const std::vector<uint8_t>& signature,
+      const std::function<std::string(const Type&)>& type2str) :
       type_covered(type_covered),
       algorithm(algorithm),
       labels(labels),
@@ -293,7 +303,8 @@ namespace RFC4034 // https://datatracker.ietf.org/doc/html/rfc4034
       signature_inception(signature_inception),
       key_tag(key_tag),
       signer_name(signer_name),
-      signature(signature)
+      signature(signature),
+      type2str(type2str)
     {}
 
     virtual ~RRSIG() = default;
@@ -318,7 +329,7 @@ namespace RFC4034 // https://datatracker.ietf.org/doc/html/rfc4034
     virtual operator std::string() const override
     {
       std::string r;
-      r += std::to_string(type_covered);
+      r += type2str(static_cast<Type>(type_covered));
       r += " " + std::to_string(algorithm);
       r += " " + std::to_string(labels);
       r += " " + std::to_string(original_ttl);
@@ -334,48 +345,92 @@ namespace RFC4034 // https://datatracker.ietf.org/doc/html/rfc4034
   class NSEC : public RFC1035::RDataFormat
   {
   public:
-    struct TypeBitMap
+    class TypeBitMaps
     {
-      uint8_t window_block_no;
-      uint8_t bitmap_length;
-      std::vector<uint8_t> bitmap;
+    public:
+      struct Window
+      {
+        uint8_t window_block_no;
+        small_vector<uint8_t> bitmap;
+      };
+
+      std::vector<Window> windows;
+      std::function<std::string(const Type&)> type2str;
+
+      TypeBitMaps(const std::function<std::string(const Type&)>& type2str) :
+        type2str(type2str)
+      {}
+
+      TypeBitMaps(
+        const std::string& data,
+        const std::function<Type(const std::string&)>& str2type,
+        const std::function<std::string(const Type&)>& type2str);
+
+      TypeBitMaps(
+        const small_vector<uint16_t>& data,
+        size_t& pos,
+        const std::function<std::string(const Type&)>& type2str);
+
+      virtual ~TypeBitMaps() = default;
+
+      virtual operator small_vector<uint16_t>() const;
+
+      virtual operator std::string() const;
+
+      void put(std::vector<uint8_t>& r) const;
+
+      void insert(uint16_t type);
     };
+
     RFC1035::Name next_domain_name;
-    std::vector<TypeBitMap> type_bit_maps;
+    TypeBitMaps type_bit_maps;
+
+    NSEC(
+      RFC1035::Name& next_domain_name,
+      const std::function<std::string(const Type&)>& type2str) :
+      next_domain_name(next_domain_name),
+      type_bit_maps(type2str)
+    {}
 
     NSEC(
       const std::string& data,
-      const std::function<uint16_t(const std::string&)>& str2type)
+      const std::function<Type(const std::string&)>& str2type,
+      const std::function<std::string(const Type&)>& type2str) :
+      type_bit_maps(type2str)
     {
       std::stringstream s(data);
       std::string t;
       s >> t;
       next_domain_name = RFC1035::Name(t);
-      std::vector<uint16_t> types;
-      while (s)
-      {
-        s >> t;
-        types.push_back(str2type(t));
-      }
-      std::sort(types.begin(), types.end());
-      throw std::runtime_error("NIY");
+      type_bit_maps = TypeBitMaps(data, str2type, type2str);
     }
 
-    NSEC(const small_vector<uint16_t>& data)
+    NSEC(
+      const small_vector<uint16_t>& data,
+      const std::function<std::string(const Type&)>& type2str) :
+      type_bit_maps(type2str)
     {
-      throw std::runtime_error("NIY");
+      size_t pos = 0;
+      next_domain_name = RFC1035::Name(data, pos);
+      type_bit_maps = TypeBitMaps(data, pos, type2str);
     }
 
     virtual ~NSEC() = default;
 
     virtual operator small_vector<uint16_t>() const override
     {
-      throw std::runtime_error("NIY");
+      std::vector<uint8_t> r;
+      next_domain_name.put(r);
+      type_bit_maps.put(r);
+      return small_vector<uint16_t>(r.size(), r.data());
     }
 
     virtual operator std::string() const override
     {
-      throw std::runtime_error("NIY");
+      std::string r;
+      r = next_domain_name;
+      r += " " + (std::string)type_bit_maps;
+      return r;
     }
   };
 
@@ -516,8 +571,26 @@ namespace RFC4034 // https://datatracker.ietf.org/doc/html/rfc4034
   inline bool operator<(
     const RFC1035::ResourceRecord& x, const RFC1035::ResourceRecord& y)
   {
-    auto xs = (std::vector<uint8_t>)x;
-    auto ys = (std::vector<uint8_t>)y;
+    if (CanonicalNameOrdering()(x.name, y.name))
+      return true;
+
+    if (x.name != y.name)
+      return false;
+
+    if (x.class_ < y.class_)
+      return true;
+
+    if (x.type < y.type)
+      return true;
+
+    for (size_t i = 0; i < x.rdata.size(); i++)
+    {
+      if (i >= y.rdata.size())
+        return false;
+      if (x.rdata[i] < y.rdata[i])
+        return true;
+    }
+
     return false;
   }
 
@@ -537,6 +610,16 @@ namespace RFC4034 // https://datatracker.ietf.org/doc/html/rfc4034
     Algorithm, const std::vector<uint8_t>&)>
     SigningFunction;
 
+  RFC1035::ResourceRecord canonicalize(
+    const RFC1035::Name& origin,
+    const RFC1035::ResourceRecord& rr,
+    const std::function<std::string(const Type&)>& type2str);
+
+  CanonicalRRSet canonicalize(
+    const RFC1035::Name& origin,
+    const std::vector<RFC1035::ResourceRecord>& records,
+    const std::function<std::string(const Type&)>& type2str);
+
   RFC4034::RRSIG sign(
     const SigningFunction& signing_function,
     unsigned int keytag,
@@ -545,5 +628,6 @@ namespace RFC4034 // https://datatracker.ietf.org/doc/html/rfc4034
     const RFC1035::Name& origin,
     uint16_t class_,
     uint16_t type_,
-    const std::vector<RFC1035::ResourceRecord>& records);
+    const CanonicalRRSet& rrset,
+    const std::function<std::string(const Type&)>& type2str);
 }

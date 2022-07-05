@@ -22,29 +22,37 @@ import dns.rdataclass
 
 from loguru import logger as LOG
 
+
 def add_record(client, origin, name, stype, rdata_obj):
-    rdata = list()
-    rdata.extend(rdata_obj.to_wire())
-    r = client.post("/app/add", {
+    r = client.post(
+        "/app/add",
+        {
             "origin": origin,
             "record": {
                 "name": name,
                 "type": int(dns.rdatatype.from_text(stype)),
                 "class_": int(dns.rdataclass.IN),
                 "ttl": 3600,
-                "rdata": rdata
+                "rdata": base64.urlsafe_b64encode(rdata_obj.to_wire()).decode(),
             },
         },
     )
     assert r.status_code == http.HTTPStatus.NO_CONTENT
     return r
 
+
 def check_record(host, port, ca, name, stype, expected_data=None):
     qname = dns.name.from_text(name)
     qtype = dns.rdatatype.from_text(stype)
     with requests.sessions.Session() as session:
         q = dns.message.make_query(qname, qtype)
-        r = dns.query.https(q, "https://" + host + ":" + str(port) + "/app/dns-query", session=session, verify=ca, post=False)
+        r = dns.query.https(
+            q,
+            "https://" + host + ":" + str(port) + "/app/dns-query",
+            session=session,
+            verify=ca,
+            post=False,
+        )
         # print(r)
         for a in r.answer:
             assert a.name == qname

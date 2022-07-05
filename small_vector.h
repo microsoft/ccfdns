@@ -68,6 +68,19 @@ public:
     }
   }
 
+  small_vector(const small_vector<uint16_t>& bytes, size_t& pos) :
+    size_(0),
+    data(nullptr)
+  {
+    size_ = get<T>(bytes, pos);
+    if (size_ > 0)
+    {
+      data = new E[size_ * sizeof(E)];
+      for (uint8_t i = 0; i < size_; i++)
+        data[i] = get<E>(bytes, pos);
+    }
+  }
+
   ~small_vector()
   {
     if (size_ != 0)
@@ -102,6 +115,24 @@ public:
   bool empty() const
   {
     return size_ == 0;
+  }
+
+  void resize(const T& size, const E& elem)
+  {
+    E* new_data = size == 0 ? nullptr : new E[size * sizeof(E)];
+    if (data)
+    {
+      for (T i = 0; i < std::min(size, size_); i++)
+        new_data[i] = data[i];
+      delete[] data;
+    }
+    if (size > size_)
+    {
+      for (T i = size_; i < size; i++)
+        new_data[i] = elem;
+    }
+    size_ = size;
+    data = new_data;
   }
 
   small_vector<T, E>& operator=(const small_vector<T, E>& other)
@@ -158,25 +189,13 @@ protected:
 
 namespace ds
 {
-  template <>
-  inline std::string to_hex(const char& b)
-  {
-    return fmt::format("{:02x}", b);
-  }
-
-  template <>
-  inline std::string to_hex(const unsigned char& b)
-  {
-    return fmt::format("{:02x}", b);
-  }
-
   template <typename T, typename E>
   inline static std::string to_hex(const small_vector<T, E>& data)
   {
     std::string r;
     for (T i = 0; i < data.size(); i++)
     {
-      r += ds::to_hex(data[i]);
+      r += fmt::format("{:02x}", data[i]);
     }
     return r;
   }

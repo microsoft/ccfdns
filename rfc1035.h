@@ -162,10 +162,12 @@ namespace RFC1035 // https://datatracker.ietf.org/doc/html/rfc1035
         labels.push_back(Label());
     }
 
-    Name(
-      const std::vector<uint8_t>& bytes,
-      size_t& pos,
-      size_t num_labels = SIZE_MAX)
+    Name(const std::vector<uint8_t>& bytes, size_t& pos)
+    {
+      parse_bytes(bytes, pos);
+    }
+
+    Name(const std::vector<uint8_t>& bytes, size_t& pos, uint8_t num_labels)
     {
       parse_bytes(bytes, pos, num_labels);
     }
@@ -173,13 +175,15 @@ namespace RFC1035 // https://datatracker.ietf.org/doc/html/rfc1035
     Name(const std::vector<uint8_t>& bytes)
     {
       size_t pos = 0;
-      parse_bytes(bytes, pos, SIZE_MAX);
+      parse_bytes(bytes, pos);
     }
 
-    Name(
-      const small_vector<uint16_t>& bytes,
-      size_t& pos,
-      size_t num_labels = SIZE_MAX)
+    Name(const small_vector<uint16_t>& bytes, size_t& pos)
+    {
+      parse_bytes(bytes, pos);
+    }
+
+    Name(const small_vector<uint16_t>& bytes, size_t& pos, uint8_t num_labels)
     {
       parse_bytes(bytes, pos, num_labels);
     }
@@ -187,7 +191,7 @@ namespace RFC1035 // https://datatracker.ietf.org/doc/html/rfc1035
     Name(const small_vector<uint16_t>& bytes)
     {
       size_t pos = 0;
-      parse_bytes(bytes, pos, SIZE_MAX);
+      parse_bytes(bytes, pos);
     }
 
     Name(const Name& prefix, const Name& suffix)
@@ -243,7 +247,7 @@ namespace RFC1035 // https://datatracker.ietf.org/doc/html/rfc1035
     /// Indicates whether the name is absolute (fully qualified).
     bool is_absolute() const
     {
-      return labels.back().empty();
+      return labels.size() > 0 && labels.back().empty();
     }
 
     /// Converts the name to its string representation.
@@ -324,7 +328,7 @@ namespace RFC1035 // https://datatracker.ietf.org/doc/html/rfc1035
 
   protected:
     void parse_bytes(
-      const std::vector<uint8_t>& bytes, size_t& pos, size_t num_labels)
+      const std::vector<uint8_t>& bytes, size_t& pos, uint8_t num_labels = 0xFF)
     {
       size_t total_size = 0;
       do
@@ -338,7 +342,9 @@ namespace RFC1035 // https://datatracker.ietf.org/doc/html/rfc1035
     }
 
     void parse_bytes(
-      const small_vector<uint16_t>& bytes, size_t& pos, size_t num_labels)
+      const small_vector<uint16_t>& bytes,
+      size_t& pos,
+      uint8_t num_labels = 0xFF)
     {
       size_t total_size = 0;
       do
@@ -368,6 +374,8 @@ namespace RFC1035 // https://datatracker.ietf.org/doc/html/rfc1035
 template <>
 inline void put(const RFC1035::Name& name, std::vector<uint8_t>& r)
 {
+  if (!name.is_absolute())
+    throw std::runtime_error("cannot serialize relative names");
   name.put(r);
 }
 
@@ -485,8 +493,8 @@ namespace RFC1035
   // Same as https://datatracker.ietf.org/doc/html/rfc1035#section-4.1.3 ?
   struct ResourceRecord
   {
-    /// A domain name to which this resource record pertains.
-    Name owner;
+    /// The domain name/owner to which this resource record pertains.
+    Name name;
 
     /// Two octets containing one of the RR type codes.  This field specifies
     /// the meaning of the data in the RDATA field.
@@ -518,7 +526,7 @@ namespace RFC1035
       uint16_t class_,
       uint32_t ttl,
       const small_vector<uint16_t>& rdata) :
-      owner(name),
+      name(name),
       type(type),
       class_(class_),
       ttl(ttl),
@@ -527,7 +535,7 @@ namespace RFC1035
 
     ResourceRecord(const std::vector<uint8_t>& bytes, size_t& pos)
     {
-      owner = Name(bytes, pos);
+      name = Name(bytes, pos);
       type = get<uint16_t>(bytes, pos);
       class_ = get<uint16_t>(bytes, pos);
       ttl = get<uint32_t>(bytes, pos);
@@ -537,7 +545,7 @@ namespace RFC1035
     operator std::vector<uint8_t>() const
     {
       std::vector<uint8_t> r;
-      put(owner, r);
+      put(name, r);
       put(type, r);
       put(class_, r);
       put(ttl, r);
@@ -710,9 +718,9 @@ namespace RFC1035
 
     Question(const std::vector<uint8_t>& bytes, size_t& pos)
     {
-      qname = Name(bytes, pos, SIZE_MAX);
+      qname = Name(bytes, pos);
       if (!qname.is_absolute())
-        throw std::runtime_error("relative name in question");
+        throw std::runtime_error("unexpected relative name in question");
       qtype = static_cast<QType>(get<uint16_t>(bytes, pos));
       qclass = static_cast<QClass>(get<uint16_t>(bytes, pos));
     }
@@ -805,7 +813,7 @@ namespace RFC1035
 
     virtual operator small_vector<uint16_t>() const override
     {
-      return small_vector<uint16_t>((uint16_t)address.size(), &address[0]);
+      return small_vector<uint16_t>((uint16_t)address.size(), address.data());
     }
 
     virtual operator std::string() const override

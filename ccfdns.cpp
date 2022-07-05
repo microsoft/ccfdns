@@ -18,6 +18,7 @@
 #include <endpoint_context.h>
 #include <nlohmann/json.hpp>
 #include <optional>
+#include <stdexcept>
 
 #define FMT_HEADER_ONLY
 #include <fmt/format.h>
@@ -83,7 +84,7 @@ namespace RFC1035
   DECLARE_JSON_STRINGIFIED(Name, "^[A-Za-z0-9]+(\\.[A-Za-z0-9]+)+$");
 
   DECLARE_JSON_TYPE(ResourceRecord);
-  DECLARE_JSON_REQUIRED_FIELDS(ResourceRecord, owner, type, class_, ttl, rdata);
+  DECLARE_JSON_REQUIRED_FIELDS(ResourceRecord, name, type, class_, ttl, rdata);
 }
 
 namespace kv::serialisers
@@ -127,70 +128,83 @@ namespace ccfdns
 
     using Records = ccf::ServiceSet<ResourceRecord>;
 
-    virtual void add(kv::Tx& tx, const Name& origin, const ResourceRecord& r)
+    void set_endpoint_context(ccf::endpoints::EndpointContext& ctx)
     {
+      this->ctx = &ctx;
+    }
+
+    virtual void add(const Name& origin, const ResourceRecord& rr) override
+    {
+      LOG_DEBUG_FMT("Add: {}", string_from_resource_record(rr));
+
+      if (!ctx)
+        std::runtime_error("missing endpoint context");
+
       if (!origin.is_absolute())
       {
         throw std::runtime_error("Origin not absolute");
       }
 
       nlohmann::json rj;
-      to_json(rj, r);
+      to_json(rj, rr);
       LOG_DEBUG_FMT("Add: {}: {}", (std::string)origin, rj.dump());
 
-      std::string table_name =
-        (std::string)origin + " " + std::to_string(r.type);
-
-      ResourceRecord rs(r);
-      rs.owner.strip_suffix(origin);
+      auto t = static_cast<aDNS::Type>(rr.type);
 
       LOG_TRACE_FMT(
         "Add '{}' type '{}' to '{}'",
-        (std::string)rs.owner,
-        string_from_type(static_cast<aDNS::Type>(rs.type)),
+        (std::string)rr.name,
+        string_from_type(t),
         (std::string)origin);
 
-      auto records = tx.rw<Records>(table_name);
+      ResourceRecord rs(rr);
+
+      if (!rs.name.is_absolute())
+        rs.name += origin;
+
+      auto records = ctx->tx.rw<Records>(table_name(origin, t));
       records->insert(rs);
 
       Resolver::on_add(origin, rs);
     }
 
-    virtual void add(const Name& origin, const ResourceRecord& rr) override
+    virtual void remove(const Name& origin, const ResourceRecord& rr) override
     {
-      add(ctx->tx, origin, rr);
-    }
+      LOG_DEBUG_FMT("Remove: {}", string_from_resource_record(rr));
 
-    virtual void remove(kv::Tx& tx, const Name& origin, const ResourceRecord& r)
-    {
+      if (!ctx)
+        std::runtime_error("missing endpoint context");
+
       if (!origin.is_absolute())
       {
         throw std::runtime_error("Origin not absolute");
       }
 
-      std::string table_name =
-        (std::string)origin + "-" + std::to_string(r.type);
-
-      ResourceRecord rs(r);
-      rs.owner.strip_suffix(origin);
+      auto t = static_cast<aDNS::Type>(rr.type);
 
       LOG_TRACE_FMT(
         "Remove '{}' type '{}' to '{}'",
-        (std::string)rs.owner,
-        string_from_type(static_cast<aDNS::Type>(rs.type)),
+        (std::string)rr.name,
+        string_from_type(t),
         (std::string)origin);
 
-      auto records = tx.rw<Records>(table_name);
+      ResourceRecord rs(rr);
+
+      if (!rs.name.is_absolute())
+        rs.name += origin;
+
+      auto records = ctx->tx.rw<Records>(table_name(origin, t));
       records->remove(rs);
     }
 
     using Resolver::reply;
 
-    virtual Message reply(
-      ccf::endpoints::EndpointContext& ctx, const Message& msg)
+    virtual Message reply(const Message& msg) override
     {
-      this->ctx = &ctx;
-      return reply(msg);
+      if (!ctx)
+        std::runtime_error("missing endpoint context");
+
+      return Resolver::reply(msg);
     }
 
     virtual void for_each(
@@ -199,10 +213,15 @@ namespace ccfdns
       aDNS::QType qtype,
       const std::function<bool(const ResourceRecord&)>& f) override
     {
-      std::string table_name =
-        (std::string)origin + "-" + string_from_qtype(qtype);
+      if (!ctx)
+        std::runtime_error("missing endpoint context");
 
-      auto records = ctx->tx.ro<Records>(table_name);
+      if (qtype == aDNS::QType::ASTERISK)
+        throw std::runtime_error("for_each cannot handle wildcards");
+
+      std::string tn = table_name(origin, static_cast<aDNS::Type>(qtype));
+
+      auto records = ctx->tx.ro<Records>(tn);
       records->foreach([&qclass, &qtype, &f](const auto& rr) {
         if (
           !is_type_in_qtype(rr.type, qtype) ||
@@ -216,6 +235,11 @@ namespace ccfdns
 
   protected:
     ccf::endpoints::EndpointContext* ctx;
+
+    std::string table_name(const Name& origin, aDNS::Type type)
+    {
+      return (std::string)origin + "-" + string_from_type(type);
+    }
   };
 
   CCFDNS ccfdns;
@@ -243,14 +267,15 @@ namespace ccfdns
     {
       openapi_info.title = "CCF DNS";
       openapi_info.description =
-        "This CCF sample app implements a simple DNS over HTTPS server.";
+        "This CCF sample app implements a simple DNS-over-HTTPS server.";
       openapi_info.document_version = "0.0.0";
 
       auto add = [this](auto& ctx, nlohmann::json&& params) {
         try
         {
           const auto in = params.get<AddRecord::In>();
-          ccfdns.add(ctx.tx, in.origin, in.record);
+          ccfdns.set_endpoint_context(ctx);
+          ccfdns.add(in.origin, in.record);
           return ccf::make_success();
         }
         catch (std::exception& ex)
@@ -274,7 +299,8 @@ namespace ccfdns
           auto bytes = crypto::raw_from_b64url(query_b64);
           LOG_INFO_FMT("query: {}", ds::to_hex(bytes));
 
-          auto reply = ccfdns.reply(ctx, Message(bytes));
+          ccfdns.set_endpoint_context(ctx);
+          auto reply = ccfdns.reply(Message(bytes));
 
           ctx.rpc_ctx->set_response_status(HTTP_STATUS_OK);
           ctx.rpc_ctx->set_response_header(
