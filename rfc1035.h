@@ -250,6 +250,11 @@ namespace RFC1035 // https://datatracker.ietf.org/doc/html/rfc1035
       return labels.size() > 0 && labels.back().empty();
     }
 
+    bool is_root() const
+    {
+      return labels.size() == 1 && labels.back().empty();
+    }
+
     /// Converts the name to its string representation.
     operator std::string() const
     {
@@ -324,6 +329,13 @@ namespace RFC1035 // https://datatracker.ietf.org/doc/html/rfc1035
       for (const auto& l : other.labels)
         labels.push_back(l);
       return *this;
+    }
+
+    Name parent() const
+    {
+      if (labels.size() == 0)
+        throw std::runtime_error("root does not have a parent");
+      return Name(std::vector<Label>(labels.begin() + 1, labels.end()));
     }
 
   protected:

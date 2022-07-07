@@ -91,6 +91,8 @@ namespace RFC4034
       }
       case U(RFC1035::Type::A):
       case U(RFC3596::Type::AAAA):
+      case U(RFC4034::Type::DS):
+      case U(RFC4034::Type::DNSKEY):
         cr.rdata = rr.rdata;
         break;
       default:

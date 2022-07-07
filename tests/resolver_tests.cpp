@@ -40,7 +40,7 @@ public:
     Resolver::on_add(origin, rs);
   }
 
-  virtual void remove(const Name& origin, const ResourceRecord& rr) override
+  virtual void remove(const Name& origin, const ResourceRecord& rr)
   {
     ResourceRecord rs(rr);
     if (!rs.name.is_absolute())
@@ -49,6 +49,22 @@ public:
     LOG_DEBUG_FMT("Remove: {}", string_from_resource_record(rs));
 
     zones[origin].erase(rs);
+  }
+
+  virtual void remove(
+    const Name& origin, const Name& name, const aDNS::Type& t) override
+  {
+    Name aname = name;
+    if (!aname.is_absolute())
+      aname += origin;
+
+    auto& zone = zones[origin];
+    std::erase_if(zone, [&aname, &t](const ResourceRecord& rr) {
+      bool r = rr.type == static_cast<uint16_t>(t) && rr.name == aname;
+      if (r)
+        LOG_DEBUG_FMT("Remove: {}", string_from_resource_record(rr));
+      return r;
+    });
   }
 
   virtual void for_each(
@@ -73,7 +89,7 @@ public:
 
   virtual void show(const Name& origin) const
   {
-    LOG_DEBUG_FMT("Current entries in {}:", (std::string)origin);
+    LOG_DEBUG_FMT("Current entries at {}:", (std::string)origin);
     auto oit = zones.find(origin);
     if (oit != zones.end())
     {

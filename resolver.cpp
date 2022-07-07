@@ -23,6 +23,7 @@
 #include <set>
 #include <sstream>
 #include <stdexcept>
+#include <unordered_set>
 
 #define FMT_HEADER_ONLY
 #include <fmt/format.h>
@@ -288,12 +289,6 @@ namespace aDNS
   {
     std::vector<ResourceRecord> rrs;
 
-    LOG_TRACE_FMT(
-      "resolve: '{}' type '{}' class '{}'",
-      (std::string)qname,
-      string_from_qtype(static_cast<QType>(qtype)),
-      string_from_qclass(static_cast<QClass>(qclass)));
-
     if (
       !is_supported_qtype(static_cast<uint16_t>(qtype)) ||
       !is_supported_qclass(static_cast<uint16_t>(qclass)))
@@ -313,9 +308,6 @@ namespace aDNS
       for (size_t j = 0; j < i; j++)
         origin.labels.push_back(qname.labels[qname.labels.size() - i + j]);
 
-      LOG_DEBUG_FMT(
-        "Looking for '{}' in '{}'", (std::string)qname, (std::string)origin);
-
       for_each(origin, qclass, qtype, [&origin, &qname, &rrs](const auto& rr) {
         if (rr.name == qname)
           rrs.push_back(rr);
@@ -325,6 +317,15 @@ namespace aDNS
       if (rrs.size() > 0)
         break; // Keep walking down the tree?
     }
+
+    LOG_TRACE_FMT(
+      "Resolve: {} type {} class {}:{}",
+      (std::string)qname,
+      string_from_qtype(static_cast<QType>(qtype)),
+      string_from_qclass(static_cast<QClass>(qclass)),
+      rrs.empty() ? " <nothing>" : "");
+    for (const auto& rr : rrs)
+      LOG_TRACE_FMT(" {}", string_from_resource_record(rr));
 
     return rrs;
   }
@@ -385,51 +386,58 @@ namespace aDNS
 
     RFC4034::DNSKEY dnskey_rdata(dnskey_rrs[0].rdata);
 
-    std::vector<ResourceRecord> ds_rrs = resolve(origin, QType::DS, QClass::IN);
+    auto zspk = zone_signing_key->public_key_der();
+    auto key_tag = RFC4034::keytag(zspk.data(), zspk.size());
 
-    if (ds_rrs.empty())
+    if (!origin.is_root())
     {
-      auto hp = crypto::make_hash_provider();
+      Name parent = origin.parent();
 
-      auto key_tag = RFC4034::keytag(
-        &dnskey_rdata.public_key[0], dnskey_rdata.public_key.size());
-      auto pk_digest = hp->Hash(
-        &dnskey_rdata.public_key[0],
-        dnskey_rdata.public_key.size(),
-        crypto::MDType::SHA384);
+      std::vector<ResourceRecord> ds_rrs =
+        resolve(parent, QType::DS, QClass::IN);
 
-      ResourceRecord ds_rr(
-        origin,
-        static_cast<uint16_t>(Type::DS),
-        static_cast<uint16_t>(Class::IN),
-        default_ttl,
-        RFC4034::DS(
-          key_tag,
-          RFC4034::Algorithm::ECDSAP384SHA384,
-          RFC4034::DigestType::SHA384,
-          pk_digest));
+      if (ds_rrs.empty())
+      {
+        auto hp = crypto::make_hash_provider();
 
-      ignore_on_add = true;
-      add(origin, ds_rr);
-      ds_rrs.push_back(ds_rr);
-    }
+        auto key_tag = RFC4034::keytag(
+          &dnskey_rdata.public_key[0], dnskey_rdata.public_key.size());
+        auto pk_digest = hp->Hash(
+          &dnskey_rdata.public_key[0],
+          dnskey_rdata.public_key.size(),
+          crypto::MDType::SHA384);
 
-    if (ds_rrs.size() > 1)
-      throw std::runtime_error("too many DS records");
+        ResourceRecord ds_rr(
+          parent,
+          static_cast<uint16_t>(Type::DS),
+          static_cast<uint16_t>(Class::IN),
+          default_ttl,
+          RFC4034::DS(
+            key_tag,
+            RFC4034::Algorithm::ECDSAP384SHA384,
+            RFC4034::DigestType::SHA384,
+            pk_digest));
 
-    RFC4034::DS ds_rdata(ds_rrs[0].rdata);
+        ignore_on_add = true;
+        add(parent, ds_rr);
+        ds_rrs.push_back(ds_rr);
+      }
 
-    {
-      // Check that we're using the right key
-      auto zspk = zone_signing_key->public_key_der();
-      auto key_tag = RFC4034::keytag(zspk.data(), zspk.size());
-      if (ds_rdata.key_tag != key_tag)
-        throw std::runtime_error("key tag mismatch");
-      if (dnskey_rdata.public_key.size() != zspk.size())
-        throw std::runtime_error("public key size mismatch");
-      for (size_t i = 0; i < zspk.size(); i++)
-        if (dnskey_rdata.public_key[i] != zspk[i])
-          throw std::runtime_error("public key mismatch");
+      if (ds_rrs.size() > 1)
+        throw std::runtime_error("too many DS records");
+
+      RFC4034::DS ds_rdata(ds_rrs[0].rdata);
+
+      {
+        // Check that we're using the right key
+        if (ds_rdata.key_tag != key_tag)
+          throw std::runtime_error("key tag mismatch");
+        if (dnskey_rdata.public_key.size() != zspk.size())
+          throw std::runtime_error("public key size mismatch");
+        for (size_t i = 0; i < zspk.size(); i++)
+          if (dnskey_rdata.public_key[i] != zspk[i])
+            throw std::runtime_error("public key mismatch");
+      }
     }
 
     auto type2str = [](const auto& x) {
@@ -446,9 +454,7 @@ namespace aDNS
 
       for (const auto& [_, t] : supported_types)
       {
-        if (
-          t == Type::DNSKEY || t == Type::RRSIG || t == Type::NSEC ||
-          t == Type::DS)
+        if (t == Type::RRSIG || t == Type::NSEC)
           continue;
 
         std::vector<ResourceRecord> records;
@@ -474,6 +480,16 @@ namespace aDNS
       for (const auto& rr : crrsets)
         LOG_DEBUG_FMT(" {}", string_from_resource_record(rr));
 
+      {
+        // Remove existing rrsigs
+        std::set<Name, RFC4034::CanonicalNameOrdering> names;
+        for (const auto& rr : crrsets)
+          names.insert(rr.name);
+
+        for (const auto& name : names)
+          remove(origin, name, Type::RRSIG);
+      }
+
       for (auto it = crrsets.begin(); it != crrsets.end(); it++)
       {
         RFC4034::CanonicalRRSet n_crrset;
@@ -487,7 +503,7 @@ namespace aDNS
 
         auto rrsig_rdata = RFC4034::sign(
           make_signing_function(zone_signing_key),
-          ds_rdata.key_tag,
+          key_tag,
           RFC4034::Algorithm::ECDSAP384SHA384,
           68400,
           origin,
@@ -495,15 +511,6 @@ namespace aDNS
           static_cast<uint16_t>(it->type),
           n_crrset,
           type2str);
-
-        auto old_rrsigs =
-          resolve(it->name, QType::RRSIG, static_cast<QClass>(c));
-        for (const auto& old_rrsig : old_rrsigs)
-        {
-          RFC4034::RRSIG rdata(old_rrsig.rdata, type2str);
-          if (rdata.type_covered == it->type)
-            remove(origin, old_rrsig);
-        }
 
         ignore_on_add = true;
         add(
@@ -553,10 +560,7 @@ namespace aDNS
             nsec_rdata.type_bit_maps.insert(t);
           }
 
-          auto old_nsecs =
-            resolve(it->name, QType::NSEC, static_cast<QClass>(c));
-          for (const auto& old_nsec : old_nsecs)
-            remove(origin, old_nsec);
+          remove(origin, it->name, Type::NSEC);
 
           ResourceRecord nsec(
             it->name,

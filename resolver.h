@@ -106,7 +106,8 @@ namespace aDNS
 
     virtual void add(const Name& origin, const ResourceRecord& rr) = 0;
 
-    virtual void remove(const Name& origin, const ResourceRecord& rr) = 0;
+    virtual void remove(
+      const Name& origin, const Name& name, const Type& t) = 0;
 
   protected:
     uint32_t default_ttl = 86400;

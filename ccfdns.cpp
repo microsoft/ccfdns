@@ -152,7 +152,7 @@ namespace ccfdns
       auto t = static_cast<aDNS::Type>(rr.type);
 
       LOG_TRACE_FMT(
-        "Add '{}' type '{}' to '{}'",
+        "Add {} type {} to {}",
         (std::string)rr.name,
         string_from_type(t),
         (std::string)origin);
@@ -168,7 +168,7 @@ namespace ccfdns
       Resolver::on_add(origin, rs);
     }
 
-    virtual void remove(const Name& origin, const ResourceRecord& rr) override
+    virtual void remove(const Name& origin, const ResourceRecord& rr)
     {
       LOG_DEBUG_FMT("Remove: {}", string_from_resource_record(rr));
 
@@ -183,7 +183,7 @@ namespace ccfdns
       auto t = static_cast<aDNS::Type>(rr.type);
 
       LOG_TRACE_FMT(
-        "Remove '{}' type '{}' to '{}'",
+        "Remove {} type {} at {}",
         (std::string)rr.name,
         string_from_type(t),
         (std::string)origin);
@@ -195,6 +195,38 @@ namespace ccfdns
 
       auto records = ctx->tx.rw<Records>(table_name(origin, t));
       records->remove(rs);
+    }
+
+    virtual void remove(
+      const Name& origin, const Name& name, const aDNS::Type& t) override
+    {
+      LOG_DEBUG_FMT(
+        "Remove {} type {} at {}",
+        (std::string)name,
+        string_from_type(t),
+        (std::string)origin);
+
+      if (!ctx)
+        std::runtime_error("missing endpoint context");
+
+      if (!origin.is_absolute())
+      {
+        throw std::runtime_error("Origin not absolute");
+      }
+
+      Name aname = name;
+      if (!aname.is_absolute())
+        aname += origin;
+
+      auto records = ctx->tx.rw<Records>(table_name(origin, t));
+      records->foreach([origin, t, &aname, &records](const ResourceRecord& rr) {
+        if (rr.type == static_cast<uint16_t>(t) && rr.name == aname)
+        {
+          LOG_TRACE_FMT(" remove {}", string_from_resource_record(rr));
+          records->remove(rr);
+        }
+        return true;
+      });
     }
 
     using Resolver::reply;
@@ -293,10 +325,18 @@ namespace ccfdns
       auto dns_query = [this](auto& ctx) {
         try
         {
-          const auto parsed_query =
-            http::parse_query(ctx.rpc_ctx->get_request_query());
-          std::string query_b64 = get_param(parsed_query, "dns");
-          auto bytes = crypto::raw_from_b64url(query_b64);
+          std::vector<uint8_t> bytes;
+          if (ctx.rpc_ctx->get_request_verb() == HTTP_GET)
+          {
+            const auto parsed_query =
+              http::parse_query(ctx.rpc_ctx->get_request_query());
+            std::string query_b64 = get_param(parsed_query, "dns");
+            bytes = crypto::raw_from_b64url(query_b64);
+          }
+          else
+          {
+            bytes = ctx.rpc_ctx->get_request_body();
+          }
           LOG_INFO_FMT("query: {}", ds::to_hex(bytes));
 
           ccfdns.set_endpoint_context(ctx);
@@ -319,6 +359,10 @@ namespace ccfdns
       };
 
       make_endpoint("/dns-query", HTTP_GET, dns_query, ccf::no_auth_required)
+        .set_auto_schema<void, std::vector<uint8_t>>()
+        .install();
+
+      make_endpoint("/dns-query", HTTP_POST, dns_query, ccf::no_auth_required)
         .set_auto_schema<void, std::vector<uint8_t>>()
         .install();
     }
