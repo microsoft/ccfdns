@@ -208,6 +208,13 @@ namespace RFC1035 // https://datatracker.ietf.org/doc/html/rfc1035
 
     Name(std::vector<Label>&& labels) : labels(std::move(labels)) {}
 
+    Name(const std::span<const Label>& lspan)
+    {
+      labels.reserve(lspan.size());
+      for (const auto& l : lspan)
+        labels.push_back(l);
+    }
+
     void put(std::vector<uint8_t>& r) const
     {
       for (const auto& label : labels)

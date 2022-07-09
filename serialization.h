@@ -78,3 +78,9 @@ inline void put(const std::vector<uint8_t>& vec, std::vector<uint8_t>& r)
   put((uint16_t)vec.size(), r);
   r.insert(std::end(r), std::begin(vec), std::end(vec));
 }
+
+inline void put_n(
+  const std::vector<uint8_t>& vec, std::vector<uint8_t>& r, size_t n)
+{
+  r.insert(std::end(r), std::begin(vec), std::begin(vec) + n);
+}

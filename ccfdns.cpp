@@ -17,6 +17,7 @@
 #include <ds/json.h>
 #include <endpoint_context.h>
 #include <nlohmann/json.hpp>
+#include <odata_error.h>
 #include <optional>
 #include <stdexcept>
 
@@ -243,12 +244,12 @@ namespace ccfdns
       const Name& origin,
       aDNS::QClass qclass,
       aDNS::QType qtype,
-      const std::function<bool(const ResourceRecord&)>& f) override
+      const std::function<bool(const ResourceRecord&)>& f) const override
     {
       if (!ctx)
         std::runtime_error("missing endpoint context");
 
-      if (qtype == aDNS::QType::ASTERISK)
+      if (qtype == aDNS::QType::ASTERISK || qclass == aDNS::QClass::ASTERISK)
         throw std::runtime_error("for_each cannot handle wildcards");
 
       std::string tn = table_name(origin, static_cast<aDNS::Type>(qtype));
@@ -268,7 +269,7 @@ namespace ccfdns
   protected:
     ccf::endpoints::EndpointContext* ctx;
 
-    std::string table_name(const Name& origin, aDNS::Type type)
+    std::string table_name(const Name& origin, aDNS::Type type) const
     {
       return (std::string)origin + "-" + string_from_type(type);
     }
@@ -326,16 +327,34 @@ namespace ccfdns
         try
         {
           std::vector<uint8_t> bytes;
-          if (ctx.rpc_ctx->get_request_verb() == HTTP_GET)
+          auto verb = ctx.rpc_ctx->get_request_verb();
+
+          if (verb == HTTP_GET)
           {
             const auto parsed_query =
               http::parse_query(ctx.rpc_ctx->get_request_query());
             std::string query_b64 = get_param(parsed_query, "dns");
             bytes = crypto::raw_from_b64url(query_b64);
           }
+          else if (verb == HTTP_POST)
+          {
+            auto headers = ctx.rpc_ctx->get_request_headers();
+
+            auto ctit = headers.find("content-type");
+            if (ctit == headers.end())
+              throw std::runtime_error("missing content type header");
+            if (ctit->second != "application/dns-message")
+              throw std::runtime_error(
+                fmt::format("unknown content type {}", ctit->second));
+
+            bytes = ctx.rpc_ctx->get_request_body();
+          }
           else
           {
-            bytes = ctx.rpc_ctx->get_request_body();
+            return ccf::make_error(
+              HTTP_STATUS_BAD_REQUEST,
+              ccf::errors::InvalidInput,
+              "unsupported HTTP verb; use GET or POST");
           }
           LOG_INFO_FMT("query: {}", ds::to_hex(bytes));
 

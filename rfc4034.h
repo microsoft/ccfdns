@@ -142,15 +142,15 @@ namespace RFC4034 // https://datatracker.ietf.org/doc/html/rfc4034
       s >> ts;
       try
       {
-        algorithm = algorithm_id(ts);
+        algorithm = static_cast<Algorithm>(std::stoi(ts));
       }
       catch (...)
       {
-        algorithm = static_cast<Algorithm>(std::stoi(ts));
+        algorithm = algorithm_id(ts);
       }
       std::string public_key_b64;
       s >> public_key_b64;
-      public_key = small_vector<uint16_t>::from_base64(public_key_b64);
+      public_key = small_vector<uint16_t>::from_base64(public_key_b64, false);
       enforce_invariants();
     }
 
@@ -198,7 +198,7 @@ namespace RFC4034 // https://datatracker.ietf.org/doc/html/rfc4034
     {
       return std::to_string(flags) + " " + std::to_string(protocol) + " " +
         std::to_string(static_cast<uint8_t>(algorithm)) + " " +
-        public_key.to_base64();
+        public_key.to_base64(false);
     }
 
     bool is_zone_key() const
@@ -311,16 +311,8 @@ namespace RFC4034 // https://datatracker.ietf.org/doc/html/rfc4034
 
     virtual operator small_vector<uint16_t>() const override
     {
-      std::vector<uint8_t> r;
-      put(type_covered, r);
-      put(algorithm, r);
-      put(labels, r);
-      put(original_ttl, r);
-      put(signature_expiration, r);
-      put(signature_inception, r);
-      put(key_tag, r);
-      put(signer_name, r);
-      put(signature, r);
+      std::vector<uint8_t> r = all_but_signature();
+      put_n(signature, r, signature.size());
       if (r.size() > 255)
         throw std::runtime_error("RRSIG rdata too large");
       return small_vector<uint16_t>(r.size(), r.data());
@@ -338,6 +330,20 @@ namespace RFC4034 // https://datatracker.ietf.org/doc/html/rfc4034
       r += " " + std::to_string(key_tag);
       r += " " + (std::string)signer_name;
       r += " " + crypto::b64_from_raw(signature);
+      return r;
+    }
+
+    virtual std::vector<uint8_t> all_but_signature() const
+    {
+      std::vector<uint8_t> r;
+      put(type_covered, r);
+      put(algorithm, r);
+      put(labels, r);
+      put(original_ttl, r);
+      put(signature_expiration, r);
+      put(signature_inception, r);
+      put(key_tag, r);
+      put(signer_name, r);
       return r;
     }
   };
@@ -502,10 +508,10 @@ namespace RFC4034 // https://datatracker.ietf.org/doc/html/rfc4034
   };
 
   // Appendix B
-  inline unsigned int keytag(unsigned char key[], unsigned int keysize)
+  inline uint16_t keytag(unsigned char key[], uint16_t keysize)
   {
     uint32_t ac;
-    unsigned int i;
+    uint16_t i;
 
     for (ac = 0, i = 0; i < keysize; ++i)
       ac += (i & 1) ? key[i] : key[i] << 8;
@@ -606,6 +612,32 @@ namespace RFC4034 // https://datatracker.ietf.org/doc/html/rfc4034
   typedef std::set<RFC1035::ResourceRecord, RFC4034::CanonicalRROrdering>
     CanonicalRRSet;
 
+  inline CanonicalRRSet& operator+=(CanonicalRRSet& x, CanonicalRRSet&& y)
+  {
+    x.merge(y);
+    return x;
+  }
+
+  inline CanonicalRRSet& operator+=(CanonicalRRSet& x, CanonicalRRSet& y)
+  {
+    x.merge(y);
+    return x;
+  }
+
+  inline CanonicalRRSet& operator+=(
+    CanonicalRRSet& x, const RFC1035::ResourceRecord& rr)
+  {
+    x.insert(rr);
+    return x;
+  }
+
+  inline CanonicalRRSet& operator+=(
+    CanonicalRRSet& x, RFC1035::ResourceRecord&& rr)
+  {
+    x.insert(rr);
+    return x;
+  }
+
   typedef std::function<std::vector<uint8_t>(
     Algorithm, const std::vector<uint8_t>&)>
     SigningFunction;
@@ -622,7 +654,7 @@ namespace RFC4034 // https://datatracker.ietf.org/doc/html/rfc4034
 
   RFC4034::RRSIG sign(
     const SigningFunction& signing_function,
-    unsigned int keytag,
+    uint16_t keytag,
     Algorithm algorithm,
     uint32_t original_ttl,
     const RFC1035::Name& origin,

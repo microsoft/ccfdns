@@ -161,14 +161,19 @@ public:
     return *this;
   }
 
-  std::string to_base64() const
+  std::string to_base64(bool urlsafe = true) const
   {
-    return crypto::b64_from_raw(static_cast<uint8_t*>(data), size_);
+    if (urlsafe)
+      return crypto::b64url_from_raw(static_cast<uint8_t*>(data), size_);
+    else
+      return crypto::b64_from_raw(static_cast<uint8_t*>(data), size_);
   }
 
-  static small_vector<T, E> from_base64(const std::string& b64)
+  static small_vector<T, E> from_base64(
+    const std::string& b64, bool url_safe = true)
   {
-    auto bytes = crypto::raw_from_b64(b64);
+    auto bytes =
+      url_safe ? crypto::raw_from_b64url(b64) : crypto::raw_from_b64(b64);
     if (bytes.size() >= 1 << (sizeof(T) * 8))
       throw std::runtime_error("data too large for small_vector");
     return small_vector<T, E>(

@@ -1,11 +1,16 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the Apache 2.0 License.
 
+#include "ccf/crypto/key_pair.h"
 #include "resolver.h"
 #include "rfc1035.h"
 #include "rfc4034.h"
 
 #include <ccf/ds/logger.h>
+#include <openenclave/3rdparty/openssl/x509.h>
+#include <openssl/ec.h>
+#include <openssl/ecdsa.h>
+#include <openssl/objects.h>
 
 #define DOCTEST_CONFIG_IMPLEMENT
 #include <doctest/doctest.h>
@@ -15,6 +20,10 @@ using namespace aDNS;
 using namespace RFC1035;
 
 static uint32_t default_ttl = 3600;
+
+auto type2str = [](const auto& x) {
+  return aDNS::string_from_type(static_cast<aDNS::Type>(x));
+};
 
 class TestResolver : public Resolver
 {
@@ -71,7 +80,7 @@ public:
     const Name& origin,
     aDNS::QClass qclass,
     aDNS::QType qtype,
-    const std::function<bool(const ResourceRecord&)>& f) override
+    const std::function<bool(const ResourceRecord&)>& f) const override
   {
     auto oit = zones.find(origin);
     if (oit != zones.end())
@@ -168,14 +177,20 @@ TEST_CASE("Basic lookups")
 
   Name origin("example.com.");
 
+  std::string soa_rdata =
+    "ns1.example.com. joe.example.com. 4 604800 86400 2419200 604800";
+
   REQUIRE_NOTHROW(s.add(
     origin,
-    RR(
-      origin,
-      aDNS::Type::SOA,
-      aDNS::Class::IN,
-      RFC1035::SOA(
-        "ns1.example.com. joe.example.com. 4 604800 86400 2419200 604800"))));
+    RR(origin, aDNS::Type::SOA, aDNS::Class::IN, RFC1035::SOA(soa_rdata))));
+
+  {
+    RFC1035::Message msg = mk_question("example.com.", aDNS::QType::SOA);
+    auto response = s.reply(msg);
+    REQUIRE(response.answers.size() > 0);
+    SOA soa(response.answers[0].rdata);
+    REQUIRE((std::string)soa == soa_rdata);
+  }
 
   REQUIRE_NOTHROW(s.add(
     origin,
@@ -252,7 +267,7 @@ TEST_CASE("Basic lookups")
   s.show(origin);
 }
 
-TEST_CASE("DNSSEC RRs")
+TEST_CASE("DNSKEY RR Example")
 {
   TestResolver s;
 
@@ -280,25 +295,136 @@ TEST_CASE("DNSSEC RRs")
     std::string sd = dnskey;
     REQUIRE(sd == "256 3 5 " + demo_key_b64);
   }
+}
 
-  REQUIRE_NOTHROW(s.add(
-    origin,
-    RR(
+std::vector<uint8_t> der_from_coord(const small_vector<uint16_t>& coordinates)
+{
+  auto csz = coordinates.size() / 2;
+  const uint8_t* x = &coordinates[0];
+  const uint8_t* y = &coordinates[csz];
+  BIGNUM* xbn = BN_new();
+  BIGNUM* ybn = BN_new();
+  BN_bin2bn(x, csz, xbn);
+  BN_bin2bn(y, csz, ybn);
+  EC_GROUP* g = EC_GROUP_new_by_curve_name(NID_secp384r1);
+  EC_POINT* p = EC_POINT_new(g);
+  BN_CTX* bnctx = BN_CTX_new();
+  if (EC_POINT_set_affine_coordinates(g, p, xbn, ybn, bnctx) != 1)
+    throw std::runtime_error("could not set EC point coordinates");
+  EC_KEY* ec_key = EC_KEY_new_by_curve_name(NID_secp384r1);
+  if (EC_KEY_set_public_key(ec_key, p) != 1)
+    throw std::runtime_error("could not create EC key");
+  auto size = i2d_EC_PUBKEY(ec_key, NULL);
+  std::vector<uint8_t> der(size, 0);
+  unsigned char* derptr = (unsigned char*)&der[0];
+  i2d_EC_PUBKEY(ec_key, &derptr);
+  LOG_DEBUG_FMT("VERIFY: der={}", ds::to_hex(der));
+  EC_KEY_free(ec_key);
+  BN_CTX_free(bnctx);
+  EC_POINT_free(p);
+  EC_GROUP_free(g);
+  BN_free(xbn);
+  BN_free(ybn);
+  return der;
+};
+
+static void convert_signature_to_asn1(std::vector<uint8_t>& sig)
+{
+  auto csz = sig.size() / 2;
+  BIGNUM* r = BN_new();
+  BIGNUM* s = BN_new();
+  BN_bin2bn(sig.data(), csz, r);
+  BN_bin2bn(sig.data() + csz, csz, s);
+  ECDSA_SIG* ecdsa_sig = ECDSA_SIG_new();
+  ECDSA_SIG_set0(ecdsa_sig, r, s);
+  auto outsz = i2d_ECDSA_SIG(ecdsa_sig, NULL);
+  sig.resize(outsz, 0);
+  unsigned char* outp = sig.data();
+  i2d_ECDSA_SIG(ecdsa_sig, &outp);
+}
+
+static bool verify(
+  const RFC4034::CanonicalRRSet& rrset,
+  const RFC4034::CanonicalRRSet& rrsigset,
+  const small_vector<uint16_t>& public_key)
+{
+  auto pk = crypto::make_public_key(der_from_coord(public_key));
+
+  for (const auto& rrsig : rrsigset)
+  {
+    RFC4034::RRSIG rrsig_rdata(rrsig.rdata, type2str);
+    REQUIRE(rrsig_rdata.signer_name.is_absolute());
+    LOG_DEBUG_FMT("VERIFY: rrsig: {}", string_from_resource_record(rrsig));
+
+    std::vector<uint8_t> data_to_sign = rrsig_rdata.all_but_signature();
+    for (const auto& rr : rrset)
+    {
+      LOG_DEBUG_FMT("VERIFY: rr: {}", string_from_resource_record(rr));
+      rr.name.put(data_to_sign);
+      put(rr.type, data_to_sign);
+      put(rr.class_, data_to_sign);
+      put(rrsig_rdata.original_ttl, data_to_sign);
+      rr.rdata.put(data_to_sign);
+    }
+
+    LOG_DEBUG_FMT("VERIFY: data={}", ds::to_hex(data_to_sign));
+    auto sig = rrsig_rdata.signature;
+    convert_signature_to_asn1(sig);
+    LOG_DEBUG_FMT("VERIFY: sig={}", ds::to_hex(sig));
+    auto r = pk->verify(data_to_sign, sig);
+    LOG_DEBUG_FMT("VERIFY: r={}", r);
+    if (!r)
+      return false;
+  }
+
+  return true;
+}
+
+TEST_CASE("RRSIG tests")
+{
+  TestResolver s;
+
+  Name origin("example.com.");
+  {
+    REQUIRE_NOTHROW(s.add(
       origin,
-      aDNS::Type::SOA,
-      aDNS::Class::IN,
-      RFC1035::SOA(
-        "ns1.example.com. joe.example.com. 4 604800 86400 2419200 604800"))));
+      RR(
+        origin,
+        aDNS::Type::SOA,
+        aDNS::Class::IN,
+        RFC1035::SOA(
+          "ns1.example.com. joe.example.com. 4 604800 86400 2419200 604800"))));
 
-  REQUIRE_NOTHROW(s.add(
-    origin,
-    RR(
-      Name("www"),
-      aDNS::Type::A,
-      aDNS::Class::IN,
-      RFC1035::A("93.184.216.34"))));
+    REQUIRE_NOTHROW(s.add(
+      origin,
+      RR(Name("www"), aDNS::Type::A, aDNS::Class::IN, RFC1035::A("1.2.3.4"))));
 
-  s.show(origin);
+    REQUIRE_NOTHROW(s.add(
+      origin,
+      RR(
+        Name("www"),
+        aDNS::Type::TXT,
+        aDNS::Class::IN,
+        RFC1035::TXT("some text"))));
+
+    auto r =
+      s.resolve(origin, aDNS::QType::DNSKEY, aDNS::QClass::IN, true).answers;
+    ResourceRecord key, key_rrsig;
+    for (const auto& rr : r)
+    {
+      LOG_DEBUG_FMT("A: {}", string_from_resource_record(rr));
+      if (rr.type == static_cast<uint16_t>(aDNS::Type::RRSIG))
+        key_rrsig = rr;
+      else if (rr.type == static_cast<uint16_t>(aDNS::Type::DNSKEY))
+        key = rr;
+    }
+    RFC4034::DNSKEY dnskey_rdata(key.rdata);
+    RFC4034::RRSIG rrsig_rdata(key_rrsig.rdata, type2str);
+    REQUIRE(dnskey_rdata.is_zone_key());
+    REQUIRE(verify({key}, {key_rrsig}, dnskey_rdata.public_key));
+
+    s.show(origin);
+  }
 }
 
 int main(int argc, char** argv)

@@ -86,19 +86,26 @@ namespace aDNS
   class Resolver
   {
   public:
+    struct Resolution
+    {
+      RFC1035::ResponseCode response_code = RFC1035::ResponseCode::NO_ERROR;
+      RFC4034::CanonicalRRSet answers;
+      RFC4034::CanonicalRRSet authorities;
+    };
+
     Resolver();
     virtual ~Resolver();
 
     virtual Message reply(const Message& msg);
 
-    virtual std::vector<ResourceRecord> resolve(
-      const Name& qname, QType qtype, QClass qclass);
+    virtual Resolution resolve(
+      const Name& qname, QType qtype, QClass qclass, bool with_extras = false);
 
     virtual void for_each(
       const Name& origin,
       QClass qclass,
       QType qtype,
-      const std::function<bool(const ResourceRecord&)>& f) = 0;
+      const std::function<bool(const ResourceRecord&)>& f) const = 0;
 
     virtual void sign(const Name& origin);
 
@@ -117,5 +124,7 @@ namespace aDNS
       std::shared_ptr<crypto::KeyPair>,
       RFC4034::CanonicalNameOrdering>
       zone_signing_keys;
+
+    RFC4034::CanonicalRRSet order_records(const Name& origin, QClass c) const;
   };
 }

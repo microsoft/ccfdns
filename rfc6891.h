@@ -6,6 +6,7 @@
 #include "ccf/ds/hex.h"
 #include "rfc1035.h"
 #include "serialization.h"
+#include "small_vector.h"
 
 #include <cstdint>
 #include <span>
@@ -27,8 +28,7 @@ namespace RFC6891 // https://datatracker.ietf.org/doc/html/rfc6891
     struct Option
     {
       uint16_t code;
-      uint16_t length;
-      std::vector<uint8_t> data;
+      small_vector<uint16_t> data;
     };
 
     std::vector<Option> options;
@@ -41,7 +41,14 @@ namespace RFC6891 // https://datatracker.ietf.org/doc/html/rfc6891
 
     OPT(const small_vector<uint16_t>& data)
     {
-      // TODO
+      size_t pos = 0;
+      while (pos < data.size())
+      {
+        Option o;
+        o.code = get<uint16_t>(data, pos);
+        o.data = small_vector<uint16_t>(data, pos);
+        options.push_back(o);
+      }
     }
 
     virtual ~OPT() = default;
@@ -52,11 +59,8 @@ namespace RFC6891 // https://datatracker.ietf.org/doc/html/rfc6891
       for (const auto& opt : options)
       {
         put(opt.code, r);
-        put(opt.length, r);
-        put(opt.data, r);
+        opt.data.put(r);
       }
-      if (r.size() > 255)
-        throw std::runtime_error("OPT rdata size too large");
       return small_vector<uint16_t>(r.size(), r.data());
     }
 

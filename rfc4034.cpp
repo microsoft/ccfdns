@@ -8,6 +8,7 @@
 #include "rfc3596.h"
 
 #include <ccf/crypto/key_pair.h>
+#include <ccf/ds/logger.h>
 #include <set>
 #include <stdexcept>
 #include <vector>
@@ -90,6 +91,7 @@ namespace RFC4034
         break;
       }
       case U(RFC1035::Type::A):
+      case U(RFC1035::Type::TXT):
       case U(RFC3596::Type::AAAA):
       case U(RFC4034::Type::DS):
       case U(RFC4034::Type::DNSKEY):
@@ -112,7 +114,7 @@ namespace RFC4034
     // https://datatracker.ietf.org/doc/html/rfc4034#section-6.3
     CanonicalRRSet r;
     for (const auto& rr : records)
-      r.insert(canonicalize(origin, rr, type2str));
+      r += canonicalize(origin, rr, type2str);
     return r;
   }
 
@@ -124,8 +126,8 @@ namespace RFC4034
     uint32_t original_ttl,
     uint32_t sig_expiration,
     uint32_t sig_inception,
-    uint32_t keytag,
-    const Name& owner,
+    uint16_t keytag,
+    const Name& signer_name,
     const CanonicalRRSet& rrset)
   {
     // https://datatracker.ietf.org/doc/html/rfc4034#section-3.1.8.1
@@ -133,21 +135,22 @@ namespace RFC4034
     std::vector<uint8_t> data_to_sign;
     put(static_cast<uint16_t>(t), data_to_sign);
     put(static_cast<uint8_t>(algorithm), data_to_sign);
-    put((uint8_t)owner.labels.size(), data_to_sign);
+    put((uint8_t)signer_name.labels.size(), data_to_sign);
     put(original_ttl, data_to_sign);
     put(sig_expiration, data_to_sign);
     put(sig_inception, data_to_sign);
     put(keytag, data_to_sign);
-    put(owner, data_to_sign);
+    signer_name.put(data_to_sign);
 
     for (const auto& rr : rrset)
     {
-      std::vector<uint8_t> rr_i;
-      put(rr.name, rr_i);
-      put(rr.type, rr_i);
-      put(rr.class_, rr_i);
-      put(rr.ttl, rr_i);
-      rr.rdata.put(rr_i);
+      if (rr.ttl != original_ttl)
+        LOG_INFO_FMT("warning: potential TTL mismatch");
+      put(rr.name, data_to_sign);
+      put(rr.type, data_to_sign);
+      put(rr.class_, data_to_sign);
+      put(rr.ttl, data_to_sign);
+      rr.rdata.put(data_to_sign);
     }
 
     return signing_function(algorithm, data_to_sign);
@@ -155,7 +158,7 @@ namespace RFC4034
 
   RFC4034::RRSIG sign(
     const SigningFunction& signing_function,
-    unsigned int keytag,
+    uint16_t keytag,
     Algorithm algorithm,
     uint32_t original_ttl,
     const RFC1035::Name& origin,
@@ -179,7 +182,7 @@ namespace RFC4034
       owner.labels.size(),
       original_ttl,
       sig_expiration,
-      sig_expiration,
+      sig_inception,
       keytag,
       owner,
       rrset);
@@ -245,7 +248,7 @@ namespace RFC4034
         uint8_t type_no = i << 3;
         while (bi != 0)
         {
-          if (bi & 0x01)
+          if (bi & 0x80)
           {
             if (first)
               first = false;
@@ -254,7 +257,7 @@ namespace RFC4034
             Type t = static_cast<Type>(w.window_block_no << 8 | type_no);
             r += type2str(t);
           }
-          bi >>= 1;
+          bi <<= 1;
           type_no++;
         }
       }
@@ -285,7 +288,7 @@ namespace RFC4034
     uint8_t oct_inx = lower >> 3;
     if (entry.bitmap.size() <= oct_inx)
       entry.bitmap.resize(oct_inx + 1, 0);
-    entry.bitmap[oct_inx] |= 1 << (lower & 0x07);
+    entry.bitmap[oct_inx] |= 0x80 >> (lower & 0x07);
   }
 
   void NSEC::TypeBitMaps::put(std::vector<uint8_t>& r) const
