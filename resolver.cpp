@@ -245,8 +245,18 @@ namespace aDNS
   std::string string_from_resource_record(const ResourceRecord& rr)
   {
     std::string r = rr.name;
-    r += " " + string_from_class(static_cast<Class>(rr.class_));
-    r += " " + std::to_string(rr.ttl);
+
+    if (rr.type == static_cast<uint16_t>(aDNS::Type::OPT))
+    {
+      // https://datatracker.ietf.org/doc/html/rfc6891#section-6.1.2
+      r += " udp-payload-size=" + std::to_string(rr.class_);
+      r += " " + (std::string)RFC6891::TTL(rr.ttl);
+    }
+    else
+    {
+      r += " " + string_from_class(static_cast<Class>(rr.class_));
+      r += " " + std::to_string(rr.ttl);
+    }
     r += " " + string_from_type(static_cast<Type>(rr.type));
     r += " " + (std::string)*mk_rdata(static_cast<Type>(rr.type), rr.rdata);
     return r;
@@ -262,6 +272,15 @@ namespace aDNS
   Message Resolver::reply(const Message& msg)
   {
     Message r;
+
+    r.header.id = msg.header.id;
+    r.header.qr = true;
+    r.header.opcode = msg.header.opcode;
+    r.header.aa = true;
+    r.header.tc = false;
+    r.header.rd = false;
+    r.header.ra = false;
+    r.header.rcode = ResponseCode::NO_ERROR;
 
     for (const auto& q : msg.questions)
     {
@@ -284,14 +303,38 @@ namespace aDNS
         resolution.authorities.end());
     }
 
-    // ask others not to cache our answers
-    // for (auto& a : r.answers)
-    //   a.ttl = 0;
+    for (const auto& rr : msg.additionals)
+    {
+      bool have_opt = false;
+      if (rr.type == static_cast<uint16_t>(aDNS::Type::OPT))
+      {
+        LOG_DEBUG_FMT("EDNS(0): {}", string_from_resource_record(rr));
+        if (have_opt)
+        {
+          // https://datatracker.ietf.org/doc/html/rfc6891#section-6.1.1
+          r.header.rcode = ResponseCode::FORMAT;
+          break;
+        }
 
-    r.header.id = msg.header.id;
-    r.header.qr = true;
-    r.header.opcode = msg.header.opcode;
-    r.header.aa = true;
+        RFC6891::TTL ttl(rr.ttl);
+        ttl.version = 0;
+        ttl.dnssec_ok = true;
+        ttl.extended_rcode = 0;
+        ttl.z = 0;
+
+        uint16_t udp_payload_size = 4096;
+        ResourceRecord opt_reply(
+          Name("."),
+          static_cast<uint16_t>(aDNS::Type::OPT),
+          udp_payload_size,
+          (uint32_t)ttl,
+          {});
+        LOG_DEBUG_FMT(
+          "EDNS(0) OPT reply: {}", string_from_resource_record(opt_reply));
+        r.additionals.push_back(opt_reply);
+        have_opt = true;
+      }
+    }
 
     r.header.qdcount = r.questions.size();
     r.header.ancount = r.answers.size();

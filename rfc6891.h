@@ -34,9 +34,23 @@ namespace RFC6891 // https://datatracker.ietf.org/doc/html/rfc6891
     std::vector<Option> options;
 
   public:
-    OPT(const std::string& data)
+    OPT() = default;
+
+    OPT(const std::string& s)
     {
-      // TODO
+      std::istringstream f(s);
+      std::string tmp;
+      while (std::getline(f, tmp, ' '))
+      {
+        auto eqpos = tmp.find('=');
+        auto k = tmp.substr(0, eqpos);
+        auto v = tmp.substr(eqpos + 1);
+        auto code_int = stoi(k);
+        if (code_int >= 1 << 16)
+          throw std::runtime_error("OPT code too large");
+        uint16_t code = code_int & 0xFFFF;
+        options.push_back({.code = code, .data = small_vector<uint16_t>(v)});
+      }
     }
 
     OPT(const small_vector<uint16_t>& data)
@@ -66,8 +80,49 @@ namespace RFC6891 // https://datatracker.ietf.org/doc/html/rfc6891
 
     virtual operator std::string() const override
     {
-      // TODO
-      return "";
+      std::string r;
+      for (const auto& [k, v] : options)
+      {
+        if (r.size() > 0)
+          r += " ";
+        r += std::to_string(k) + "=" + ds::to_hex(v);
+      }
+      return r;
+    }
+  };
+
+  struct TTL
+  {
+    uint8_t extended_rcode = 0;
+    uint8_t version = 0;
+    bool dnssec_ok = false;
+    uint16_t z : 15;
+
+    TTL(uint32_t ttl)
+    {
+      extended_rcode = (ttl & 0xFF000000) >> 24;
+      version = (ttl & 0x00FF0000) >> 16;
+      dnssec_ok = (ttl & 0x00008000) != 0;
+      z = ttl & 0x00007FFF;
+    }
+
+    operator uint32_t() const
+    {
+      uint32_t r = extended_rcode << 8 | version;
+      r |= r << 16 | ((uint8_t)dnssec_ok) << 15 | z;
+      return r;
+    }
+
+    operator std::string() const
+    {
+      std::string r;
+      r += fmt::format(
+        "extended-rcode={:02x} version={:02x} do={:b} z={:04x}",
+        extended_rcode,
+        version,
+        dnssec_ok,
+        z);
+      return r;
     }
   };
 }
