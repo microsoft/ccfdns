@@ -437,6 +437,14 @@ namespace aDNS
         result.authorities += *soa_record;
       // TODO: distinguish between NXDOMAIN and name exists, but no records of
       // this type.
+      for (const auto& rr : resolve(qname, QType::RRSIG, qclass).answers)
+      {
+        RFC4034::RRSIG rd(rr.rdata, type2str);
+        if (
+          rd.type_covered == static_cast<uint16_t>(Type::NSEC) ||
+          (soa_record && rd.type_covered == static_cast<uint16_t>(Type::SOA)))
+          result.authorities += rr;
+      }
     }
 
     LOG_TRACE_FMT(

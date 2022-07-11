@@ -81,6 +81,16 @@ public:
     }
   }
 
+  small_vector(const std::string& s)
+  {
+    size_ = s.size();
+    if (size_ > 0)
+    {
+      data = new uint8_t[size_];
+      std::memcpy(data, s.data(), size_);
+    }
+  }
+
   ~small_vector()
   {
     if (size_ != 0)

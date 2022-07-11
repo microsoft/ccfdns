@@ -7,6 +7,7 @@
 #include "rfc1035.h"
 #include "rfc3596.h"
 
+#include <cassert>
 #include <ccf/crypto/key_pair.h>
 #include <ccf/ds/logger.h>
 #include <set>
@@ -135,7 +136,7 @@ namespace RFC4034
     std::vector<uint8_t> data_to_sign;
     put(static_cast<uint16_t>(t), data_to_sign);
     put(static_cast<uint8_t>(algorithm), data_to_sign);
-    put((uint8_t)signer_name.labels.size(), data_to_sign);
+    put(num_labels, data_to_sign);
     put(original_ttl, data_to_sign);
     put(sig_expiration, data_to_sign);
     put(sig_inception, data_to_sign);
@@ -149,11 +150,23 @@ namespace RFC4034
       put(rr.name, data_to_sign);
       put(rr.type, data_to_sign);
       put(rr.class_, data_to_sign);
-      put(rr.ttl, data_to_sign);
+      put(original_ttl, data_to_sign);
       rr.rdata.put(data_to_sign);
     }
 
     return signing_function(algorithm, data_to_sign);
+  }
+
+  static uint8_t num_labels(const Name& name)
+  {
+    // https://www.rfc-editor.org/rfc/rfc4034.html#section-3.1.3
+    auto n = name.labels.size();
+    if (name.is_absolute())
+      n--;
+    for (const auto& l : name.labels)
+      if (l.is_wildcard())
+        n--;
+    return n;
   }
 
   RFC4034::RRSIG sign(
@@ -167,7 +180,15 @@ namespace RFC4034
     const CanonicalRRSet& rrset,
     const std::function<std::string(const Type&)>& type2str)
   {
-    auto& owner = origin; // Correct if we are authoritative?
+    assert(rrset.size() > 0);
+
+    const Name& owner = rrset.begin()->name;
+    const Name& signer = origin;
+
+    assert(owner.is_absolute());
+    assert(signer.is_absolute());
+
+    uint8_t nl = num_labels(owner);
 
     auto now = std::chrono::system_clock::now();
     auto tp = now.time_since_epoch();
@@ -179,23 +200,23 @@ namespace RFC4034
       signing_function,
       type,
       algorithm,
-      owner.labels.size(),
+      nl,
       original_ttl,
       sig_expiration,
       sig_inception,
       keytag,
-      owner,
+      signer,
       rrset);
 
     return RRSIG(
       type,
       static_cast<uint8_t>(algorithm),
-      owner.labels.size(),
+      nl,
       original_ttl,
       sig_expiration,
       sig_inception,
       keytag,
-      owner,
+      signer,
       signature,
       type2str);
   }

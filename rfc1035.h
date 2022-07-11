@@ -34,9 +34,13 @@ namespace RFC1035 // https://datatracker.ietf.org/doc/html/rfc1035
 
     Label(const std::vector<uint8_t>& bytes, size_t& pos)
     {
-      if (
-        pos >= bytes.size() || pos + bytes[pos] >= bytes.size() ||
-        bytes[pos] > MAX_LABEL_SIZE)
+      if (pos >= bytes.size())
+        throw std::runtime_error("invalid label size (position)");
+
+      uint8_t flags = bytes[pos] >> 6;
+      uint8_t sz = bytes[pos] & 0x3F;
+
+      if (pos + sz >= bytes.size() || bytes[pos] > MAX_LABEL_SIZE)
         throw std::runtime_error("invalid label size (bytes)");
 
       data = small_vector<uint8_t>(bytes[pos]);
@@ -48,9 +52,13 @@ namespace RFC1035 // https://datatracker.ietf.org/doc/html/rfc1035
     template <typename T>
     Label(const small_vector<T>& bytes, size_t& pos)
     {
-      if (
-        pos >= bytes.size() || pos + bytes[pos] >= bytes.size() ||
-        bytes[pos] > MAX_LABEL_SIZE)
+      if (pos >= bytes.size())
+        throw std::runtime_error("invalid label size (position)");
+
+      uint8_t flags = bytes[pos] >> 6;
+      uint8_t sz = bytes[pos] & 0x3F;
+
+      if (pos + sz >= bytes.size() || bytes[pos] > MAX_LABEL_SIZE)
         throw std::runtime_error("invalid label size (small_vector)");
 
       data = small_vector<uint8_t>(bytes[pos]);
@@ -120,6 +128,11 @@ namespace RFC1035 // https://datatracker.ietf.org/doc/html/rfc1035
       return r;
     }
 
+    bool is_wildcard() const
+    {
+      return data.size() == 1 && data[0] == '*';
+    }
+
   protected:
     small_vector<uint8_t> data;
   };
@@ -147,16 +160,18 @@ namespace RFC1035 // https://datatracker.ietf.org/doc/html/rfc1035
 
     Name(const std::string& s)
     {
-      std::vector<std::string> tokens;
-      std::istringstream f(s);
-      std::string tmp;
-      size_t total_size = 0;
-      while (std::getline(f, tmp, '.'))
+      if (s != ".")
       {
-        labels.push_back(Label(tmp));
-        total_size += labels.back().size();
-        if (total_size > MAX_NAME_SIZE)
-          throw std::runtime_error("excessive name length");
+        std::stringstream f(s);
+        std::string tmp;
+        size_t total_size = 0;
+        while (std::getline(f, tmp, '.'))
+        {
+          labels.push_back(Label(tmp));
+          total_size += labels.back().size();
+          if (total_size > MAX_NAME_SIZE)
+            throw std::runtime_error("excessive name length");
+        }
       }
       if (s.back() == '.')
         labels.push_back(Label());
@@ -265,6 +280,9 @@ namespace RFC1035 // https://datatracker.ietf.org/doc/html/rfc1035
     /// Converts the name to its string representation.
     operator std::string() const
     {
+      if (is_root())
+        return ".";
+
       std::string r;
       bool first = true;
       for (const auto& l : labels)
