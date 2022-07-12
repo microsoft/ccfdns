@@ -183,9 +183,18 @@ TEST_CASE("Basic lookups")
   {
     RFC1035::Message msg = mk_question("example.com.", aDNS::QType::SOA);
     auto response = s.reply(msg);
-    REQUIRE(response.answers.size() > 0);
-    SOA soa(response.answers[0].rdata);
-    REQUIRE((std::string)soa == soa_rdata);
+    REQUIRE(response.authorities.size() > 0);
+    size_t num_soa = 0;
+    for (const auto& rr : response.authorities)
+    {
+      if (rr.type == static_cast<uint16_t>(aDNS::Type::SOA))
+      {
+        SOA soa(rr.rdata);
+        REQUIRE((std::string)soa == soa_rdata);
+        num_soa++;
+      }
+    }
+    REQUIRE(num_soa == 1);
   }
 
   REQUIRE_NOTHROW(s.add(
@@ -222,6 +231,14 @@ TEST_CASE("Basic lookups")
 
   {
     RFC1035::Message msg = mk_question("www.example.com.", aDNS::QType::A);
+    auto response = s.reply(msg);
+    REQUIRE(response.answers.size() > 0);
+    REQUIRE(
+      response.answers[0].rdata == small_vector<uint16_t>{93, 184, 216, 34});
+  }
+
+  {
+    RFC1035::Message msg = mk_question("WwW.ExAmPlE.CoM.", aDNS::QType::A);
     auto response = s.reply(msg);
     REQUIRE(response.answers.size() > 0);
     REQUIRE(
@@ -345,16 +362,15 @@ TEST_CASE("RRSIG tests")
       aDNS::Class::IN,
       RFC1035::TXT("some text"))));
 
-  auto r = s.resolve(origin, aDNS::QType::DNSKEY, aDNS::QClass::IN, true);
+  auto r = s.resolve(origin, aDNS::QType::DNSKEY, aDNS::QClass::IN);
   auto public_key = get_public_key(r.answers);
   REQUIRE(RFC4034::verify_rrsigs(r.answers, public_key, type2str));
 
-  r =
-    s.resolve(Name("www.origin.com."), aDNS::QType::A, aDNS::QClass::IN, true);
+  r = s.resolve(Name("www.origin.com."), aDNS::QType::A, aDNS::QClass::IN);
   REQUIRE(RFC4034::verify_rrsigs(r.answers, public_key, type2str));
 
-  r = s.resolve(
-    Name("sometext.origin.com."), aDNS::QType::TXT, aDNS::QClass::IN, true);
+  r =
+    s.resolve(Name("sometext.origin.com."), aDNS::QType::TXT, aDNS::QClass::IN);
   REQUIRE(RFC4034::verify_rrsigs(r.answers, public_key, type2str));
 
   s.show(origin);

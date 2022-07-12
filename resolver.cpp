@@ -287,8 +287,7 @@ namespace aDNS
       auto resolution = resolve(
         q.qname,
         get_supported_qtype(static_cast<uint16_t>(q.qtype)),
-        get_supported_qclass(static_cast<uint16_t>(q.qclass)),
-        true);
+        get_supported_qclass(static_cast<uint16_t>(q.qclass)));
 
       r.header.rcode = resolution.response_code;
 
@@ -347,6 +346,7 @@ namespace aDNS
   RFC4034::CanonicalRRSet Resolver::find_records(
     const Name& origin, const Name& name, QType qtype, QClass qclass)
   {
+    LOG_DEBUG_FMT("Find: {} {} {} {}", (std::string)origin, (std::string)name, string_from_qtype(qtype), string_from_qclass(qclass));
     RFC4034::CanonicalRRSet records;
     for_each(
       origin,
@@ -362,9 +362,9 @@ namespace aDNS
   }
 
   Resolver::Resolution Resolver::resolve(
-    const Name& qname, QType qtype, QClass qclass, bool with_extras)
+    const Name& qname, QType qtype, QClass qclass)
   {
-    Resolution result;
+    Resolution result;    
 
     if (
       !is_supported_qtype(static_cast<uint16_t>(qtype)) ||
@@ -375,7 +375,7 @@ namespace aDNS
 
     if (qtype == QType::ASTERISK || qclass == QClass::ASTERISK)
       return {ResponseCode::NOT_IMPLEMENTED, {}, {}};
-
+    
     if (!qname.is_absolute())
       throw std::runtime_error("cannot resolve relative names");
 
@@ -392,26 +392,21 @@ namespace aDNS
         auto& result_set =
           qtype == aDNS::QType::SOA ? result.authorities : result.answers;
 
-        if (with_extras)
+        for (const auto& rr : records)
         {
-          for (const auto& rr : records)
-          {
-            LOG_DEBUG_FMT("Looking for RRSIGs for {}", (std::string)rr.name);
-
-            for_each(
-              origin,
-              static_cast<QClass>(rr.class_),
-              QType::RRSIG,
-              [&qname, &rrtype = rr.type, &result_set](const auto& rr) {
-                if (rr.name == qname)
-                {
-                  auto rdata = RFC4034::RRSIG(rr.rdata, type2str);
-                  if (rdata.type_covered == rrtype)
-                    result_set.insert(rr);
-                }
-                return true;
-              });
-          }
+          for_each(
+            origin,
+            static_cast<QClass>(rr.class_),
+            QType::RRSIG,
+            [&qname, &rrtype = rr.type, &result_set](const auto& rr) {
+              if (rr.name == qname)
+              {
+                auto rdata = RFC4034::RRSIG(rr.rdata, type2str);
+                if (rdata.type_covered == rrtype)
+                  result_set.insert(rr);
+              }
+              return true;
+            });
         }
 
         result_set += records;
@@ -419,12 +414,10 @@ namespace aDNS
       }
     }
 
-    if (with_extras && result.answers.empty())
-    {
-      LOG_DEBUG_FMT("Looking for NSECs for {}", (std::string)qname);
+    if (result.answers.empty())
+    {      
       result.authorities += find_records(origin, qname, QType::NSEC, qclass);
-
-      std::optional<ResourceRecord> soa_record = std::nullopt;
+      
       if (qtype != QType::SOA)
       {
         auto soa_records = find_records(origin, origin, QType::SOA, qclass);
@@ -432,15 +425,18 @@ namespace aDNS
           result.authorities += *soa_records.begin();
       }
 
-      // TODO: distinguish between NXDOMAIN and name exists, but no records of
-      // this type.
       for (const auto& rr : find_records(origin, qname, QType::RRSIG, qclass))
       {
         RFC4034::RRSIG rd(rr.rdata, type2str);
         if (
           rd.type_covered == static_cast<uint16_t>(Type::NSEC) ||
-          rd.type_covered == static_cast<uint16_t>(Type::SOA))
+          (qtype != aDNS::QType::SOA && rd.type_covered == static_cast<uint16_t>(Type::SOA)))
           result.authorities += rr;
+      }
+
+      if (result.response_code == NO_ERROR && result.authorities.empty()) {
+        LOG_DEBUG_FMT("NXDOMAIN!");
+        result.response_code = NAME_ERROR; // NXDOMAIN
       }
     }
 
@@ -520,8 +516,7 @@ namespace aDNS
       std::vector<ResourceRecord> records;
 
       for_each(
-        origin, c, static_cast<aDNS::QType>(t), [&records](const auto& rr) {
-          // Check: TTL must be the same for all in rrset?
+        origin, c, static_cast<aDNS::QType>(t), [&records](const auto& rr) {          
           records.push_back(rr);
           return true;
         });

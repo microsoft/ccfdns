@@ -271,7 +271,7 @@ namespace ccfdns
 
     std::string table_name(const Name& origin, aDNS::Type type) const
     {
-      return (std::string)origin + "-" + string_from_type(type);
+      return (std::string)origin.lowered() + "-" + string_from_type(type);
     }
   };
 
