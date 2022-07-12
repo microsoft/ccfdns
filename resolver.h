@@ -101,6 +101,9 @@ namespace aDNS
     virtual Resolution resolve(
       const Name& qname, QType qtype, QClass qclass, bool with_extras = false);
 
+    virtual RFC4034::CanonicalRRSet find_records(
+      const Name& origin, const Name& name, QType qtype, QClass qclass);
+
     virtual void for_each(
       const Name& origin,
       QClass qclass,

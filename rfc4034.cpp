@@ -150,9 +150,7 @@ namespace RFC4034
     signer_name.put(data_to_sign);
 
     for (const auto& rr : rrset)
-    {
-      if (rr.ttl != original_ttl)
-        LOG_INFO_FMT("warning: potential TTL mismatch");
+    {      
       put(rr.name, data_to_sign);
       put(rr.type, data_to_sign);
       put(rr.class_, data_to_sign);

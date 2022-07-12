@@ -344,6 +344,23 @@ namespace aDNS
     return r;
   }
 
+  RFC4034::CanonicalRRSet Resolver::find_records(
+    const Name& origin, const Name& name, QType qtype, QClass qclass)
+  {
+    RFC4034::CanonicalRRSet records;
+    for_each(
+      origin,
+      qclass,
+      qtype,
+      [this, &origin, &name, &qclass, &records](const auto& rr) {
+        LOG_DEBUG_FMT(" - {}", string_from_resource_record(rr));
+        if (rr.name == name)
+          records.insert(rr);
+        return true;
+      });
+    return records;
+  }
+
   Resolver::Resolution Resolver::resolve(
     const Name& qname, QType qtype, QClass qclass, bool with_extras)
   {
@@ -363,68 +380,41 @@ namespace aDNS
       throw std::runtime_error("cannot resolve relative names");
 
     Name origin;
-    std::optional<ResourceRecord> soa_record = std::nullopt;
-
     for (size_t i = 1; i <= qname.labels.size(); i++)
     {
       origin = Name(std::span(qname.labels).last(i));
 
-      RFC4034::CanonicalRRSet records;
-
-      for_each(
-        origin,
-        qclass,
-        qtype,
-        [this, &origin, &qname, &qclass, &records](const auto& rr) {
-          LOG_DEBUG_FMT(" - {}", string_from_resource_record(rr));
-          if (rr.name == qname)
-            records.insert(rr);
-          return true;
-        });
-
-      if (with_extras)
-      {
-        if (qtype != QType::SOA && qtype != QType::ASTERISK)
-        {
-          for_each(
-            origin,
-            qclass,
-            QType::SOA,
-            [this, &origin, &qname, &qclass, &soa_record](const auto& rr) {
-              soa_record = rr;
-              return false;
-            });
-        }
-
-        RFC4034::CanonicalRRSet rrsigs;
-
-        for (const auto& rr : records)
-        {
-          LOG_DEBUG_FMT("Looking for RRSIGs for {}", (std::string)rr.name);
-
-          for_each(
-            origin,
-            static_cast<QClass>(rr.class_),
-            QType::RRSIG,
-            [&qname, &rrtype = rr.type, &rrsigs](const auto& rr) {
-              if (rr.name == qname)
-              {
-                auto rdata = RFC4034::RRSIG(rr.rdata, type2str);
-                if (rdata.type_covered == rrtype)
-                  rrsigs.insert(rr);
-              }
-              return true;
-            });
-        }
-
-        result.answers += rrsigs;
-      }
+      RFC4034::CanonicalRRSet records =
+        find_records(origin, qname, qtype, qclass);
 
       if (records.size() > 0)
       {
-        result.answers += records;
-        if (soa_record)
-          result.authorities += *soa_record;
+        auto& result_set =
+          qtype == aDNS::QType::SOA ? result.authorities : result.answers;
+
+        if (with_extras)
+        {
+          for (const auto& rr : records)
+          {
+            LOG_DEBUG_FMT("Looking for RRSIGs for {}", (std::string)rr.name);
+
+            for_each(
+              origin,
+              static_cast<QClass>(rr.class_),
+              QType::RRSIG,
+              [&qname, &rrtype = rr.type, &result_set](const auto& rr) {
+                if (rr.name == qname)
+                {
+                  auto rdata = RFC4034::RRSIG(rr.rdata, type2str);
+                  if (rdata.type_covered == rrtype)
+                    result_set.insert(rr);
+                }
+                return true;
+              });
+          }
+        }
+
+        result_set += records;
         break; // Keep walking down the tree?
       }
     }
@@ -432,17 +422,24 @@ namespace aDNS
     if (with_extras && result.answers.empty())
     {
       LOG_DEBUG_FMT("Looking for NSECs for {}", (std::string)qname);
-      result.authorities += resolve(qname, QType::NSEC, qclass).answers;
-      if (soa_record)
-        result.authorities += *soa_record;
+      result.authorities += find_records(origin, qname, QType::NSEC, qclass);
+
+      std::optional<ResourceRecord> soa_record = std::nullopt;
+      if (qtype != QType::SOA)
+      {
+        auto soa_records = find_records(origin, origin, QType::SOA, qclass);
+        if (soa_records.size() > 0)
+          result.authorities += *soa_records.begin();
+      }
+
       // TODO: distinguish between NXDOMAIN and name exists, but no records of
       // this type.
-      for (const auto& rr : resolve(qname, QType::RRSIG, qclass).answers)
+      for (const auto& rr : find_records(origin, qname, QType::RRSIG, qclass))
       {
         RFC4034::RRSIG rd(rr.rdata, type2str);
         if (
           rd.type_covered == static_cast<uint16_t>(Type::NSEC) ||
-          (soa_record && rd.type_covered == static_cast<uint16_t>(Type::SOA)))
+          rd.type_covered == static_cast<uint16_t>(Type::SOA))
           result.authorities += rr;
       }
     }
@@ -552,7 +549,7 @@ namespace aDNS
     }
     auto zone_signing_key = kit->second;
 
-    auto dnskey_rrs = resolve(origin, QType::DNSKEY, QClass::IN).answers;
+    auto dnskey_rrs = find_records(origin, origin, QType::DNSKEY, QClass::IN);
 
     if (dnskey_rrs.empty())
     {
@@ -586,7 +583,7 @@ namespace aDNS
     {
       Name parent = origin.parent();
 
-      auto ds_rrs = resolve(parent, QType::DS, QClass::IN).answers;
+      auto ds_rrs = find_records(parent, origin, QType::DS, QClass::IN);
 
       if (ds_rrs.empty())
       {
@@ -636,8 +633,7 @@ namespace aDNS
     for (const auto& [_, c] : supported_classes)
     {
       auto soa_records =
-        resolve(origin, static_cast<QType>(Type::SOA), static_cast<QClass>(c))
-          .answers;
+        find_records(origin, origin, QType::SOA, static_cast<QClass>(c));
 
       if (soa_records.size() > 1)
         throw std::runtime_error("too many SOA records");
@@ -669,11 +665,19 @@ namespace aDNS
       for (auto it = crecords.begin(); it != crecords.end(); it++)
       {
         RFC4034::CanonicalRRSet n_crrset; // all records of name and type
+        uint32_t ttl = it->ttl;
 
         for (auto nit = it; nit != crecords.end() && nit->name == it->name &&
              nit->type == it->type;
              nit++)
+        {
           n_crrset += *nit;
+
+          if (nit->ttl != ttl)
+            LOG_INFO_FMT(
+              "warning: TTL mismatch in record set for {}",
+              (std::string)nit->name);
+        }
 
         // https://datatracker.ietf.org/doc/html/rfc4035#section-2.2
         if (
@@ -685,7 +689,7 @@ namespace aDNS
           make_signing_function(zone_signing_key),
           key_tag,
           RFC4034::Algorithm::ECDSAP384SHA384,
-          86400,
+          ttl,
           origin,
           static_cast<uint16_t>(c),
           static_cast<uint16_t>(it->type),
@@ -699,7 +703,7 @@ namespace aDNS
             it->name,
             static_cast<uint16_t>(Type::RRSIG),
             static_cast<uint16_t>(c),
-            default_ttl,
+            ttl,
             rrsig_rdata));
       }
 
@@ -718,11 +722,8 @@ namespace aDNS
           next++;
           if (next != crecords.end())
           {
-            auto nsrs = resolve(
-                          next->name,
-                          static_cast<QType>(Type::NS),
-                          static_cast<QClass>(c))
-                          .answers;
+            auto nsrs = find_records(
+              origin, next->name, QType::NS, static_cast<QClass>(c));
             is_delegation_point = !nsrs.empty();
           }
         }

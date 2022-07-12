@@ -15,7 +15,7 @@
 using namespace aDNS;
 using namespace RFC1035;
 
-static uint32_t default_ttl = 3600;
+static uint32_t default_ttl = 86400;
 
 auto type2str = [](const auto& x) {
   return aDNS::string_from_type(static_cast<aDNS::Type>(x));
@@ -129,7 +129,7 @@ ResourceRecord RR(
     name,
     static_cast<uint16_t>(type),
     static_cast<uint16_t>(class_),
-    default_ttl,
+    type == aDNS::Type::SOA ? 0 : default_ttl,
     data);
 }
 
@@ -174,7 +174,7 @@ TEST_CASE("Basic lookups")
   Name origin("example.com.");
 
   std::string soa_rdata =
-    "ns1.example.com. joe.example.com. 4 604800 86400 2419200 604800";
+    "ns1.example.com. joe.example.com. 4 604800 86400 2419200 0";
 
   REQUIRE_NOTHROW(s.add(
     origin,
@@ -319,7 +319,7 @@ TEST_CASE("RRSIG tests")
       aDNS::Type::SOA,
       aDNS::Class::IN,
       RFC1035::SOA(
-        "ns1.example.com. joe.example.com. 4 604800 86400 2419200 604800"))));
+        "ns1.example.com. joe.example.com. 4 604800 86400 2419200 0"))));
 
   REQUIRE_NOTHROW(s.add(
     origin,
@@ -331,7 +331,11 @@ TEST_CASE("RRSIG tests")
 
   REQUIRE_NOTHROW(s.add(
     origin,
-    RR(Name("sometext"), aDNS::Type::TXT, aDNS::Class::IN, RFC1035::TXT("some text"))));
+    RR(
+      Name("sometext"),
+      aDNS::Type::TXT,
+      aDNS::Class::IN,
+      RFC1035::TXT("some text"))));
 
   REQUIRE_NOTHROW(s.add(
     origin,
@@ -349,8 +353,8 @@ TEST_CASE("RRSIG tests")
     s.resolve(Name("www.origin.com."), aDNS::QType::A, aDNS::QClass::IN, true);
   REQUIRE(RFC4034::verify_rrsigs(r.answers, public_key, type2str));
 
-  r =
-    s.resolve(Name("sometext.origin.com."), aDNS::QType::TXT, aDNS::QClass::IN, true);
+  r = s.resolve(
+    Name("sometext.origin.com."), aDNS::QType::TXT, aDNS::QClass::IN, true);
   REQUIRE(RFC4034::verify_rrsigs(r.answers, public_key, type2str));
 
   s.show(origin);

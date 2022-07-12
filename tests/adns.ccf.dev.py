@@ -37,7 +37,7 @@ def add_record(client, origin, name, stype, rdata_obj):
                 "name": name,
                 "type": int(rdt.from_text(stype)),
                 "class_": int(rdc.IN),
-                "ttl": 3600,
+                "ttl": 0 if stype == "SOA" else 68400,
                 "rdata": base64.urlsafe_b64encode(rdata_obj.to_wire()).decode(),
             },
         },
@@ -51,18 +51,17 @@ def populate_adns_ccf_dev(network, args):
     primary, _ = network.find_primary()
 
     with primary.client() as client:
-        host = primary.get_public_rpc_host()
-        port = primary.get_public_rpc_port()
-        ca = primary.session_ca()["ca"]
-
         origin = "adns.ccf.dev."
 
         rd = dns.rdata.from_text(
             rdc.IN,
             rdt.SOA,
-            "ns1.adns.ccf.dev. some-dev.microsoft.com. 4 604800 86400 2419200 604800",
+            "ns1.adns.ccf.dev. some-dev.microsoft.com. 4 604800 86400 2419200 0",
         )
         add_record(client, origin, origin, "SOA", rd)
+
+        rd = dns.rdata.from_text(rdc.IN, rdt.NS, "ns1.adns.ccf.dev.")
+        add_record(client, origin, origin, "NS", rd)
 
         rd = dns.rdata.from_text(rdc.IN, rdt.A, "51.143.161.224")
         add_record(client, origin, "ns1", "A", rd)
