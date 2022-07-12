@@ -14,6 +14,12 @@
 #include <stdexcept>
 #include <vector>
 
+#include <openssl/ec.h>
+#include <openssl/ecdsa.h>
+#include <openssl/objects.h>
+#include <openssl/x509.h>
+
+
 using namespace RFC1035;
 
 namespace RFC4034
@@ -319,5 +325,105 @@ namespace RFC4034
       ::put(w.window_block_no, r);
       w.bitmap.put(r);
     }
+  }
+
+  std::vector<uint8_t> der_from_coord(const small_vector<uint16_t>& coordinates)
+  {
+    auto csz = coordinates.size() / 2;
+    const uint8_t* x = &coordinates[0];
+    const uint8_t* y = &coordinates[csz];
+    BIGNUM* xbn = BN_new();
+    BIGNUM* ybn = BN_new();
+    BN_bin2bn(x, csz, xbn);
+    BN_bin2bn(y, csz, ybn);
+    EC_GROUP* g = EC_GROUP_new_by_curve_name(NID_secp384r1);
+    EC_POINT* p = EC_POINT_new(g);
+    BN_CTX* bnctx = BN_CTX_new();
+    if (EC_POINT_set_affine_coordinates(g, p, xbn, ybn, bnctx) != 1)
+      throw std::runtime_error("could not set EC point coordinates");
+    EC_KEY* ec_key = EC_KEY_new_by_curve_name(NID_secp384r1);
+    if (EC_KEY_set_public_key(ec_key, p) != 1)
+      throw std::runtime_error("could not create EC key");
+    auto size = i2d_EC_PUBKEY(ec_key, NULL);
+    std::vector<uint8_t> der(size, 0);
+    unsigned char* derptr = (unsigned char*)&der[0];
+    i2d_EC_PUBKEY(ec_key, &derptr);
+    EC_KEY_free(ec_key);
+    BN_CTX_free(bnctx);
+    EC_POINT_free(p);
+    EC_GROUP_free(g);
+    BN_free(xbn);
+    BN_free(ybn);
+    return der;
+  };
+
+  static void convert_signature_to_asn1(std::vector<uint8_t>& sig)
+  {
+    auto csz = sig.size() / 2;
+    BIGNUM* r = BN_new();
+    BIGNUM* s = BN_new();
+    BN_bin2bn(sig.data(), csz, r);
+    BN_bin2bn(sig.data() + csz, csz, s);
+    ECDSA_SIG* ecdsa_sig = ECDSA_SIG_new();
+    ECDSA_SIG_set0(ecdsa_sig, r, s);
+    auto outsz = i2d_ECDSA_SIG(ecdsa_sig, NULL);
+    sig.resize(outsz, 0);
+    unsigned char* outp = sig.data();
+    i2d_ECDSA_SIG(ecdsa_sig, &outp);
+  }
+
+  bool verify_rrsigs(
+    const RFC4034::CanonicalRRSet& rrset,
+    const small_vector<uint16_t>& public_key,
+    const std::function<std::string(const Type&)>& type2str)
+  {
+    auto pk = crypto::make_public_key(der_from_coord(public_key));
+
+    RFC4034::CanonicalRRSet rrs;
+    RFC4034::CanonicalRRSet rrsigs;
+
+    for (const auto& rr : rrset)
+    {
+      if (rr.type == static_cast<uint16_t>(aDNS::Type::RRSIG))
+        rrsigs.insert(rr);
+      else
+        rrs.insert(rr);
+    }
+
+    for (const auto& rr : rrs)
+    {
+      // LOG_DEBUG_FMT("VERIFY: rr: {}", aDNS::string_from_resource_record(rr));
+      bool found_rrsig = false;
+
+      for (const auto& rrsig : rrsigs)
+      {
+        // LOG_DEBUG_FMT("VERIFY: rrsig: {}", aDNS::string_from_resource_record(rrsig));
+        RFC4034::RRSIG rrsig_rdata(rrsig.rdata, type2str);
+        
+        if (!rrsig_rdata.signer_name.is_absolute())
+          throw std::runtime_error("relative signer name");
+
+        std::vector<uint8_t> data_to_sign = rrsig_rdata.all_but_signature();
+
+        rr.name.put(data_to_sign);
+        put(rr.type, data_to_sign);
+        put(rr.class_, data_to_sign);
+        put(rrsig_rdata.original_ttl, data_to_sign);
+        rr.rdata.put(data_to_sign);
+
+        auto sig = rrsig_rdata.signature;
+        convert_signature_to_asn1(sig);
+        if (pk->verify(data_to_sign, sig))
+        {
+          found_rrsig = true;
+          break;
+        }
+      }
+
+      if (!found_rrsig)
+        return false;
+    }
+
+    return true;
   }
 }

@@ -279,7 +279,7 @@ namespace RFC4034 // https://datatracker.ietf.org/doc/html/rfc4034
       signature_expiration = get<decltype(signature_expiration)>(data, pos);
       signature_inception = get<decltype(signature_inception)>(data, pos);
       key_tag = get<decltype(key_tag)>(data, pos);
-      signer_name = RFC1035::Name(data, pos, labels);
+      signer_name = RFC1035::Name(data, pos);
       signature =
         std::vector<uint8_t>(&data[pos], &data[pos] + data.size() - pos);
     }
@@ -661,5 +661,10 @@ namespace RFC4034 // https://datatracker.ietf.org/doc/html/rfc4034
     uint16_t class_,
     uint16_t type_,
     const CanonicalRRSet& rrset,
+    const std::function<std::string(const Type&)>& type2str);
+
+  bool verify_rrsigs(
+    const RFC4034::CanonicalRRSet& rrset,
+    const small_vector<uint16_t>& public_key,
     const std::function<std::string(const Type&)>& type2str);
 }
