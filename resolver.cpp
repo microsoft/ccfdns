@@ -34,38 +34,38 @@ using namespace RFC1035;
 
 namespace aDNS
 {
-  static const std::map<uint16_t, aDNS::Type> supported_types = {
-    {static_cast<uint16_t>(RFC1035::Type::A), aDNS::Type::A},
-    {static_cast<uint16_t>(RFC1035::Type::NS), aDNS::Type::NS},
-    {static_cast<uint16_t>(RFC1035::Type::CNAME), aDNS::Type::CNAME},
-    {static_cast<uint16_t>(RFC1035::Type::SOA), aDNS::Type::SOA},
-    {static_cast<uint16_t>(RFC1035::Type::MX), aDNS::Type::MX},
-    {static_cast<uint16_t>(RFC1035::Type::TXT), aDNS::Type::TXT},
+  static const std::map<uint16_t, Type> supported_types = {
+    {static_cast<uint16_t>(RFC1035::Type::A), Type::A},
+    {static_cast<uint16_t>(RFC1035::Type::NS), Type::NS},
+    {static_cast<uint16_t>(RFC1035::Type::CNAME), Type::CNAME},
+    {static_cast<uint16_t>(RFC1035::Type::SOA), Type::SOA},
+    {static_cast<uint16_t>(RFC1035::Type::MX), Type::MX},
+    {static_cast<uint16_t>(RFC1035::Type::TXT), Type::TXT},
 
-    {static_cast<uint16_t>(RFC3596::Type::AAAA), aDNS::Type::AAAA},
+    {static_cast<uint16_t>(RFC3596::Type::AAAA), Type::AAAA},
 
-    {static_cast<uint16_t>(RFC4034::Type::DNSKEY), aDNS::Type::DNSKEY},
-    {static_cast<uint16_t>(RFC4034::Type::DS), aDNS::Type::DS},
-    {static_cast<uint16_t>(RFC4034::Type::RRSIG), aDNS::Type::RRSIG},
-    {static_cast<uint16_t>(RFC4034::Type::NSEC), aDNS::Type::NSEC},
+    {static_cast<uint16_t>(RFC4034::Type::DNSKEY), Type::DNSKEY},
+    {static_cast<uint16_t>(RFC4034::Type::DS), Type::DS},
+    {static_cast<uint16_t>(RFC4034::Type::RRSIG), Type::RRSIG},
+    {static_cast<uint16_t>(RFC4034::Type::NSEC), Type::NSEC},
 
-    {static_cast<uint16_t>(RFC6891::Type::OPT), aDNS::Type::OPT}};
+    {static_cast<uint16_t>(RFC6891::Type::OPT), Type::OPT}};
 
-  static const std::map<uint16_t, aDNS::QType> supported_qtypes = {
-    {static_cast<uint16_t>(RFC1035::QType::ASTERISK), aDNS::QType::ASTERISK},
+  static const std::map<uint16_t, QType> supported_qtypes = {
+    {static_cast<uint16_t>(RFC1035::QType::ASTERISK), QType::ASTERISK},
   };
 
   static const std::map<uint16_t, Class> supported_classes = {
     {static_cast<uint16_t>(RFC1035::Class::IN), Class::IN}};
 
-  static const std::map<uint16_t, aDNS::QClass> supported_qclasses = {
-    {static_cast<uint16_t>(RFC1035::QClass::ASTERISK), aDNS::QClass::ASTERISK}};
+  static const std::map<uint16_t, QClass> supported_qclasses = {
+    {static_cast<uint16_t>(RFC1035::QClass::ASTERISK), QClass::ASTERISK}};
 
-  static const std::map<std::string, aDNS::Class> string_to_class_map = {
-    {"IN", aDNS::Class::IN},
+  static const std::map<std::string, Class> string_to_class_map = {
+    {"IN", Class::IN},
   };
 
-  static inline aDNS::Type get_supported_type(uint16_t t)
+  static inline Type get_supported_type(uint16_t t)
   {
     auto mit = supported_types.find(t);
     if (mit == supported_types.end())
@@ -78,11 +78,11 @@ namespace aDNS
     return supported_types.find(t) != supported_types.end();
   }
 
-  static inline aDNS::QType get_supported_qtype(uint16_t t)
+  static inline QType get_supported_qtype(uint16_t t)
   {
     auto mit = supported_qtypes.find(t);
     if (mit == supported_qtypes.end())
-      return static_cast<aDNS::QType>(get_supported_type(t));
+      return static_cast<QType>(get_supported_type(t));
     return mit->second;
   };
 
@@ -105,11 +105,11 @@ namespace aDNS
     return supported_classes.find(t) != supported_classes.end();
   }
 
-  static inline aDNS::QClass get_supported_qclass(uint16_t t)
+  static inline QClass get_supported_qclass(uint16_t t)
   {
     auto mit = supported_qclasses.find(t);
     if (mit == supported_qclasses.end())
-      return static_cast<aDNS::QClass>(get_supported_class(t));
+      return static_cast<QClass>(get_supported_class(t));
     return mit->second;
   };
 
@@ -119,14 +119,14 @@ namespace aDNS
       is_supported_class(t);
   }
 
-  aDNS::Type type_from_string(const std::string& type_string)
+  Type type_from_string(const std::string& type_string)
   {
 #define TFSF(RFC) \
   { \
     for (const auto& [t, s] : RFC::type_string_map) \
     { \
       if (s == type_string) \
-        return static_cast<aDNS::Type>(t); \
+        return static_cast<Type>(t); \
     } \
   }
 
@@ -139,7 +139,7 @@ namespace aDNS
       fmt::format("unknown type string '{}'", type_string));
   }
 
-  std::string string_from_type(const aDNS::Type& t)
+  std::string string_from_type(const Type& t)
   {
 #define SFTF(RFC) \
   { \
@@ -157,19 +157,19 @@ namespace aDNS
     return "TYPE" + std::to_string(static_cast<uint16_t>(t));
   };
 
-  std::string string_from_qtype(const aDNS::QType& t)
+  std::string string_from_qtype(const QType& t)
   {
     return t == QType::ASTERISK ? "*" : string_from_type(static_cast<Type>(t));
   }
 
-  aDNS::QType qtype_from_string(const std::string& s)
+  QType qtype_from_string(const std::string& s)
   {
-    static const std::map<std::string, aDNS::QType> smap = {
-      {"*", aDNS::QType::ASTERISK},
+    static const std::map<std::string, QType> smap = {
+      {"*", QType::ASTERISK},
     };
     auto mit = smap.find(s);
     if (mit == smap.end())
-      return static_cast<aDNS::QType>(type_from_string(s));
+      return static_cast<QType>(type_from_string(s));
     return mit->second;
   };
 
@@ -205,14 +205,14 @@ namespace aDNS
     return "CLASS" + std::to_string(static_cast<uint16_t>(class_));
   };
 
-  std::string string_from_qclass(const aDNS::QClass& c)
+  std::string string_from_qclass(const QClass& c)
   {
     return c == QClass::ASTERISK ? "*" :
                                    string_from_class(static_cast<Class>(c));
   }
 
   auto type2str = [](const auto& x) {
-    return aDNS::string_from_type(static_cast<aDNS::Type>(x));
+    return string_from_type(static_cast<Type>(x));
   };
 
   std::shared_ptr<RDataFormat> mk_rdata(
@@ -246,7 +246,7 @@ namespace aDNS
   {
     std::string r = rr.name;
 
-    if (rr.type == static_cast<uint16_t>(aDNS::Type::OPT))
+    if (rr.type == static_cast<uint16_t>(Type::OPT))
     {
       // https://datatracker.ietf.org/doc/html/rfc6891#section-6.1.2
       r += " udp-payload-size=" + std::to_string(rr.class_);
@@ -262,12 +262,68 @@ namespace aDNS
     return r;
   }
 
-  Resolver::Resolver()
+  static void convert_ec_signature_to_ieee_p1363(
+    std::vector<uint8_t>& sig,
+    std::shared_ptr<const crypto::KeyPair> signing_key)
   {
-    // TODO: install (public) key for root?
+    // Convert signature from ASN.1 format to IEEE P1363
+    const unsigned char* pp = sig.data();
+    ECDSA_SIG* sig_r_s = d2i_ECDSA_SIG(NULL, &pp, sig.size());
+    const BIGNUM* r = ECDSA_SIG_get0_r(sig_r_s);
+    const BIGNUM* s = ECDSA_SIG_get0_s(sig_r_s);
+    int r_n = BN_num_bytes(r);
+    int s_n = BN_num_bytes(s);
+    size_t sz = signing_key->coordinates().x.size();
+    assert(signing_key->coordinates().y.size() == sz);
+    sig = std::vector<uint8_t>(2 * sz, 0);
+    BN_bn2binpad(r, sig.data(), sz);
+    BN_bn2binpad(s, sig.data() + sz, sz);
+    ECDSA_SIG_free(sig_r_s);
   }
 
+  static small_vector<uint16_t> encode_public_key(
+    std::shared_ptr<const crypto::KeyPair> key)
+  {
+    auto coords = key->coordinates();
+    small_vector<uint16_t> r(coords.x.size() + coords.y.size());
+    for (size_t i = 0; i < coords.x.size(); i++)
+      r[i] = coords.x[i];
+    for (size_t i = 0; i < coords.y.size(); i++)
+      r[coords.x.size() + i] = coords.y[i];
+    return r;
+  }
+
+  static RFC4034::SigningFunction make_signing_function(
+    std::shared_ptr<crypto::KeyPair> signing_key)
+  {
+    RFC4034::SigningFunction r = [signing_key](
+                                   RFC4034::Algorithm algorithm,
+                                   const std::vector<uint8_t>& data_to_sign) {
+      if (algorithm != RFC4034::Algorithm::ECDSAP384SHA384)
+        throw std::runtime_error(
+          fmt::format("algorithm {} not supported", algorithm));
+      auto coords = signing_key->coordinates();
+      LOG_DEBUG_FMT(
+        "SIGN: key x/y {}{}", ds::to_hex(coords.x), ds::to_hex(coords.y));
+      LOG_DEBUG_FMT("SIGN: data={}", ds::to_hex(data_to_sign));
+      auto sig = signing_key->sign(data_to_sign, crypto::MDType::SHA384);
+      LOG_DEBUG_FMT("SIGN: sig={}", ds::to_hex(sig));
+      convert_ec_signature_to_ieee_p1363(sig, signing_key);
+      LOG_DEBUG_FMT("SIGN: r/s sig={}", ds::to_hex(sig));
+      return sig;
+    };
+    return r;
+  }
+
+  Resolver::Resolver() {}
+
   Resolver::~Resolver() {}
+
+  uint16_t get_key_tag(const RFC4034::DNSKEY& dnskey)
+  {
+    small_vector<uint16_t> bytes = dnskey;
+    return RFC4034::keytag(&bytes[0], bytes.size());
+  }
 
   Message Resolver::reply(const Message& msg)
   {
@@ -305,7 +361,7 @@ namespace aDNS
     for (const auto& rr : msg.additionals)
     {
       bool have_opt = false;
-      if (rr.type == static_cast<uint16_t>(aDNS::Type::OPT))
+      if (rr.type == static_cast<uint16_t>(Type::OPT))
       {
         LOG_DEBUG_FMT("EDNS(0): {}", string_from_resource_record(rr));
         if (have_opt)
@@ -324,7 +380,7 @@ namespace aDNS
         uint16_t udp_payload_size = 4096;
         ResourceRecord opt_reply(
           Name("."),
-          static_cast<uint16_t>(aDNS::Type::OPT),
+          static_cast<uint16_t>(Type::OPT),
           udp_payload_size,
           (uint32_t)ttl,
           {});
@@ -344,17 +400,26 @@ namespace aDNS
   }
 
   RFC4034::CanonicalRRSet Resolver::find_records(
-    const Name& origin, const Name& name, QType qtype, QClass qclass)
+    const Name& origin,
+    const Name& name,
+    QType qtype,
+    QClass qclass,
+    std::optional<std::function<bool(const ResourceRecord&)>> condition)
   {
-    LOG_DEBUG_FMT("Find: {} {} {} {}", (std::string)origin, (std::string)name, string_from_qtype(qtype), string_from_qclass(qclass));
+    LOG_DEBUG_FMT(
+      "Find: {} {} {} {}",
+      (std::string)origin,
+      (std::string)name,
+      string_from_qtype(qtype),
+      string_from_qclass(qclass));
     RFC4034::CanonicalRRSet records;
     for_each(
       origin,
       qclass,
       qtype,
-      [this, &origin, &name, &qclass, &records](const auto& rr) {
+      [this, &origin, &name, &qclass, &records, &condition](const auto& rr) {
         LOG_DEBUG_FMT(" - {}", string_from_resource_record(rr));
-        if (rr.name == name)
+        if (rr.name == name && (!condition || (*condition)(rr)))
           records.insert(rr);
         return true;
       });
@@ -364,7 +429,7 @@ namespace aDNS
   Resolver::Resolution Resolver::resolve(
     const Name& qname, QType qtype, QClass qclass)
   {
-    Resolution result;    
+    Resolution result;
 
     if (
       !is_supported_qtype(static_cast<uint16_t>(qtype)) ||
@@ -375,9 +440,12 @@ namespace aDNS
 
     if (qtype == QType::ASTERISK || qclass == QClass::ASTERISK)
       return {ResponseCode::NOT_IMPLEMENTED, {}, {}};
-    
+
     if (!qname.is_absolute())
       throw std::runtime_error("cannot resolve relative names");
+
+    auto& result_set =
+      qtype == QType::SOA ? result.authorities : result.answers;
 
     Name origin;
     for (size_t i = 1; i <= qname.labels.size(); i++)
@@ -389,9 +457,6 @@ namespace aDNS
 
       if (records.size() > 0)
       {
-        auto& result_set =
-          qtype == aDNS::QType::SOA ? result.authorities : result.answers;
-
         for (const auto& rr : records)
         {
           for_each(
@@ -414,10 +479,10 @@ namespace aDNS
       }
     }
 
-    if (result.answers.empty())
-    {      
+    if (result_set.empty())
+    {
       result.authorities += find_records(origin, qname, QType::NSEC, qclass);
-      
+
       if (qtype != QType::SOA)
       {
         auto soa_records = find_records(origin, origin, QType::SOA, qclass);
@@ -430,11 +495,13 @@ namespace aDNS
         RFC4034::RRSIG rd(rr.rdata, type2str);
         if (
           rd.type_covered == static_cast<uint16_t>(Type::NSEC) ||
-          (qtype != aDNS::QType::SOA && rd.type_covered == static_cast<uint16_t>(Type::SOA)))
+          (qtype != QType::SOA &&
+           rd.type_covered == static_cast<uint16_t>(Type::SOA)))
           result.authorities += rr;
       }
 
-      if (result.response_code == NO_ERROR && result.authorities.empty()) {
+      if (result.response_code == NO_ERROR && result.authorities.empty())
+      {
         LOG_DEBUG_FMT("NXDOMAIN!");
         result.response_code = NAME_ERROR; // NXDOMAIN
       }
@@ -445,65 +512,11 @@ namespace aDNS
       (std::string)qname,
       string_from_qtype(static_cast<QType>(qtype)),
       string_from_qclass(static_cast<QClass>(qclass)),
-      result.answers.empty() ? " <nothing>" : "");
-    for (const auto& rr : result.answers)
+      result_set.empty() ? " <nothing>" : "");
+    for (const auto& rr : result_set)
       LOG_TRACE_FMT(" {}", string_from_resource_record(rr));
 
     return result;
-  }
-
-  static void convert_signature_to_ieee_p1363(
-    std::vector<uint8_t>& sig,
-    std::shared_ptr<const crypto::KeyPair> signing_key)
-  {
-    // Convert signature from ASN.1 format to IEEE P1363
-    const unsigned char* pp = sig.data();
-    ECDSA_SIG* sig_r_s = d2i_ECDSA_SIG(NULL, &pp, sig.size());
-    const BIGNUM* r = ECDSA_SIG_get0_r(sig_r_s);
-    const BIGNUM* s = ECDSA_SIG_get0_s(sig_r_s);
-    int r_n = BN_num_bytes(r);
-    int s_n = BN_num_bytes(s);
-    size_t sz = signing_key->coordinates().x.size();
-    assert(signing_key->coordinates().y.size() == sz);
-    sig = std::vector<uint8_t>(2 * sz, 0);
-    BN_bn2binpad(r, sig.data(), sz);
-    BN_bn2binpad(s, sig.data() + sz, sz);
-    ECDSA_SIG_free(sig_r_s);
-  }
-
-  static small_vector<uint16_t> encode_public_key(
-    std::shared_ptr<const crypto::KeyPair> key)
-  {
-    auto coords = key->coordinates();
-    small_vector<uint16_t> r(coords.x.size() + coords.y.size());
-    for (size_t i = 0; i < coords.x.size(); i++)
-      r[i] = coords.x[i];
-    for (size_t i = 0; i < coords.y.size(); i++)
-      r[coords.x.size() + i] = coords.y[i];
-    return r;
-  }
-
-  static RFC4034::SigningFunction make_signing_function(
-    std::shared_ptr<const crypto::KeyPair> signing_key)
-  {
-    RFC4034::SigningFunction r = [signing_key](
-                                   RFC4034::Algorithm algorithm,
-                                   const std::vector<uint8_t>& data_to_sign) {
-      if (algorithm != RFC4034::Algorithm::ECDSAP384SHA384)
-        throw std::runtime_error(
-          fmt::format("algorithm {} not supported", algorithm));
-      auto pem = signing_key->public_key_pem();
-      LOG_DEBUG_FMT("SIGNING public key pem: {}", pem.str());
-      auto xy_pk = encode_public_key(signing_key);
-      LOG_DEBUG_FMT("SIGNING x/y public key: {}", ds::to_hex(xy_pk));
-      LOG_DEBUG_FMT("SIGNING data={}", ds::to_hex(data_to_sign));
-      auto sig = signing_key->sign(data_to_sign, crypto::MDType::SHA384);
-      LOG_DEBUG_FMT("SIGNING sig={}", ds::to_hex(sig));
-      convert_signature_to_ieee_p1363(sig, signing_key);
-      LOG_DEBUG_FMT("SIGNING r/s sig={}", ds::to_hex(sig));
-      return sig;
-    };
-    return r;
   }
 
   RFC4034::CanonicalRRSet Resolver::order_records(
@@ -515,16 +528,135 @@ namespace aDNS
     {
       std::vector<ResourceRecord> records;
 
-      for_each(
-        origin, c, static_cast<aDNS::QType>(t), [&records](const auto& rr) {          
-          records.push_back(rr);
-          return true;
-        });
+      for_each(origin, c, static_cast<QType>(t), [&records](const auto& rr) {
+        records.push_back(rr);
+        return true;
+      });
 
       r += RFC4034::canonicalize(origin, records, type2str);
     }
 
     return r;
+  }
+
+  Resolver::KeyAndTag Resolver::add_new_signing_key(
+    const Name& origin, bool key_signing)
+  {
+    auto new_zsk = crypto::make_key_pair();
+    small_vector<uint16_t> new_zsk_pk = encode_public_key(new_zsk);
+
+    RFC4034::DNSKEY rdata = add_dnskey(origin, new_zsk_pk, key_signing);
+    auto new_zsk_tag = get_key_tag(rdata);
+
+    LOG_DEBUG_FMT(
+      "NEW KEY for {}, tag={} rdata={} xy={}",
+      (std::string)origin,
+      new_zsk_tag,
+      (std::string)rdata,
+      ds::to_hex(new_zsk_pk));
+
+    add_ds(origin, new_zsk, new_zsk_tag, rdata);
+
+    on_new_signing_key(
+      origin,
+      new_zsk_tag,
+      new_zsk->private_key_pem(),
+      config.use_key_signing_key && key_signing);
+
+    return std::make_pair(new_zsk, new_zsk_tag);
+  }
+
+  Resolver::KeyAndTag Resolver::get_signing_key(
+    const Name& origin, QClass qclass_, bool key_signing)
+  {
+    RFC4034::CanonicalRRSet suitable_keys = find_records(
+      origin, origin, QType::DNSKEY, qclass_, [&key_signing](const auto& rr) {
+        return key_signing != RFC4034::DNSKEY(rr.rdata).is_zone_key();
+      });
+
+    if (suitable_keys.empty())
+      return add_new_signing_key(origin, key_signing);
+    else
+    {
+      auto chosen_key = suitable_keys.begin(); // TODO: which key do we pick?
+
+      RFC4034::DNSKEY dnskey(chosen_key->rdata);
+      uint16_t key_tag = get_key_tag(dnskey);
+
+      auto pem =
+        get_private_key(origin, key_tag, dnskey.public_key, key_signing);
+      auto key = crypto::make_key_pair(pem);
+      return std::make_pair(key, key_tag);
+    }
+  }
+
+  RFC4034::DNSKEY Resolver::add_dnskey(
+    const Name& origin,
+    const small_vector<uint16_t>& public_key,
+    bool key_signing)
+  {
+    uint16_t flags = 0x0000;
+
+    if (!config.use_key_signing_key || !key_signing)
+      flags |= 0x0100;
+
+    if (config.use_key_signing_key && key_signing)
+      flags |= 0x0001;
+
+    RFC4034::DNSKEY rdata(flags, config.signing_algorithm, public_key);
+
+    ResourceRecord dnskey_rr(
+      origin,
+      static_cast<uint16_t>(Type::DNSKEY),
+      static_cast<uint16_t>(Class::IN),
+      config.default_ttl,
+      rdata);
+
+    ignore_on_add = true;
+    add(origin, dnskey_rr);
+
+    return rdata;
+  }
+
+  void Resolver::add_ds(
+    const Name& origin,
+    std::shared_ptr<crypto::KeyPair> zsk,
+    uint16_t key_tag,
+    small_vector<uint16_t>&& dnskey_rdata)
+  {
+    if (origin.is_root())
+      return;
+
+    Name parent = origin.parent();
+    auto ds_rrs = find_records(parent, origin, QType::DS, QClass::IN);
+
+    if (ds_rrs.empty())
+    {
+      auto hp = crypto::make_hash_provider();
+
+      std::vector<uint8_t> t;
+      origin.put(t);
+      dnskey_rdata.put(t);
+
+      auto digest = hp->Hash(t.data(), t.size(), crypto::MDType::SHA384);
+
+      ResourceRecord ds_rr(
+        parent,
+        static_cast<uint16_t>(Type::DS),
+        static_cast<uint16_t>(Class::IN),
+        config.default_ttl,
+        RFC4034::DS(
+          key_tag, config.signing_algorithm, config.digest_type, digest));
+
+      ignore_on_add = true;
+      add(parent, ds_rr);
+      ds_rrs += ds_rr;
+    }
+
+    if (ds_rrs.size() > 1)
+      throw std::runtime_error("too many DS records");
+
+    RFC4034::DS ds_rdata(ds_rrs.begin()->rdata);
   }
 
   void Resolver::sign(const Name& origin)
@@ -533,100 +665,35 @@ namespace aDNS
 
     assert(origin.is_absolute());
 
-    auto kit = zone_signing_keys.find(origin);
-    if (kit == zone_signing_keys.end())
-    {
-      auto [ekit, ok] =
-        zone_signing_keys.emplace(origin, crypto::make_key_pair());
-      if (!ok)
-        throw std::runtime_error("error creating zone signing key");
-      kit = ekit;
-    }
-    auto zone_signing_key = kit->second;
-
-    auto dnskey_rrs = find_records(origin, origin, QType::DNSKEY, QClass::IN);
-
-    if (dnskey_rrs.empty())
-    {
-      auto key_vec = encode_public_key(zone_signing_key);
-      auto key_tag = RFC4034::keytag(&key_vec[0], key_vec.size());
-
-      ResourceRecord dnskey_rr(
-        origin,
-        static_cast<uint16_t>(Type::DNSKEY),
-        static_cast<uint16_t>(Class::IN),
-        default_ttl,
-        RFC4034::DNSKEY(0x0100, RFC4034::Algorithm::ECDSAP384SHA384, key_vec));
-
-      LOG_DEBUG_FMT("NEW KEY: {}", string_from_resource_record(dnskey_rr));
-
-      ignore_on_add = true;
-      add(origin, dnskey_rr);
-      dnskey_rrs += dnskey_rr;
-    }
-
-    if (dnskey_rrs.size() > 1)
-      throw std::runtime_error("too many DNSKEY records");
-
-    auto dnskey_rdata_raw = dnskey_rrs.begin()->rdata;
-    RFC4034::DNSKEY dnskey_rdata(dnskey_rdata_raw);
-
-    auto key_tag =
-      RFC4034::keytag(&dnskey_rdata_raw[0], dnskey_rdata_raw.size());
+    // auto [zone_signing_key, key_tag] = get_zone_signing_key(origin);
 
     if (!origin.is_root())
     {
-      Name parent = origin.parent();
+      // auto dnskey_rdata_raw = dnskey_rrs.begin()->rdata;
+      // RFC4034::DNSKEY dnskey_rdata(dnskey_rdata_raw);
+      // {
+      //   // Check that we're using the right key
+      //   if (ds_rdata.key_tag != key_tag)
+      //     throw std::runtime_error("key tag mismatch");
 
-      auto ds_rrs = find_records(parent, origin, QType::DS, QClass::IN);
-
-      if (ds_rrs.empty())
-      {
-        auto hp = crypto::make_hash_provider();
-
-        std::vector<uint8_t> t;
-        origin.put(t);
-        dnskey_rdata_raw.put(t);
-
-        auto digest = hp->Hash(t.data(), t.size(), crypto::MDType::SHA384);
-
-        ResourceRecord ds_rr(
-          parent,
-          static_cast<uint16_t>(Type::DS),
-          static_cast<uint16_t>(Class::IN),
-          default_ttl,
-          RFC4034::DS(
-            key_tag,
-            RFC4034::Algorithm::ECDSAP384SHA384,
-            RFC4034::DigestType::SHA384,
-            digest));
-
-        ignore_on_add = true;
-        add(parent, ds_rr);
-        ds_rrs += ds_rr;
-      }
-
-      if (ds_rrs.size() > 1)
-        throw std::runtime_error("too many DS records");
-
-      RFC4034::DS ds_rdata(ds_rrs.begin()->rdata);
-
-      {
-        // Check that we're using the right key
-        if (ds_rdata.key_tag != key_tag)
-          throw std::runtime_error("key tag mismatch");
-
-        auto zspk = encode_public_key(zone_signing_key);
-        if (dnskey_rdata.public_key.size() != zspk.size())
-          throw std::runtime_error("public key size mismatch");
-        for (size_t i = 0; i < zspk.size(); i++)
-          if (dnskey_rdata.public_key[i] != zspk[i])
-            throw std::runtime_error("public key mismatch");
-      }
+      //   auto zspk = encode_public_key(zone_signing_key);
+      //   if (dnskey_rdata.public_key.size() != zspk.size())
+      //     throw std::runtime_error("public key size mismatch");
+      //   for (size_t i = 0; i < zspk.size(); i++)
+      //     if (dnskey_rdata.public_key[i] != zspk[i])
+      //       throw std::runtime_error("public key mismatch");
+      // }
     }
 
     for (const auto& [_, c] : supported_classes)
     {
+      // the following may trigger addition of RRs
+      auto ksk_and_tag = get_signing_key(origin, static_cast<QClass>(c), true);
+      auto zsk_and_tag = get_signing_key(origin, static_cast<QClass>(c), false);
+
+      if (!ksk_and_tag.first || !zsk_and_tag.first)
+        throw std::runtime_error("missing signing key");
+
       auto soa_records =
         find_records(origin, origin, QType::SOA, static_cast<QClass>(c));
 
@@ -680,10 +747,16 @@ namespace aDNS
           (static_cast<Type>(it->type) == Type::NS && it->name != origin))
           continue;
 
+        bool is_dnskey = static_cast<Type>(it->type) == Type::DNSKEY;
+
+        auto [key, key_tag] = is_dnskey ? ksk_and_tag : zsk_and_tag;
+
+        LOG_DEBUG_FMT("SIGN: key tag: {}", key_tag);
+
         auto rrsig_rdata = RFC4034::sign(
-          make_signing_function(zone_signing_key),
+          make_signing_function(key),
           key_tag,
-          RFC4034::Algorithm::ECDSAP384SHA384,
+          config.signing_algorithm,
           ttl,
           origin,
           static_cast<uint16_t>(c),
@@ -733,7 +806,7 @@ namespace aDNS
              nit++)
           nsec_rdata.type_bit_maps.insert(static_cast<uint16_t>(nit->type));
 
-        uint32_t ttl = default_ttl;
+        uint32_t ttl = config.default_ttl;
         if (is_authoritative)
         {
           SOA soa_rdata(soa_records.begin()->rdata);

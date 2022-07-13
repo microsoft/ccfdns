@@ -7,6 +7,7 @@
 #include "rfc4034.h"
 #include "rfc6891.h"
 
+#include <ccf/crypto/pem.h>
 #include <functional>
 #include <memory>
 #include <stdexcept>
@@ -86,6 +87,15 @@ namespace aDNS
   class Resolver
   {
   public:
+    struct Configuration
+    {
+      uint32_t default_ttl = 86400;
+      RFC4034::Algorithm signing_algorithm =
+        RFC4034::Algorithm::ECDSAP384SHA384;
+      RFC4034::DigestType digest_type = RFC4034::DigestType::SHA384;
+      bool use_key_signing_key = true;
+    };
+
     struct Resolution
     {
       RFC1035::ResponseCode response_code = RFC1035::ResponseCode::NO_ERROR;
@@ -101,7 +111,12 @@ namespace aDNS
     virtual Resolution resolve(const Name& qname, QType qtype, QClass qclass);
 
     virtual RFC4034::CanonicalRRSet find_records(
-      const Name& origin, const Name& name, QType qtype, QClass qclass);
+      const Name& origin,
+      const Name& name,
+      QType qtype,
+      QClass qclass,
+      std::optional<std::function<bool(const ResourceRecord&)>> condition =
+        std::nullopt);
 
     virtual void for_each(
       const Name& origin,
@@ -118,15 +133,42 @@ namespace aDNS
     virtual void remove(
       const Name& origin, const Name& name, const Type& t) = 0;
 
+    virtual crypto::Pem get_private_key(
+      const Name& origin,
+      uint16_t tag,
+      const small_vector<uint16_t>& public_key,
+      bool key_signing) = 0;
+
+    virtual void on_new_signing_key(
+      const Name& origin,
+      uint16_t tag,
+      const crypto::Pem& pem,
+      bool key_signing) = 0;
+
   protected:
-    uint32_t default_ttl = 86400;
+    Configuration config;
     bool ignore_on_add = false;
-    std::map<
-      Name,
-      std::shared_ptr<crypto::KeyPair>,
-      RFC4034::CanonicalNameOrdering>
-      zone_signing_keys;
 
     RFC4034::CanonicalRRSet order_records(const Name& origin, QClass c) const;
+
+    typedef std::pair<std::shared_ptr<crypto::KeyPair>, uint16_t> KeyAndTag;
+
+    KeyAndTag get_signing_key(
+      const Name& origin, QClass qclass_, bool key_signing);
+
+    KeyAndTag add_new_signing_key(const Name& origin, bool key_signing);
+
+    RFC4034::DNSKEY add_dnskey(
+      const Name& origin,
+      const small_vector<uint16_t>& public_key,
+      bool key_signing);
+
+    void add_ds(
+      const Name& origin,
+      std::shared_ptr<crypto::KeyPair> key,
+      uint16_t key_tag,
+      small_vector<uint16_t>&& dnskey_rdata);
   };
+
+  uint16_t get_key_tag(const RFC4034::DNSKEY& dnskey);
 }

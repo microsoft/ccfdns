@@ -236,6 +236,13 @@ namespace RFC1035 // https://datatracker.ietf.org/doc/html/rfc1035
         label.put(r);
     }
 
+    operator std::vector<uint8_t>() const
+    {
+      std::vector<uint8_t> r;
+      put(r);
+      return r;
+    }
+
     operator small_vector<uint16_t, small_vector<uint8_t, uint8_t>>() const
     {
       small_vector<uint16_t, small_vector<uint8_t>> r(labels.size());

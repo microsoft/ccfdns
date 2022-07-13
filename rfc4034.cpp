@@ -10,15 +10,14 @@
 #include <cassert>
 #include <ccf/crypto/key_pair.h>
 #include <ccf/ds/logger.h>
-#include <set>
-#include <stdexcept>
-#include <vector>
-
 #include <openssl/ec.h>
 #include <openssl/ecdsa.h>
 #include <openssl/objects.h>
 #include <openssl/x509.h>
-
+#include <set>
+#include <stdexcept>
+#include <tuple>
+#include <vector>
 
 using namespace RFC1035;
 
@@ -150,7 +149,9 @@ namespace RFC4034
     signer_name.put(data_to_sign);
 
     for (const auto& rr : rrset)
-    {      
+    {
+      LOG_DEBUG_FMT(
+        "SIGN: record set: {}", aDNS::string_from_resource_record(rr));
       put(rr.name, data_to_sign);
       put(rr.type, data_to_sign);
       put(rr.class_, data_to_sign);
@@ -325,11 +326,9 @@ namespace RFC4034
     }
   }
 
-  std::vector<uint8_t> der_from_coord(const small_vector<uint16_t>& coordinates)
+  static std::vector<uint8_t> der_from_coord(
+    const uint8_t* x, const uint8_t* y, size_t csz)
   {
-    auto csz = coordinates.size() / 2;
-    const uint8_t* x = &coordinates[0];
-    const uint8_t* y = &coordinates[csz];
     BIGNUM* xbn = BN_new();
     BIGNUM* ybn = BN_new();
     BN_bin2bn(x, csz, xbn);
@@ -355,6 +354,15 @@ namespace RFC4034
     return der;
   };
 
+  static std::vector<uint8_t> der_from_coord(
+    const small_vector<uint16_t>& coordinates)
+  {
+    auto csz = coordinates.size() / 2;
+    const uint8_t* x = &coordinates[0];
+    const uint8_t* y = &coordinates[csz];
+    return der_from_coord(x, y, csz);
+  };
+
   static void convert_signature_to_asn1(std::vector<uint8_t>& sig)
   {
     auto csz = sig.size() / 2;
@@ -372,56 +380,82 @@ namespace RFC4034
 
   bool verify_rrsigs(
     const RFC4034::CanonicalRRSet& rrset,
-    const small_vector<uint16_t>& public_key,
+    const RFC4034::CanonicalRRSet& dnskey_rrset,
     const std::function<std::string(const Type&)>& type2str)
   {
-    auto pk = crypto::make_public_key(der_from_coord(public_key));
+    std::vector<std::tuple<crypto::PublicKeyPtr, uint16_t, bool>> pks;
+
+    LOG_DEBUG_FMT("VERIFY: Public keys:");
+    for (const auto& rr : dnskey_rrset)
+    {
+      if (rr.type == static_cast<uint16_t>(Type::DNSKEY))
+      {
+        LOG_DEBUG_FMT(" - {}", aDNS::string_from_resource_record(rr));
+        RFC4034::DNSKEY rdata(rr.rdata);
+        small_vector<uint16_t> rdata_bytes = rdata;
+        auto tag = keytag(&rdata_bytes[0], rdata_bytes.size());
+        LOG_DEBUG_FMT("   tag: {} x/y: {}", tag, ds::to_hex(rdata.public_key));
+        auto pk = crypto::make_public_key(der_from_coord(rdata.public_key));
+        pks.push_back(std::make_tuple(pk, tag, rdata.is_zone_key()));
+      }
+    }
 
     RFC4034::CanonicalRRSet rrs;
     RFC4034::CanonicalRRSet rrsigs;
 
     for (const auto& rr : rrset)
     {
-      if (rr.type == static_cast<uint16_t>(aDNS::Type::RRSIG))
+      if (rr.type == static_cast<uint16_t>(Type::RRSIG))
         rrsigs.insert(rr);
       else
         rrs.insert(rr);
     }
 
+    LOG_DEBUG_FMT("VERIFY: record set:");
     for (const auto& rr : rrs)
+      LOG_DEBUG_FMT(" - {}", aDNS::string_from_resource_record(rr));
+
+    if (rrs.empty())
+      throw std::runtime_error("no records to verify");
+
+    for (const auto& rrsig : rrsigs)
     {
-      // LOG_DEBUG_FMT("VERIFY: rr: {}", aDNS::string_from_resource_record(rr));
-      bool found_rrsig = false;
+      RFC4034::RRSIG rrsig_rdata(rrsig.rdata, type2str);
 
-      for (const auto& rrsig : rrsigs)
+      if (!rrsig_rdata.signer_name.is_absolute())
+        throw std::runtime_error("relative signer name");
+
+      std::vector<uint8_t> data_to_sign = rrsig_rdata.all_but_signature();
+
+      for (const auto& rr : rrs)
       {
-        // LOG_DEBUG_FMT("VERIFY: rrsig: {}", aDNS::string_from_resource_record(rrsig));
-        RFC4034::RRSIG rrsig_rdata(rrsig.rdata, type2str);
-        
-        if (!rrsig_rdata.signer_name.is_absolute())
-          throw std::runtime_error("relative signer name");
-
-        std::vector<uint8_t> data_to_sign = rrsig_rdata.all_but_signature();
-
         rr.name.put(data_to_sign);
         put(rr.type, data_to_sign);
         put(rr.class_, data_to_sign);
         put(rrsig_rdata.original_ttl, data_to_sign);
         rr.rdata.put(data_to_sign);
-
-        auto sig = rrsig_rdata.signature;
-        convert_signature_to_asn1(sig);
-        if (pk->verify(data_to_sign, sig))
-        {
-          found_rrsig = true;
-          break;
-        }
       }
 
-      if (!found_rrsig)
-        return false;
+      LOG_DEBUG_FMT("VERIFY: data={}", ds::to_hex(data_to_sign));
+      auto sig = rrsig_rdata.signature;
+      LOG_DEBUG_FMT("VERIFY: r/s sig={}", ds::to_hex(sig));
+      convert_signature_to_asn1(sig);
+      LOG_DEBUG_FMT("VERIFY: sig={}", ds::to_hex(sig));
+
+      LOG_DEBUG_FMT(
+        "VERIFY: try rrsig: {}", aDNS::string_from_resource_record(rrsig));
+
+      for (const auto& [key, tag, zone_key] : pks)
+      {
+        LOG_DEBUG_FMT("VERIFY: trying key with tag {}", tag);
+        if (rrsig_rdata.key_tag == tag && key->verify(data_to_sign, sig))
+        {
+          return true;
+        }
+      }
     }
 
-    return true;
+    // No signature matched
+    return false;
   }
 }

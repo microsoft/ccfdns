@@ -8,6 +8,7 @@
 
 #include <ccf/crypto/base64.h>
 #include <ccf/ds/hex.h>
+#include <ccf/ds/logger.h>
 #include <cstdint>
 #include <set>
 #include <span>
@@ -508,13 +509,14 @@ namespace RFC4034 // https://datatracker.ietf.org/doc/html/rfc4034
   };
 
   // Appendix B
-  inline uint16_t keytag(unsigned char key[], uint16_t keysize)
+  inline uint16_t keytag(
+    const unsigned char dnskey_rdata[], uint16_t dnskey_rdata_size)
   {
     uint32_t ac;
     uint16_t i;
 
-    for (ac = 0, i = 0; i < keysize; ++i)
-      ac += (i & 1) ? key[i] : key[i] << 8;
+    for (ac = 0, i = 0; i < dnskey_rdata_size; ++i)
+      ac += (i & 1) ? dnskey_rdata[i] : dnskey_rdata[i] << 8;
 
     ac += (ac >> 16) & 0xFFFF;
 
@@ -665,6 +667,6 @@ namespace RFC4034 // https://datatracker.ietf.org/doc/html/rfc4034
 
   bool verify_rrsigs(
     const RFC4034::CanonicalRRSet& rrset,
-    const small_vector<uint16_t>& public_key,
+    const RFC4034::CanonicalRRSet& dnskey_rrset,
     const std::function<std::string(const Type&)>& type2str);
 }

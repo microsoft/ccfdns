@@ -25,6 +25,7 @@ class TestResolver : public Resolver
 {
 public:
   TestResolver() : Resolver() {}
+
   virtual ~TestResolver() {}
 
   std::map<
@@ -32,6 +33,9 @@ public:
     std::set<ResourceRecord, RFC4034::CanonicalRROrdering>,
     RFC4034::CanonicalNameOrdering>
     zones;
+
+  std::map<Name, crypto::Pem, RFC4034::CanonicalNameOrdering> key_signing_keys;
+  std::map<Name, crypto::Pem, RFC4034::CanonicalNameOrdering> zone_signing_keys;
 
   virtual void add(const Name& origin, const ResourceRecord& rr) override
   {
@@ -90,7 +94,31 @@ public:
             break;
       }
     }
-  };
+  }
+
+  virtual crypto::Pem get_private_key(
+    const Name& origin,
+    uint16_t tag,
+    const small_vector<uint16_t>& public_key,
+    bool key_signing) override
+  {
+    if (config.use_key_signing_key && key_signing)
+      return key_signing_keys[origin];
+    else
+      return zone_signing_keys[origin];
+  }
+
+  virtual void on_new_signing_key(
+    const Name& origin,
+    uint16_t tag,
+    const crypto::Pem& pem,
+    bool key_signing) override
+  {
+    if (config.use_key_signing_key && key_signing)
+      key_signing_keys[origin] = pem;
+    else
+      zone_signing_keys[origin] = pem;
+  }
 
   virtual void show(const Name& origin) const
   {
@@ -310,19 +338,6 @@ TEST_CASE("DNSKEY RR Example")
   }
 }
 
-static small_vector<uint16_t> get_public_key(
-  const RFC4034::CanonicalRRSet& rrset)
-{
-  for (const auto& rr : rrset)
-    if (rr.type == static_cast<uint16_t>(aDNS::Type::DNSKEY))
-    {
-      RFC4034::DNSKEY rdata(rr.rdata);
-      REQUIRE(rdata.is_zone_key());
-      return rdata.public_key;
-    }
-  return {};
-}
-
 TEST_CASE("RRSIG tests")
 {
   TestResolver s;
@@ -362,16 +377,19 @@ TEST_CASE("RRSIG tests")
       aDNS::Class::IN,
       RFC1035::TXT("some text"))));
 
-  auto r = s.resolve(origin, aDNS::QType::DNSKEY, aDNS::QClass::IN);
-  auto public_key = get_public_key(r.answers);
-  REQUIRE(RFC4034::verify_rrsigs(r.answers, public_key, type2str));
+  auto dnskey_rrs =
+    s.resolve(origin, aDNS::QType::DNSKEY, aDNS::QClass::IN).answers;
+  REQUIRE(RFC4034::verify_rrsigs(dnskey_rrs, dnskey_rrs, type2str));
 
-  r = s.resolve(Name("www.origin.com."), aDNS::QType::A, aDNS::QClass::IN);
-  REQUIRE(RFC4034::verify_rrsigs(r.answers, public_key, type2str));
+  auto r = s.resolve(origin, aDNS::QType::SOA, aDNS::QClass::IN);
+  REQUIRE(RFC4034::verify_rrsigs(r.authorities, dnskey_rrs, type2str));
 
-  r =
-    s.resolve(Name("sometext.origin.com."), aDNS::QType::TXT, aDNS::QClass::IN);
-  REQUIRE(RFC4034::verify_rrsigs(r.answers, public_key, type2str));
+  r = s.resolve(Name("www.example.com."), aDNS::QType::A, aDNS::QClass::IN);
+  REQUIRE(RFC4034::verify_rrsigs(r.answers, dnskey_rrs, type2str));
+
+  r = s.resolve(
+    Name("sometext.example.com."), aDNS::QType::TXT, aDNS::QClass::IN);
+  REQUIRE(RFC4034::verify_rrsigs(r.answers, dnskey_rrs, type2str));
 
   s.show(origin);
 }

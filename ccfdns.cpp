@@ -1,12 +1,14 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the Apache 2.0 License.
 
+#include "keys.h"
 #include "resolver.h"
 #include "rfc1035.h"
 
 #include <ccf/app_interface.h>
 #include <ccf/common_auth_policies.h>
 #include <ccf/crypto/base64.h>
+#include <ccf/crypto/key_pair.h>
 #include <ccf/ds/hex.h>
 #include <ccf/ds/logger.h>
 #include <ccf/http_query.h>
@@ -88,8 +90,29 @@ namespace RFC1035
   DECLARE_JSON_REQUIRED_FIELDS(ResourceRecord, name, type, class_, ttl, rdata);
 }
 
+namespace ccfdns
+{
+  DECLARE_JSON_TYPE(ZoneKeyInfo);
+  DECLARE_JSON_REQUIRED_FIELDS(ZoneKeyInfo, key_signing_keys, zone_signing_keys)
+}
+
 namespace kv::serialisers
 {
+  template <>
+  struct BlitSerialiser<Name>
+  {
+    static SerialisedEntry to_serialised(const Name& name)
+    {
+      const auto data = (std::vector<uint8_t>)name;
+      return SerialisedEntry(data.begin(), data.end());
+    }
+
+    static Name from_serialised(const SerialisedEntry& data)
+    {
+      return Name(std::vector<uint8_t>{data.data(), data.data() + data.size()});
+    }
+  };
+
   template <>
   struct BlitSerialiser<ResourceRecord>
   {
@@ -145,10 +168,6 @@ namespace ccfdns
       {
         throw std::runtime_error("Origin not absolute");
       }
-
-      nlohmann::json rj;
-      to_json(rj, rr);
-      LOG_DEBUG_FMT("Add: {}: {}", (std::string)origin, rj.dump());
 
       auto t = static_cast<aDNS::Type>(rr.type);
 
@@ -266,12 +285,79 @@ namespace ccfdns
       });
     }
 
+    virtual crypto::Pem get_private_key(
+      const Name& origin,
+      uint16_t tag,
+      const small_vector<uint16_t>& public_key,
+      bool key_signing) override
+    {
+      auto originl = origin.lowered();
+      auto table_name = "private:signing_keys";
+      auto table = ctx->tx.ro<Keys>(table_name);
+      if (!table)
+        return {};
+      auto key_maps = table->get(originl);
+      if (key_maps)
+      {
+        auto& key_map = key_signing ? key_maps->key_signing_keys :
+                                      key_maps->zone_signing_keys;
+        auto kit = key_map.find(tag);
+        if (kit != key_map.end())
+        {
+          for (const auto& pem : kit->second)
+          {
+            auto kp = crypto::make_key_pair(pem);
+            auto coord = kp->coordinates();
+            if (coord.x.size() + coord.y.size() == public_key.size())
+            {
+              bool matches = true;
+              for (size_t i = 0; i < coord.x.size() && matches; i++)
+                if (public_key[i] != coord.x[i])
+                  matches = false;
+              for (size_t i = 0; i < coord.y.size() && matches; i++)
+                if (public_key[coord.x.size() + i] != coord.y[i])
+                  matches = false;
+              if (matches)
+                return pem;
+            }
+          }
+        }
+      }
+
+      throw std::runtime_error("private signing key not found");
+    }
+
+    virtual void on_new_signing_key(
+      const Name& origin,
+      uint16_t tag,
+      const crypto::Pem& pem,
+      bool key_signing) override
+    {
+      auto origin_lowered = origin.lowered();
+      auto table_name = "private:signing_keys";
+      auto table = ctx->tx.rw<Keys>(table_name);
+      if (!table)
+        throw std::runtime_error("could not get keys table");
+      auto value = table->get(origin_lowered);
+      if (!value)
+        value = ZoneKeyInfo();
+      auto& key_map =
+        key_signing ? value->key_signing_keys : value->zone_signing_keys;
+      auto kit = key_map.find(tag);
+      if (kit == key_map.end())
+        key_map[tag] = {pem};
+      else
+        kit->second.push_back(pem);
+      table->put(origin_lowered, *value);
+    }
+
   protected:
     ccf::endpoints::EndpointContext* ctx;
 
     std::string table_name(const Name& origin, aDNS::Type type) const
     {
-      return (std::string)origin.lowered() + "-" + string_from_type(type);
+      return "public:" + (std::string)origin.lowered() + "-" +
+        string_from_type(type);
     }
   };
 
