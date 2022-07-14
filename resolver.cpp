@@ -444,8 +444,7 @@ namespace aDNS
     if (!qname.is_absolute())
       throw std::runtime_error("cannot resolve relative names");
 
-    auto& result_set =
-      qtype == QType::SOA ? result.authorities : result.answers;
+    auto& result_set = result.answers;
 
     Name origin;
     for (size_t i = 1; i <= qname.labels.size(); i++)
