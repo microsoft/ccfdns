@@ -341,6 +341,36 @@ TEST_CASE("DNSKEY RR Example")
   }
 }
 
+TEST_CASE("Record ordering")
+{
+  Name origin("example.com.");
+
+  aDNS::ResourceRecord rr1 = RR(
+    origin,
+    aDNS::Type::DNSKEY,
+    aDNS::Class::IN,
+
+    RFC4034::DNSKEY(
+      "256 3 14 "
+      "IG7n29Kh3trUUZ9qbrqMEA674xv3bGQAqDGhQQt8s0k4Ik3bAmWmh4wMZBGQ9WAUTDg7FL1w"
+      "IVP1xH/DL85sEzgk+g65jvEVpLh3U19PWzBRpNZN3yeKeVDzIN6OoKvS"));
+
+  aDNS::ResourceRecord rr2 = RR(
+    origin,
+    aDNS::Type::DNSKEY,
+    aDNS::Class::IN,
+    RFC4034::DNSKEY(
+      "257 3 14 "
+      "RRCiP/"
+      "zvumIdsulWz4OjS5Lx7GDeYtu6e+gCRq9ccXsGDCd3RPnR+7nqZgR1Sa0cYpIE2XVIdwCE/"
+      "6NEK4cltZLVOHmE30lxc17I4UKlU5PB3C+InEc7FIYn7h7IUUQ6"));
+
+  REQUIRE(RFC4034::operator<(rr1, rr2));
+  REQUIRE(!(RFC4034::operator<(rr2, rr1)));
+  REQUIRE(rr1 != rr2);
+  REQUIRE_FALSE(rr1 == rr2);
+}
+
 TEST_CASE("RRSIG tests")
 {
   TestResolver s;

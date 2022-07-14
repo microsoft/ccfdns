@@ -597,6 +597,10 @@ namespace RFC4034 // https://datatracker.ietf.org/doc/html/rfc4034
         return false;
       if (x.rdata[i] < y.rdata[i])
         return true;
+      else if (x.rdata[i] > y.rdata[i])
+        return false;
+      else
+        assert(x.rdata[i] == y.rdata[i]);
     }
 
     return false;
