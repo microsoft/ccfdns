@@ -15,12 +15,14 @@ import base64
 import dns
 import dns.message
 import dns.query
-import dns.rdatatype
-import dns.rdataclass
 import dns.dnssec
 import dns.rrset
 
 from loguru import logger as LOG
+
+
+rdc = dns.rdataclass
+rdt = dns.rdatatype
 
 
 def add_record(client, origin, name, stype, rdata_obj):
@@ -30,8 +32,8 @@ def add_record(client, origin, name, stype, rdata_obj):
             "origin": str(origin),
             "record": {
                 "name": name,
-                "type": int(dns.rdatatype.from_text(stype)),
-                "class_": int(dns.rdataclass.IN),
+                "type": int(rdt.from_text(stype)),
+                "class_": int(rdc.IN),
                 "ttl": 3600,
                 "rdata": base64.urlsafe_b64encode(rdata_obj.to_wire()).decode(),
             },
@@ -43,7 +45,7 @@ def add_record(client, origin, name, stype, rdata_obj):
 
 def check_record(host, port, ca, name, stype, expected_data=None):
     qname = dns.name.from_text(name)
-    qtype = dns.rdatatype.from_text(stype)
+    qtype = rdt.from_text(stype)
     with requests.sessions.Session() as session:
         q = dns.message.make_query(qname, qtype)
         r = dns.query.https(
@@ -57,11 +59,11 @@ def check_record(host, port, ca, name, stype, expected_data=None):
             assert a.name == qname
             saw_expected = False
             for item in a.items:
-                assert item.rdclass == dns.rdataclass.IN
+                assert item.rdclass == rdc.IN
                 assert item.rdtype in [
                     qtype,
-                    dns.rdatatype.RRSIG,
-                    dns.rdatatype.NSEC,
+                    rdt.RRSIG,
+                    rdt.NSEC,
                 ]
                 if expected_data:
                     if (
@@ -72,21 +74,12 @@ def check_record(host, port, ca, name, stype, expected_data=None):
             assert not expected_data or saw_expected
 
 
-def validate_rrsigs(reply: dns.message.Message, qtype, keys):
-    # print(r)
-    if len(reply.answer) == 0:
-        raise "no answers"
-    name = reply.answer[0].name
-    rrs = dns.rrset.RRset(name, dns.rdataclass.IN, qtype)
-    rrsigs = dns.rrset.RRset(name, dns.rdataclass.IN, dns.rdatatype.RRSIG)
-    for a in reply.answer:
-        if a.rdtype == qtype:
-            rrs += a
-        elif a.rdtype == dns.rdatatype.RRSIG:
-            rrsigs += a
-        else:
-            raise "Unexpected record type"
-
+def validate_rrsigs(response: dns.message.Message, qtype, keys):
+    name = response.question[0].name
+    rrs = response.find_rrset(dns.message.ANSWER, name, rdc.IN, qtype)
+    rrsigs = response.find_rrset(dns.message.ANSWER, name, rdc.IN, rdt.RRSIG, qtype)
+    print(rrs)
+    print(rrsigs)
     if keys is not None:
         dns.dnssec.validate(rrs, rrsigs, keys)
 
@@ -94,7 +87,7 @@ def validate_rrsigs(reply: dns.message.Message, qtype, keys):
 def get_records(host, port, ca, qname, stype, keys=None):
     if isinstance(qname, str):
         qname = dns.name.from_text(qname)
-    qtype = dns.rdatatype.from_text(stype)
+    qtype = rdt.from_text(stype)
     with requests.sessions.Session() as session:
         q = dns.message.make_query(qname, qtype)
         r = dns.query.https(
@@ -121,35 +114,38 @@ def test_basic(network, args):
 
         origin = dns.name.from_text("example.com.")
 
-        rd = dns.rdata.from_text(dns.rdataclass.IN, dns.rdatatype.A, "1.2.3.4")
+        rd = dns.rdata.from_text(rdc.IN, rdt.A, "1.2.3.4")
         add_record(client, origin, "www", "A", rd)
         check_record(host, port, ca, "www.example.com.", "A", rd)
 
-        rd2 = dns.rdata.from_text(dns.rdataclass.IN, dns.rdatatype.A, "1.2.3.5")
+        rd2 = dns.rdata.from_text(rdc.IN, rdt.A, "1.2.3.5")
         add_record(client, origin, "www", "A", rd2)
         check_record(host, port, ca, "www.example.com.", "A", rd2)
         check_record(host, port, ca, "www.example.com.", "A", rd)
 
-        rd2 = dns.rdata.from_text(dns.rdataclass.IN, dns.rdatatype.A, "1.2.3.5")
+        rd2 = dns.rdata.from_text(rdc.IN, rdt.A, "1.2.3.5")
         add_record(client, origin, "www2", "A", rd2)
 
-        rrs = get_records(host, port, ca, origin, "DNSKEY", None)
-        assert len(rrs.answer) == 2
-        if rrs.answer[0].rdtype == dns.rdatatype.DNSKEY:
-            key_rrs = rrs.answer[0]
-            rrsig = rrs.answer[1]
-        else:
-            rrsig = rrs.answer[0]
-            key_rrs = rrs.answer[1]
+        r = get_records(host, port, ca, origin, "DNSKEY", None)
+        key_rrs = r.find_rrset(r.answer, origin, rdc.IN, rdt.DNSKEY)
         keys = {origin: key_rrs}
-
-        dns.dnssec.validate(key_rrs, rrsig, keys)
+        validate_rrsigs(r, rdt.DNSKEY, keys)
 
         name = dns.name.from_text("www2.example.com.")
-        get_records(host, port, ca, name, "A", None)
+        get_records(host, port, ca, name, "A", keys)
 
         name = dns.name.from_text("www.example.com.")
-        get_records(host, port, ca, name, "A", None)
+        get_records(host, port, ca, name, "A", keys)
+
+        name = dns.name.from_text("example.com.")
+        ds_rrs = get_records(host, port, ca, name, "DS", None)
+        assert len(ds_rrs.answer) == 1
+        assert len(ds_rrs.answer[0]) == 1
+        ds_rrs = ds_rrs.answer[0][0]
+        key = keys[origin][1]
+        ds = dns.dnssec.make_ds(origin, key, "SHA384")
+        if ds_rrs.digest != ds.digest:
+            raise Exception("DS record hash mismatch")
 
 
 def run(args):

@@ -63,20 +63,13 @@ inline void put(const T& x, std::vector<uint8_t>& r)
 }
 
 template <typename T>
-inline void put(const std::vector<T>& vec, std::vector<uint8_t>& r)
+inline void put_n(const std::vector<T>& vec, std::vector<uint8_t>& r, size_t n)
 {
   for (const auto& elem : vec)
   {
     std::vector<uint8_t> t = elem;
     r.insert(std::end(r), std::begin(t), std::end(t));
   }
-}
-
-template <>
-inline void put(const std::vector<uint8_t>& vec, std::vector<uint8_t>& r)
-{
-  put((uint16_t)vec.size(), r);
-  r.insert(std::end(r), std::begin(vec), std::end(vec));
 }
 
 inline void put_n(

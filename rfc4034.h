@@ -25,10 +25,10 @@ namespace RFC4034 // https://datatracker.ietf.org/doc/html/rfc4034
 {
   enum class Type : uint16_t
   {
-    DNSKEY = 48,
+    DS = 43,
     RRSIG = 46,
     NSEC = 47,
-    DS = 43,
+    DNSKEY = 48,
   };
 
   inline std::map<Type, std::string> type_string_map = {
@@ -210,6 +210,11 @@ namespace RFC4034 // https://datatracker.ietf.org/doc/html/rfc4034
     bool is_secure_entry_point() const
     {
       return flags & 0x0001;
+    }
+
+    bool is_key_signing_key() const
+    {
+      return (flags & 0x0101) == 0x0101;
     }
 
   protected:
@@ -493,7 +498,7 @@ namespace RFC4034 // https://datatracker.ietf.org/doc/html/rfc4034
       put(key_tag, r);
       put(static_cast<uint8_t>(algorithm), r);
       put(static_cast<uint8_t>(digest_type), r);
-      put(digest, r);
+      put_n(digest, r, digest.size());
       if (r.size() > 65535)
         throw std::runtime_error("DS rdata size too large");
       return small_vector<uint16_t>(r.size(), r.data());

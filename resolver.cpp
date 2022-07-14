@@ -385,7 +385,7 @@ namespace aDNS
           (uint32_t)ttl,
           {});
         LOG_DEBUG_FMT(
-          "EDNS(0) OPT reply: {}", string_from_resource_record(opt_reply));
+          "EDNS(0) reply: {}", string_from_resource_record(opt_reply));
         r.additionals.push_back(opt_reply);
         have_opt = true;
       }
@@ -514,7 +514,7 @@ namespace aDNS
       string_from_qclass(static_cast<QClass>(qclass)),
       result_set.empty() ? " <nothing>" : "");
     for (const auto& rr : result_set)
-      LOG_TRACE_FMT(" {}", string_from_resource_record(rr));
+      LOG_TRACE_FMT(" - {}", string_from_resource_record(rr));
 
     return result;
   }
@@ -555,7 +555,8 @@ namespace aDNS
       (std::string)rdata,
       ds::to_hex(new_zsk_pk));
 
-    add_ds(origin, new_zsk, new_zsk_tag, rdata);
+    if (!config.use_key_signing_key || key_signing)
+      add_ds(origin, new_zsk, new_zsk_tag, rdata);
 
     on_new_signing_key(
       origin,
@@ -569,9 +570,10 @@ namespace aDNS
   Resolver::KeyAndTag Resolver::get_signing_key(
     const Name& origin, QClass qclass_, bool key_signing)
   {
+    bool find_ksk = config.use_key_signing_key && key_signing;
     RFC4034::CanonicalRRSet suitable_keys = find_records(
-      origin, origin, QType::DNSKEY, qclass_, [&key_signing](const auto& rr) {
-        return key_signing != RFC4034::DNSKEY(rr.rdata).is_zone_key();
+      origin, origin, QType::DNSKEY, qclass_, [&find_ksk](const auto& rr) {
+        return find_ksk == RFC4034::DNSKEY(rr.rdata).is_key_signing_key();
       });
 
     if (suitable_keys.empty())
@@ -583,8 +585,7 @@ namespace aDNS
       RFC4034::DNSKEY dnskey(chosen_key->rdata);
       uint16_t key_tag = get_key_tag(dnskey);
 
-      auto pem =
-        get_private_key(origin, key_tag, dnskey.public_key, key_signing);
+      auto pem = get_private_key(origin, key_tag, dnskey.public_key, find_ksk);
       auto key = crypto::make_key_pair(pem);
       return std::make_pair(key, key_tag);
     }
@@ -601,11 +602,11 @@ namespace aDNS
       flags |= 0x0100;
 
     if (config.use_key_signing_key && key_signing)
-      flags |= 0x0001;
+      flags |= 0x0101;
 
     RFC4034::DNSKEY rdata(flags, config.signing_algorithm, public_key);
 
-    ResourceRecord dnskey_rr(
+    ResourceRecord rr(
       origin,
       static_cast<uint16_t>(Type::DNSKEY),
       static_cast<uint16_t>(Class::IN),
@@ -613,15 +614,15 @@ namespace aDNS
       rdata);
 
     ignore_on_add = true;
-    add(origin, dnskey_rr);
+    add(origin, rr);
 
     return rdata;
   }
 
   void Resolver::add_ds(
     const Name& origin,
-    std::shared_ptr<crypto::KeyPair> zsk,
-    uint16_t key_tag,
+    std::shared_ptr<crypto::KeyPair> key,
+    uint16_t tag,
     small_vector<uint16_t>&& dnskey_rdata)
   {
     if (origin.is_root())
@@ -632,25 +633,30 @@ namespace aDNS
 
     if (ds_rrs.empty())
     {
-      auto hp = crypto::make_hash_provider();
-
       std::vector<uint8_t> t;
       origin.put(t);
-      dnskey_rdata.put(t);
+      put_n(dnskey_rdata, t, dnskey_rdata.size());
 
+      if (config.digest_type != RFC4034::DigestType::SHA384)
+        throw std::runtime_error("digest type not supported");
+
+      LOG_DEBUG_FMT("HASH: in: {}", ds::to_hex(t));
+
+      auto hp = crypto::make_hash_provider();
       auto digest = hp->Hash(t.data(), t.size(), crypto::MDType::SHA384);
 
-      ResourceRecord ds_rr(
-        parent,
+      LOG_DEBUG_FMT("HASH: out: {}", ds::to_hex(digest));
+
+      ResourceRecord rr(
+        origin,
         static_cast<uint16_t>(Type::DS),
         static_cast<uint16_t>(Class::IN),
         config.default_ttl,
-        RFC4034::DS(
-          key_tag, config.signing_algorithm, config.digest_type, digest));
+        RFC4034::DS(tag, config.signing_algorithm, config.digest_type, digest));
 
       ignore_on_add = true;
-      add(parent, ds_rr);
-      ds_rrs += ds_rr;
+      add(parent, rr);
+      ds_rrs += rr;
     }
 
     if (ds_rrs.size() > 1)
@@ -724,30 +730,31 @@ namespace aDNS
         }
       }
 
-      for (auto it = crecords.begin(); it != crecords.end(); it++)
+      for (auto it = crecords.begin(); it != crecords.end();)
       {
         RFC4034::CanonicalRRSet n_crrset; // all records of name and type
+
         uint32_t ttl = it->ttl;
+        const auto& name = it->name;
+        const auto& type = it->type;
 
-        for (auto nit = it; nit != crecords.end() && nit->name == it->name &&
-             nit->type == it->type;
-             nit++)
+        for (; it != crecords.end() && it->name == name && it->type == type;
+             it++)
         {
-          n_crrset += *nit;
+          n_crrset += *it;
 
-          if (nit->ttl != ttl)
+          if (it->ttl != ttl)
             LOG_INFO_FMT(
-              "warning: TTL mismatch in record set for {}",
-              (std::string)nit->name);
+              "warning: TTL mismatch in record set for {}", (std::string)name);
         }
 
         // https://datatracker.ietf.org/doc/html/rfc4035#section-2.2
         if (
-          static_cast<Type>(it->type) == Type::RRSIG ||
-          (static_cast<Type>(it->type) == Type::NS && it->name != origin))
+          static_cast<Type>(type) == Type::RRSIG ||
+          (static_cast<Type>(type) == Type::NS && name != origin))
           continue;
 
-        bool is_dnskey = static_cast<Type>(it->type) == Type::DNSKEY;
+        bool is_dnskey = static_cast<Type>(type) == Type::DNSKEY;
 
         auto [key, key_tag] = is_dnskey ? ksk_and_tag : zsk_and_tag;
 
@@ -760,7 +767,7 @@ namespace aDNS
           ttl,
           origin,
           static_cast<uint16_t>(c),
-          static_cast<uint16_t>(it->type),
+          static_cast<uint16_t>(type),
           n_crrset,
           type2str);
 
@@ -768,7 +775,7 @@ namespace aDNS
         add(
           origin,
           ResourceRecord(
-            it->name,
+            name,
             static_cast<uint16_t>(Type::RRSIG),
             static_cast<uint16_t>(c),
             ttl,
@@ -850,7 +857,8 @@ namespace aDNS
       case Type::AAAA:
       case Type::RRSIG:
       case Type::NSEC:
-      case Type::OPT:
+      case Type::DS:
+      case Type::DNSKEY:
         sign(origin);
         break;
       default:

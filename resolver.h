@@ -166,7 +166,7 @@ namespace aDNS
     void add_ds(
       const Name& origin,
       std::shared_ptr<crypto::KeyPair> key,
-      uint16_t key_tag,
+      uint16_t tag,
       small_vector<uint16_t>&& dnskey_rdata);
   };
 

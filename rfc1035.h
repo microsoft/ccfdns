@@ -801,10 +801,10 @@ namespace RFC1035
     operator std::vector<uint8_t>() const
     {
       std::vector<uint8_t> r = header;
-      put(questions, r);
-      put(answers, r);
-      put(authorities, r);
-      put(additionals, r);
+      put_n(questions, r, questions.size());
+      put_n(answers, r, answers.size());
+      put_n(authorities, r, authorities.size());
+      put_n(additionals, r, additionals.size());
       return r;
     }
 

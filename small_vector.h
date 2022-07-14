@@ -202,6 +202,16 @@ protected:
   E* data;
 };
 
+template <typename T, typename E>
+inline void put_n(
+  const small_vector<T, E>& vec, std::vector<uint8_t>& r, size_t n)
+{
+  for (size_t i = 0; i < n; i++)
+  {
+    r.push_back(vec[i]);
+  }
+}
+
 namespace ds
 {
   template <typename T, typename E>
