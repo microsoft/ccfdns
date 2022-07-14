@@ -331,8 +331,11 @@ TEST_CASE("DNSKEY RR Example")
     RFC1035::Message msg =
       mk_question("mykey.example.com.", aDNS::QType::DNSKEY);
     auto response = s.reply(msg);
-    REQUIRE(response.answers.size() > 0);
-    RFC4034::DNSKEY dnskey(response.answers[0].rdata);
+    REQUIRE(response.answers.size() == 2);
+    auto& a = response.answers;
+    auto& key =
+      (a[0].type == static_cast<uint16_t>(RFC4034::Type::DNSKEY)) ? a[0] : a[1];
+    RFC4034::DNSKEY dnskey(key.rdata);
     std::string sd = dnskey;
     REQUIRE(sd == "256 3 5 " + demo_key_b64);
   }
