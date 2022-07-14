@@ -324,7 +324,8 @@ namespace ccfdns
         }
       }
 
-      throw std::runtime_error("private signing key not found");
+      throw std::runtime_error(fmt::format(
+        "private {} signing key not found", key_signing ? "key" : "zone"));
     }
 
     virtual void on_new_signing_key(
