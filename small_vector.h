@@ -2,6 +2,7 @@
 // Licensed under the Apache 2.0 License.
 #pragma once
 
+#include "base32.h"
 #include "serialization.h"
 
 #include <ccf/crypto/base64.h>
@@ -188,6 +189,36 @@ public:
       throw std::runtime_error("data too large for small_vector");
     return small_vector<T, E>(
       bytes.size() / sizeof(E), static_cast<E*>(&bytes[0]));
+  }
+
+  std::string to_base32hex() const
+  {
+    return base32hex_encode(*this);
+  }
+
+  static small_vector<T, E> from_base32hex(const std::string& b32)
+  {
+    auto bytes = base32hex_decode(b32);
+    if (bytes.size() >= 1 << (sizeof(T) * 8))
+      throw std::runtime_error("data too large for small_vector");
+    return small_vector<T, E>(
+      bytes.size() / sizeof(E), static_cast<E*>(&bytes[0]));
+  }
+
+  std::string to_hex() const
+  {
+    return ds::to_hex(*this);
+  }
+
+  static small_vector<T, E> from_hex(const std::string& s)
+  {
+    auto sz = s.size() / 2;
+    small_vector<T, E> r(sz);
+    for (size_t i = 0; i < sz; i++)
+    {
+      r[i] = from_hex(s.substr(2 * i, 2));
+    }
+    return r;
   }
 
   void put(std::vector<uint8_t>& r) const
