@@ -5,6 +5,7 @@
 #include "rfc1035.h"
 #include "rfc3596.h"
 #include "rfc4034.h"
+#include "rfc5155.h"
 #include "rfc6891.h"
 
 #include <ccf/crypto/pem.h>
@@ -36,6 +37,8 @@ namespace aDNS
     RRSIG = static_cast<uint16_t>(RFC4034::Type::RRSIG),
     NSEC = static_cast<uint16_t>(RFC4034::Type::NSEC),
     DS = static_cast<uint16_t>(RFC4034::Type::DS),
+    NSEC3 = static_cast<uint16_t>(RFC5155::Type::NSEC3),
+    NSEC3PARAM = static_cast<uint16_t>(RFC5155::Type::NSEC3PARAM),
     OPT = static_cast<uint16_t>(RFC6891::Type::OPT),
   };
 
@@ -52,7 +55,10 @@ namespace aDNS
     RRSIG = static_cast<uint16_t>(RFC4034::Type::RRSIG),
     NSEC = static_cast<uint16_t>(RFC4034::Type::NSEC),
     DS = static_cast<uint16_t>(RFC4034::Type::DS),
+    NSEC3 = static_cast<uint16_t>(RFC5155::Type::NSEC3),
+    NSEC3PARAM = static_cast<uint16_t>(RFC5155::Type::NSEC3PARAM),
     OPT = static_cast<uint16_t>(RFC6891::Type::OPT),
+
     ASTERISK = static_cast<uint16_t>(RFC1035::QType::ASTERISK),
   };
 
@@ -154,21 +160,24 @@ namespace aDNS
     typedef std::pair<std::shared_ptr<crypto::KeyPair>, uint16_t> KeyAndTag;
 
     KeyAndTag get_signing_key(
-      const Name& origin, QClass qclass_, bool key_signing);
+      const Name& origin, Class class_, bool key_signing);
 
-    KeyAndTag add_new_signing_key(const Name& origin, bool key_signing);
+    KeyAndTag add_new_signing_key(
+      const Name& origin, Class class_, bool key_signing);
 
-    RFC4034::DNSKEY add_dnskey(
+    RFC4034::DNSKEYRR add_dnskey(
       const Name& origin,
+      Class class_,
       const small_vector<uint16_t>& public_key,
       bool key_signing);
 
     void add_ds(
       const Name& origin,
+      Class class_,
       std::shared_ptr<crypto::KeyPair> key,
       uint16_t tag,
-      small_vector<uint16_t>&& dnskey_rdata);
+      const small_vector<uint16_t>& dnskey_rdata);
   };
 
-  uint16_t get_key_tag(const RFC4034::DNSKEY& dnskey);
+  uint16_t get_key_tag(const RFC4034::DNSKEY& dnskey_rdata);
 }

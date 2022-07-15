@@ -121,6 +121,138 @@ namespace RFC4034 // https://datatracker.ietf.org/doc/html/rfc4034
     SHA384 = 4 // RFC 6605
   };
 
+  typedef std::function<std::vector<uint8_t>(
+    Algorithm, const std::vector<uint8_t>&)>
+    SigningFunction;
+
+  // https://datatracker.ietf.org/doc/html/rfc4034#section-6.1
+
+  inline bool operator<(const RFC1035::Label& x, const RFC1035::Label& y)
+  {
+    size_t i = 0;
+    do
+    {
+      if (i >= x.size() && i < y.size())
+        return true;
+      if (i >= y.size())
+        return false;
+      uint8_t lx = std::tolower(x[i]);
+      uint8_t ly = std::tolower(y[i]);
+      if (lx == ly)
+        i++;
+      else
+        return lx < ly;
+    } while (i < x.size() || i < y.size());
+
+    return false;
+  }
+
+  inline bool operator<(const RFC1035::Name& x, const RFC1035::Name& y)
+  {
+    auto xit = x.labels.rbegin();
+    auto yit = y.labels.rbegin();
+
+    do
+    {
+      if (xit == x.labels.rend() && yit != y.labels.rend())
+        return true;
+      if (yit == y.labels.rend())
+        return false;
+      if (*xit == *yit)
+      {
+        xit++;
+        yit++;
+      }
+      else
+        return *xit < *yit;
+    } while (xit != x.labels.rend() || yit != y.labels.rend());
+
+    return false;
+  }
+
+  struct CanonicalNameOrdering
+  {
+    bool operator()(const RFC1035::Name& x, const RFC1035::Name& y) const
+    {
+      return operator<(x, y);
+    }
+  };
+
+  inline bool operator<(
+    const RFC1035::ResourceRecord& x, const RFC1035::ResourceRecord& y)
+  {
+    if (CanonicalNameOrdering()(x.name, y.name))
+      return true;
+
+    if (x.name != y.name)
+      return false;
+
+    if (x.class_ < y.class_)
+      return true;
+    else if (x.class_ > y.class_)
+      return false;
+
+    if (x.type < y.type)
+      return true;
+    else if (x.type > y.type)
+      return false;
+
+    for (size_t i = 0; i < x.rdata.size(); i++)
+    {
+      if (i >= y.rdata.size())
+        return false;
+      if (x.rdata[i] < y.rdata[i])
+        return true;
+      else if (x.rdata[i] > y.rdata[i])
+        return false;
+      else
+        assert(x.rdata[i] == y.rdata[i]);
+    }
+
+    return false;
+  }
+
+  struct CanonicalRROrdering
+  {
+    bool operator()(
+      const RFC1035::ResourceRecord& x, const RFC1035::ResourceRecord& y) const
+    {
+      return operator<(x, y);
+    }
+  };
+
+  typedef std::set<RFC1035::ResourceRecord, RFC4034::CanonicalRROrdering>
+    CanonicalRRSet;
+
+  inline CanonicalRRSet& operator+=(CanonicalRRSet& x, CanonicalRRSet&& y)
+  {
+    x.merge(y);
+    return x;
+  }
+
+  inline CanonicalRRSet& operator+=(CanonicalRRSet& x, CanonicalRRSet& y)
+  {
+    x.merge(y);
+    return x;
+  }
+
+  inline CanonicalRRSet& operator+=(
+    CanonicalRRSet& x, const RFC1035::ResourceRecord& rr)
+  {
+    x.insert(rr);
+    return x;
+  }
+
+  inline CanonicalRRSet& operator+=(
+    CanonicalRRSet& x, RFC1035::ResourceRecord&& rr)
+  {
+    x.insert(rr);
+    return x;
+  }
+
+  typedef std::set<RFC1035::ResourceRecord, RFC4034::CanonicalRROrdering>
+    CanonicalRRSet;
+
   // https://datatracker.ietf.org/doc/html/rfc4034#section-2
   class DNSKEY : public RFC1035::RDataFormat
   {
@@ -224,6 +356,22 @@ namespace RFC4034 // https://datatracker.ietf.org/doc/html/rfc4034
       if (protocol != 3)
         throw std::runtime_error("invalid DNSKEY protocol");
     }
+  };
+
+  class DNSKEYRR : public RFC1035::ResourceRecord
+  {
+  public:
+    DNSKEYRR(
+      const RFC1035::Name& owner,
+      RFC1035::Class class_,
+      uint32_t ttl,
+      uint16_t flags,
+      Algorithm algorithm,
+      const small_vector<uint16_t>& public_key);
+
+    virtual ~DNSKEYRR() = default;
+
+    DNSKEY rdata;
   };
 
   class RRSIG : public RFC1035::RDataFormat
@@ -352,6 +500,27 @@ namespace RFC4034 // https://datatracker.ietf.org/doc/html/rfc4034
       put(signer_name, r);
       return r;
     }
+  };
+
+  class RRSIGRR : public RFC1035::ResourceRecord
+  {
+  public:
+    RRSIGRR(
+      const RFC1035::Name& owner,
+      RFC1035::Class class_,
+      uint32_t ttl,
+      const SigningFunction& signing_function,
+      uint16_t key_tag,
+      Algorithm algorithm,
+      uint32_t original_ttl,
+      const RFC1035::Name& signer,
+      uint16_t type_covered,
+      const CanonicalRRSet& rrset,
+      const std::function<std::string(const Type&)>& type2str);
+
+    virtual ~RRSIGRR() = default;
+
+    RRSIG rdata;
   };
 
   class NSEC : public RFC1035::RDataFormat
@@ -511,6 +680,23 @@ namespace RFC4034 // https://datatracker.ietf.org/doc/html/rfc4034
     }
   };
 
+  class DSRR : public RFC1035::ResourceRecord
+  {
+  public:
+    DSRR(
+      const RFC1035::Name& owner,
+      RFC1035::Class class_,
+      uint32_t ttl,
+      uint16_t tag,
+      Algorithm algorithm,
+      DigestType digest_type,
+      const small_vector<uint16_t>& dnskey_rdata);
+
+    ~DSRR() = default;
+
+    DS rdata;
+  };
+
   // Appendix B
   inline uint16_t keytag(
     const unsigned char dnskey_rdata[], uint16_t dnskey_rdata_size)
@@ -525,131 +711,6 @@ namespace RFC4034 // https://datatracker.ietf.org/doc/html/rfc4034
 
     return ac & 0xFFFF;
   }
-
-  // https://datatracker.ietf.org/doc/html/rfc4034#section-6.1
-
-  inline bool operator<(const RFC1035::Label& x, const RFC1035::Label& y)
-  {
-    size_t i = 0;
-    do
-    {
-      if (i >= x.size() && i < y.size())
-        return true;
-      if (i >= y.size())
-        return false;
-      uint8_t lx = std::tolower(x[i]);
-      uint8_t ly = std::tolower(y[i]);
-      if (lx == ly)
-        i++;
-      else
-        return lx < ly;
-    } while (i < x.size() || i < y.size());
-
-    return false;
-  }
-
-  inline bool operator<(const RFC1035::Name& x, const RFC1035::Name& y)
-  {
-    auto xit = x.labels.rbegin();
-    auto yit = y.labels.rbegin();
-
-    do
-    {
-      if (xit == x.labels.rend() && yit != y.labels.rend())
-        return true;
-      if (yit == y.labels.rend())
-        return false;
-      if (*xit == *yit)
-      {
-        xit++;
-        yit++;
-      }
-      else
-        return *xit < *yit;
-    } while (xit != x.labels.rend() || yit != y.labels.rend());
-
-    return false;
-  }
-
-  struct CanonicalNameOrdering
-  {
-    bool operator()(const RFC1035::Name& x, const RFC1035::Name& y) const
-    {
-      return operator<(x, y);
-    }
-  };
-
-  inline bool operator<(
-    const RFC1035::ResourceRecord& x, const RFC1035::ResourceRecord& y)
-  {
-    if (CanonicalNameOrdering()(x.name, y.name))
-      return true;
-
-    if (x.name != y.name)
-      return false;
-
-    if (x.class_ < y.class_)
-      return true;
-
-    if (x.type < y.type)
-      return true;
-
-    for (size_t i = 0; i < x.rdata.size(); i++)
-    {
-      if (i >= y.rdata.size())
-        return false;
-      if (x.rdata[i] < y.rdata[i])
-        return true;
-      else if (x.rdata[i] > y.rdata[i])
-        return false;
-      else
-        assert(x.rdata[i] == y.rdata[i]);
-    }
-
-    return false;
-  }
-
-  struct CanonicalRROrdering
-  {
-    bool operator()(
-      const RFC1035::ResourceRecord& x, const RFC1035::ResourceRecord& y) const
-    {
-      return operator<(x, y);
-    }
-  };
-
-  typedef std::set<RFC1035::ResourceRecord, RFC4034::CanonicalRROrdering>
-    CanonicalRRSet;
-
-  inline CanonicalRRSet& operator+=(CanonicalRRSet& x, CanonicalRRSet&& y)
-  {
-    x.merge(y);
-    return x;
-  }
-
-  inline CanonicalRRSet& operator+=(CanonicalRRSet& x, CanonicalRRSet& y)
-  {
-    x.merge(y);
-    return x;
-  }
-
-  inline CanonicalRRSet& operator+=(
-    CanonicalRRSet& x, const RFC1035::ResourceRecord& rr)
-  {
-    x.insert(rr);
-    return x;
-  }
-
-  inline CanonicalRRSet& operator+=(
-    CanonicalRRSet& x, RFC1035::ResourceRecord&& rr)
-  {
-    x.insert(rr);
-    return x;
-  }
-
-  typedef std::function<std::vector<uint8_t>(
-    Algorithm, const std::vector<uint8_t>&)>
-    SigningFunction;
 
   RFC1035::ResourceRecord canonicalize(
     const RFC1035::Name& origin,

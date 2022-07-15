@@ -10,10 +10,8 @@
 #include "rfc6891.h"
 #include "small_vector.h"
 
-#include <ccf/crypto/hash_provider.h>
 #include <ccf/crypto/key_pair.h>
 #include <ccf/crypto/md_type.h>
-#include <ccf/crypto/sha256_hash.h>
 #include <ccf/ds/logger.h>
 #include <ccf/kv/map.h>
 #include <ccf/tx.h>
@@ -50,7 +48,11 @@ namespace aDNS
     {static_cast<uint16_t>(RFC4034::Type::RRSIG), Type::RRSIG},
     {static_cast<uint16_t>(RFC4034::Type::NSEC), Type::NSEC},
 
-    {static_cast<uint16_t>(RFC6891::Type::OPT), Type::OPT}};
+    {static_cast<uint16_t>(RFC6891::Type::OPT), Type::OPT},
+
+    {static_cast<uint16_t>(RFC5155::Type::NSEC3), Type::NSEC3},
+    {static_cast<uint16_t>(RFC5155::Type::NSEC3PARAM), Type::NSEC3PARAM},
+  };
 
   static const std::map<uint16_t, QType> supported_qtypes = {
     {static_cast<uint16_t>(RFC1035::QType::ASTERISK), QType::ASTERISK},
@@ -135,6 +137,7 @@ namespace aDNS
     TFSF(RFC3596);
     TFSF(RFC4034);
     TFSF(RFC6891);
+    TFSF(RFC5155);
 
     throw std::runtime_error(
       fmt::format("unknown type string '{}'", type_string));
@@ -153,6 +156,7 @@ namespace aDNS
     SFTF(RFC3596);
     SFTF(RFC4034);
     SFTF(RFC6891);
+    SFTF(RFC5155);
 
     // https://datatracker.ietf.org/doc/html/rfc3597#section-5
     return "TYPE" + std::to_string(static_cast<uint16_t>(t));
@@ -235,6 +239,9 @@ namespace aDNS
       case Type::DS: return std::make_shared<RFC4034::DS>(rdata); break;
       case Type::RRSIG: return std::make_shared<RFC4034::RRSIG>(rdata, type2str); break;
       case Type::NSEC: return std::make_shared<RFC4034::NSEC>(rdata, type2str); break;
+
+      case Type::NSEC3: return std::make_shared<RFC5155::NSEC3>(rdata, type2str); break;
+      case Type::NSEC3PARAM: return std::make_shared<RFC5155::NSEC3PARAM>(rdata); break;
 
       case Type::OPT: return std::make_shared<RFC6891::OPT>(rdata); break;
 
@@ -320,9 +327,9 @@ namespace aDNS
 
   Resolver::~Resolver() {}
 
-  uint16_t get_key_tag(const RFC4034::DNSKEY& dnskey)
+  uint16_t get_key_tag(const RFC4034::DNSKEY& dnskey_rdata)
   {
-    small_vector<uint16_t> bytes = dnskey;
+    small_vector<uint16_t> bytes = dnskey_rdata;
     return RFC4034::keytag(&bytes[0], bytes.size());
   }
 
@@ -538,24 +545,22 @@ namespace aDNS
   }
 
   Resolver::KeyAndTag Resolver::add_new_signing_key(
-    const Name& origin, bool key_signing)
+    const Name& origin, Class class_, bool key_signing)
   {
     auto new_zsk = crypto::make_key_pair();
     small_vector<uint16_t> new_zsk_pk = encode_public_key(new_zsk);
 
-    RFC4034::DNSKEY rdata = add_dnskey(origin, new_zsk_pk, key_signing);
-    auto new_zsk_tag = get_key_tag(rdata);
+    RFC4034::DNSKEYRR dnskey_rr =
+      add_dnskey(origin, class_, new_zsk_pk, key_signing);
+    auto new_zsk_tag = get_key_tag(dnskey_rr.rdata);
 
-    LOG_DEBUG_FMT(
-      "NEW KEY for {}, tag={} rdata={} xy={}",
-      (std::string)origin,
-      new_zsk_tag,
-      (std::string)rdata,
-      ds::to_hex(new_zsk_pk));
+    LOG_DEBUG_FMT("NEW KEY for {}, tag={}:", (std::string)origin, new_zsk_tag);
+    LOG_DEBUG_FMT(" - {}", string_from_resource_record(dnskey_rr));
+    LOG_DEBUG_FMT(" - xy={}", ds::to_hex(new_zsk_pk));
 
     if (!config.use_key_signing_key || key_signing)
-      add_ds(origin, new_zsk, new_zsk_tag, rdata);
 
+      add_ds(origin, class_, new_zsk, new_zsk_tag, dnskey_rr.rdata);
     on_new_signing_key(
       origin,
       new_zsk_tag,
@@ -566,16 +571,20 @@ namespace aDNS
   }
 
   Resolver::KeyAndTag Resolver::get_signing_key(
-    const Name& origin, QClass qclass_, bool key_signing)
+    const Name& origin, Class class_, bool key_signing)
   {
     bool find_ksk = config.use_key_signing_key && key_signing;
     RFC4034::CanonicalRRSet suitable_keys = find_records(
-      origin, origin, QType::DNSKEY, qclass_, [&find_ksk](const auto& rr) {
+      origin,
+      origin,
+      QType::DNSKEY,
+      static_cast<QClass>(class_),
+      [&find_ksk](const auto& rr) {
         return find_ksk == RFC4034::DNSKEY(rr.rdata).is_key_signing_key();
       });
 
     if (suitable_keys.empty())
-      return add_new_signing_key(origin, key_signing);
+      return add_new_signing_key(origin, class_, key_signing);
     else
     {
       auto chosen_key = suitable_keys.begin(); // TODO: which key do we pick?
@@ -589,8 +598,9 @@ namespace aDNS
     }
   }
 
-  RFC4034::DNSKEY Resolver::add_dnskey(
+  RFC4034::DNSKEYRR Resolver::add_dnskey(
     const Name& origin,
+    Class class_,
     const small_vector<uint16_t>& public_key,
     bool key_signing)
   {
@@ -602,26 +612,26 @@ namespace aDNS
     if (config.use_key_signing_key && key_signing)
       flags |= 0x0101;
 
-    RFC4034::DNSKEY rdata(flags, config.signing_algorithm, public_key);
-
-    ResourceRecord rr(
+    RFC4034::DNSKEYRR rr(
       origin,
-      static_cast<uint16_t>(Type::DNSKEY),
-      static_cast<uint16_t>(Class::IN),
+      static_cast<RFC1035::Class>(class_),
       config.default_ttl,
-      rdata);
+      flags,
+      config.signing_algorithm,
+      public_key);
 
     ignore_on_add = true;
     add(origin, rr);
 
-    return rdata;
+    return rr;
   }
 
   void Resolver::add_ds(
     const Name& origin,
+    Class class_,
     std::shared_ptr<crypto::KeyPair> key,
     uint16_t tag,
-    small_vector<uint16_t>&& dnskey_rdata)
+    const small_vector<uint16_t>& dnskey_rdata)
   {
     if (origin.is_root())
       return;
@@ -629,38 +639,20 @@ namespace aDNS
     Name parent = origin.parent();
     auto ds_rrs = find_records(parent, origin, QType::DS, QClass::IN);
 
-    if (ds_rrs.empty())
-    {
-      std::vector<uint8_t> t;
-      origin.put(t);
-      put_n(dnskey_rdata, t, dnskey_rdata.size());
-
-      if (config.digest_type != RFC4034::DigestType::SHA384)
-        throw std::runtime_error("digest type not supported");
-
-      LOG_DEBUG_FMT("HASH: in: {}", ds::to_hex(t));
-
-      auto hp = crypto::make_hash_provider();
-      auto digest = hp->Hash(t.data(), t.size(), crypto::MDType::SHA384);
-
-      LOG_DEBUG_FMT("HASH: out: {}", ds::to_hex(digest));
-
-      ResourceRecord rr(
-        origin,
-        static_cast<uint16_t>(Type::DS),
-        static_cast<uint16_t>(Class::IN),
-        config.default_ttl,
-        RFC4034::DS(tag, config.signing_algorithm, config.digest_type, digest));
-
-      ignore_on_add = true;
-      add(parent, rr);
-      ds_rrs += rr;
-    }
-
-    if (ds_rrs.size() > 1)
+    if (!ds_rrs.empty())
       throw std::runtime_error("too many DS records");
 
-    RFC4034::DS ds_rdata(ds_rrs.begin()->rdata);
+    ignore_on_add = true;
+    add(
+      parent,
+      RFC4034::DSRR(
+        origin,
+        static_cast<RFC1035::Class>(class_),
+        config.default_ttl,
+        tag,
+        config.signing_algorithm,
+        config.digest_type,
+        dnskey_rdata));
   }
 
   void Resolver::sign(const Name& origin)
@@ -692,8 +684,8 @@ namespace aDNS
     for (const auto& [_, c] : supported_classes)
     {
       // the following may trigger addition of RRs
-      auto ksk_and_tag = get_signing_key(origin, static_cast<QClass>(c), true);
-      auto zsk_and_tag = get_signing_key(origin, static_cast<QClass>(c), false);
+      auto ksk_and_tag = get_signing_key(origin, c, true);
+      auto zsk_and_tag = get_signing_key(origin, c, false);
 
       if (!ksk_and_tag.first || !zsk_and_tag.first)
         throw std::runtime_error("missing signing key");
@@ -758,26 +750,21 @@ namespace aDNS
 
         LOG_DEBUG_FMT("SIGN: key tag: {}", key_tag);
 
-        auto rrsig_rdata = RFC4034::sign(
-          make_signing_function(key),
-          key_tag,
-          config.signing_algorithm,
-          ttl,
-          origin,
-          static_cast<uint16_t>(c),
-          static_cast<uint16_t>(type),
-          n_crrset,
-          type2str);
-
         ignore_on_add = true;
         add(
           origin,
-          ResourceRecord(
+          RFC4034::RRSIGRR(
             name,
-            static_cast<uint16_t>(Type::RRSIG),
-            static_cast<uint16_t>(c),
+            static_cast<RFC1035::Class>(c),
             ttl,
-            rrsig_rdata));
+            make_signing_function(key),
+            key_tag,
+            config.signing_algorithm,
+            ttl,
+            origin,
+            static_cast<uint16_t>(type),
+            n_crrset,
+            type2str));
       }
 
       // https://datatracker.ietf.org/doc/html/rfc4034#section-4

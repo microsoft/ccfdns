@@ -12,7 +12,7 @@ find_package(ccf REQUIRED HINTS ${CCF})
 
 set(CCFDNS_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 
-add_ccf_app(ccfdns SRCS ccfdns.cpp resolver.cpp rfc4034.cpp base32.cpp)
+add_ccf_app(ccfdns SRCS ccfdns.cpp resolver.cpp rfc4034.cpp rfc5155.cpp base32.cpp)
 
 target_link_options(ccfdns.virtual PUBLIC -fsanitize=undefined)
 if (VERBOSE_LOGGING)
@@ -63,4 +63,4 @@ function(add_unit_test name)
   endif()
 endfunction()
 
-add_unit_test(resolver_tests ../tests/resolver_tests.cpp resolver.cpp rfc4034.cpp base32.cpp)
+add_unit_test(resolver_tests ../tests/resolver_tests.cpp resolver.cpp rfc4034.cpp rfc5155.cpp base32.cpp)

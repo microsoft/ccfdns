@@ -8,6 +8,7 @@
 #include "rfc3596.h"
 
 #include <cassert>
+#include <ccf/crypto/hash_provider.h>
 #include <ccf/crypto/key_pair.h>
 #include <ccf/ds/logger.h>
 #include <openssl/ec.h>
@@ -110,8 +111,6 @@ namespace RFC4034
     return cr;
   }
 
-  typedef std::set<ResourceRecord, RFC4034::CanonicalRROrdering> CanonicalRRSet;
-
   CanonicalRRSet canonicalize(
     const Name& origin,
     const std::vector<ResourceRecord>& records,
@@ -179,7 +178,7 @@ namespace RFC4034
     uint16_t keytag,
     Algorithm algorithm,
     uint32_t original_ttl,
-    const RFC1035::Name& origin,
+    const RFC1035::Name& signer,
     uint16_t class_,
     uint16_t type,
     const CanonicalRRSet& rrset,
@@ -188,7 +187,6 @@ namespace RFC4034
     assert(rrset.size() > 0);
 
     const Name& owner = rrset.begin()->name;
-    const Name& signer = origin;
 
     assert(owner.is_absolute());
     assert(signer.is_absolute());
@@ -457,5 +455,83 @@ namespace RFC4034
 
     // No signature matched
     return false;
+  }
+
+  DNSKEYRR::DNSKEYRR(
+    const RFC1035::Name& owner,
+    RFC1035::Class class_,
+    uint32_t ttl,
+    uint16_t flags,
+    Algorithm algorithm,
+    const small_vector<uint16_t>& public_key) :
+    RFC1035::ResourceRecord(
+      owner,
+      static_cast<uint16_t>(Type::DNSKEY),
+      static_cast<uint16_t>(class_),
+      ttl,
+      {}),
+    rdata(flags, algorithm, public_key)
+  {
+    RFC1035::ResourceRecord::rdata = rdata;
+  }
+
+  RRSIGRR::RRSIGRR(
+    const RFC1035::Name& owner,
+    RFC1035::Class class_,
+    uint32_t ttl,
+    const SigningFunction& signing_function,
+    uint16_t key_tag,
+    Algorithm algorithm,
+    uint32_t original_ttl,
+    const RFC1035::Name& signer,
+    uint16_t type_covered,
+    const CanonicalRRSet& rrset,
+    const std::function<std::string(const Type&)>& type2str) :
+    RFC1035::ResourceRecord(owner, U(Type::RRSIG), U(class_), ttl, {}),
+    rdata(RFC4034::sign(
+      signing_function,
+      key_tag,
+      algorithm,
+      original_ttl,
+      signer,
+      class_,
+      type_covered,
+      rrset,
+      type2str))
+  {
+    RFC1035::ResourceRecord::rdata = rdata;
+  }
+
+  DSRR::DSRR(
+    const RFC1035::Name& owner,
+    RFC1035::Class class_,
+    uint32_t ttl,
+    uint16_t tag,
+    Algorithm algorithm,
+    DigestType digest_type,
+    const small_vector<uint16_t>& dnskey_rdata) :
+    RFC1035::ResourceRecord(
+      owner,
+      static_cast<uint16_t>(Type::DS),
+      static_cast<uint16_t>(class_),
+      ttl,
+      {}),
+    rdata(tag, algorithm, digest_type, {})
+  {
+    std::vector<uint8_t> t;
+    owner.put(t);
+    put_n(dnskey_rdata, t, dnskey_rdata.size());
+
+    if (digest_type != RFC4034::DigestType::SHA384)
+      throw std::runtime_error("digest type not supported");
+
+    LOG_DEBUG_FMT("HASH: in: {}", ds::to_hex(t));
+
+    auto hp = crypto::make_hash_provider();
+    rdata.digest = hp->Hash(t.data(), t.size(), crypto::MDType::SHA384);
+
+    LOG_DEBUG_FMT("HASH: out: {}", ds::to_hex(rdata.digest));
+
+    RFC1035::ResourceRecord::rdata = rdata;
   }
 }

@@ -16,12 +16,19 @@ namespace RFC5155 // https://datatracker.ietf.org/doc/html/rfc5155
     NSEC3PARAM = 51
   };
 
-  inline std::map<Type, std::string> type_string_map = {{Type::NSEC3, "NSEC3"}};
+  inline std::map<Type, std::string> type_string_map = {
+    {Type::NSEC3, "NSEC3"}, {Type::NSEC3PARAM, "NSEC3PARAM"}};
+
+  enum class HashAlgorithm : uint8_t
+  {
+    RESERVED = 0,
+    SHA_1 = 1,
+  };
 
   class NSEC3 : public RFC1035::RDataFormat
   {
   public:
-    RFC4034::DigestType hash_algorithm;
+    HashAlgorithm hash_algorithm;
     uint8_t flags;
     uint16_t iterations;
     small_vector<uint8_t> salt;
@@ -33,6 +40,15 @@ namespace RFC5155 // https://datatracker.ietf.org/doc/html/rfc5155
     {}
 
     NSEC3(
+      HashAlgorithm hash_algorithm,
+      uint8_t flags,
+      uint16_t iterations,
+      const small_vector<uint8_t>& salt,
+      const small_vector<uint8_t>& next_hashed_owner_name,
+      const std::vector<RFC1035::Type>& types,
+      const std::function<std::string(const RFC4034::Type&)>& type2str);
+
+    NSEC3(
       const std::string& s,
       const std::function<RFC4034::Type(const std::string&)>& str2type,
       const std::function<std::string(const RFC4034::Type&)>& type2str) :
@@ -41,7 +57,7 @@ namespace RFC5155 // https://datatracker.ietf.org/doc/html/rfc5155
       std::istringstream f(s);
       uint8_t tmp;
       f >> tmp;
-      hash_algorithm = static_cast<RFC4034::DigestType>(tmp);
+      hash_algorithm = static_cast<HashAlgorithm>(tmp);
       f >> flags;
       f >> iterations;
       std::string stmp;
@@ -65,8 +81,7 @@ namespace RFC5155 // https://datatracker.ietf.org/doc/html/rfc5155
       type_bit_maps(type2str)
     {
       size_t pos = 0;
-      hash_algorithm =
-        static_cast<RFC4034::DigestType>(get<uint8_t>(data, pos));
+      hash_algorithm = static_cast<HashAlgorithm>(get<uint8_t>(data, pos));
       flags = get<uint8_t>(data, pos);
       iterations = get<uint16_t>(data, pos);
       salt = small_vector<uint8_t>(data, pos);
@@ -94,17 +109,20 @@ namespace RFC5155 // https://datatracker.ietf.org/doc/html/rfc5155
       r = std::to_string(static_cast<uint8_t>(hash_algorithm));
       r += " " + std::to_string(flags);
       r += " " + std::to_string(iterations);
-      r += " " + ds::to_hex(salt);
+      r += " " + (salt.size() > 0 ? ds::to_hex(salt) : "-");
       r += " " + next_hashed_owner_name.to_base32hex();
       r += " " + (std::string)type_bit_maps;
       return r;
     }
+
+    small_vector<uint8_t> hash(
+      const RFC1035::Name& origin, const RFC1035::Name& name) const;
   };
 
   class NSEC3PARAM : public RFC1035::RDataFormat
   {
   public:
-    RFC4034::DigestType hash_algorithm;
+    HashAlgorithm hash_algorithm;
     uint8_t flags;
     uint16_t iterations;
     small_vector<uint8_t> salt;
@@ -116,7 +134,7 @@ namespace RFC5155 // https://datatracker.ietf.org/doc/html/rfc5155
       std::istringstream f(s);
       uint8_t tmp;
       f >> tmp;
-      hash_algorithm = static_cast<RFC4034::DigestType>(tmp);
+      hash_algorithm = static_cast<HashAlgorithm>(tmp);
       f >> flags;
       f >> iterations;
       std::string stmp;
@@ -127,8 +145,7 @@ namespace RFC5155 // https://datatracker.ietf.org/doc/html/rfc5155
     NSEC3PARAM(const small_vector<uint16_t>& data)
     {
       size_t pos = 0;
-      hash_algorithm =
-        static_cast<RFC4034::DigestType>(get<uint8_t>(data, pos));
+      hash_algorithm = static_cast<HashAlgorithm>(get<uint8_t>(data, pos));
       flags = get<uint8_t>(data, pos);
       iterations = get<uint16_t>(data, pos);
       salt = small_vector<uint8_t>(data, pos);
@@ -152,7 +169,7 @@ namespace RFC5155 // https://datatracker.ietf.org/doc/html/rfc5155
       r = std::to_string(static_cast<uint8_t>(hash_algorithm));
       r += " " + std::to_string(flags);
       r += " " + std::to_string(iterations);
-      r += " " + ds::to_hex(salt);
+      r += " " + (salt.size() > 0 ? ds::to_hex(salt) : "-");
       return r;
     }
   };
