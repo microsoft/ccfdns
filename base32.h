@@ -5,6 +5,11 @@
 #include <string>
 #include <vector>
 
-std::string base32hex_encode(const std::vector<uint8_t>& raw);
+std::string base32hex_encode(const uint8_t* data, size_t size);
+
+inline std::string base32hex_encode(const std::vector<uint8_t>& data)
+{
+  return base32hex_encode(data.data(), data.size());
+}
 
 std::vector<uint8_t> base32hex_decode(const std::string& b32);

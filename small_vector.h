@@ -175,9 +175,11 @@ public:
   std::string to_base64(bool urlsafe = true) const
   {
     if (urlsafe)
-      return crypto::b64url_from_raw(static_cast<uint8_t*>(data), size_);
+      return crypto::b64url_from_raw(
+        static_cast<uint8_t*>(data), size_ * sizeof(E));
     else
-      return crypto::b64_from_raw(static_cast<uint8_t*>(data), size_);
+      return crypto::b64_from_raw(
+        static_cast<uint8_t*>(data), size_ * sizeof(E));
   }
 
   static small_vector<T, E> from_base64(
@@ -193,7 +195,7 @@ public:
 
   std::string to_base32hex() const
   {
-    return base32hex_encode(*this);
+    return base32hex_encode(data, size_);
   }
 
   static small_vector<T, E> from_base32hex(const std::string& b32)
@@ -205,19 +207,13 @@ public:
       bytes.size() / sizeof(E), static_cast<E*>(&bytes[0]));
   }
 
-  std::string to_hex() const
-  {
-    return ds::to_hex(*this);
-  }
-
   static small_vector<T, E> from_hex(const std::string& s)
   {
     auto sz = s.size() / 2;
     small_vector<T, E> r(sz);
     for (size_t i = 0; i < sz; i++)
-    {
-      r[i] = from_hex(s.substr(2 * i, 2));
-    }
+      r[i] = (ds::hex_char_to_int(s[2 * i]) << 4) |
+        ds::hex_char_to_int(s[2 * i + 1]);
     return r;
   }
 

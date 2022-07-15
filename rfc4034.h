@@ -410,11 +410,9 @@ namespace RFC4034 // https://datatracker.ietf.org/doc/html/rfc4034
       const std::function<std::string(const Type&)>& type2str) :
       type_bit_maps(type2str)
     {
-      std::stringstream s(data);
-      std::string t;
-      s >> t;
-      next_domain_name = RFC1035::Name(t);
-      type_bit_maps = TypeBitMaps(data, str2type, type2str);
+      auto spos = data.find(" ");
+      next_domain_name = RFC1035::Name(data.substr(0, spos));
+      type_bit_maps = TypeBitMaps(data.substr(spos + 1), str2type, type2str);
     }
 
     NSEC(

@@ -10,18 +10,18 @@
 static const char* b32hex_map = "0123456789ABCDEFGHIJKLMNOPQRSTUV";
 static const size_t b32hex_map_sz = 32;
 
-std::string base32hex_encode(const std::vector<uint8_t>& raw)
+std::string base32hex_encode(const uint8_t* data, size_t size)
 {
   std::string r;
 
   uint8_t a = 0;
   uint8_t bits_in_a = 0;
 
-  for (size_t j = 0; j < raw.size(); j++)
+  for (size_t j = 0; j < size; j++)
   {
     for (size_t i = 0; i < 8; i++)
     {
-      a = (a << 1) | ((raw[j] >> (7 - i)) & 0x01);
+      a = (a << 1) | ((data[j] >> (7 - i)) & 0x01);
       bits_in_a++;
       if (bits_in_a == 5)
       {

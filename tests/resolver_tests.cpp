@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the Apache 2.0 License.
 
+#include "base32.h"
 #include "ccf/crypto/key_pair.h"
 #include "resolver.h"
 #include "rfc1035.h"
@@ -161,6 +162,24 @@ ResourceRecord RR(
     data);
 }
 
+TEST_CASE("base32hex encoding")
+{
+  std::string s = "A2B3C4D5E4";
+  auto raw = base32hex_decode(s);
+  auto b32 = base32hex_encode(raw);
+  REQUIRE(b32 == s);
+
+  s = "A2B3C4D";
+  raw = base32hex_decode(s);
+  b32 = base32hex_encode(raw);
+  REQUIRE(b32 == "A2B3C48");
+
+  s = "A2";
+  raw = base32hex_decode(s);
+  b32 = base32hex_encode(raw);
+  REQUIRE(b32 == "A0");
+}
+
 TEST_CASE("Name ordering")
 {
   // https://datatracker.ietf.org/doc/html/rfc4034#section-6.1
@@ -211,9 +230,9 @@ TEST_CASE("Basic lookups")
   {
     RFC1035::Message msg = mk_question("example.com.", aDNS::QType::SOA);
     auto response = s.reply(msg);
-    REQUIRE(response.authorities.size() > 0);
+    REQUIRE(response.answers.size() > 0);
     size_t num_soa = 0;
-    for (const auto& rr : response.authorities)
+    for (const auto& rr : response.answers)
     {
       if (rr.type == static_cast<uint16_t>(aDNS::Type::SOA))
       {
@@ -415,7 +434,7 @@ TEST_CASE("RRSIG tests")
   REQUIRE(RFC4034::verify_rrsigs(dnskey_rrs, dnskey_rrs, type2str));
 
   auto r = s.resolve(origin, aDNS::QType::SOA, aDNS::QClass::IN);
-  REQUIRE(RFC4034::verify_rrsigs(r.authorities, dnskey_rrs, type2str));
+  REQUIRE(RFC4034::verify_rrsigs(r.answers, dnskey_rrs, type2str));
 
   r = s.resolve(Name("www.example.com."), aDNS::QType::A, aDNS::QClass::IN);
   REQUIRE(RFC4034::verify_rrsigs(r.answers, dnskey_rrs, type2str));

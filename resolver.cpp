@@ -6,6 +6,7 @@
 #include "rfc1035.h"
 #include "rfc3596.h"
 #include "rfc4034.h"
+#include "rfc5155.h"
 #include "rfc6891.h"
 #include "small_vector.h"
 
@@ -489,15 +490,13 @@ namespace aDNS
           result.authorities += *soa_records.begin();
       }
 
-      for (const auto& rr : find_records(origin, qname, QType::RRSIG, qclass))
-      {
-        RFC4034::RRSIG rd(rr.rdata, type2str);
-        if (
-          rd.type_covered == static_cast<uint16_t>(Type::NSEC) ||
-          (qtype != QType::SOA &&
-           rd.type_covered == static_cast<uint16_t>(Type::SOA)))
-          result.authorities += rr;
-      }
+      result.authorities += find_records(
+        origin, qname, QType::RRSIG, qclass, [&qtype](const auto& rr) {
+          RFC4034::RRSIG rd(rr.rdata, type2str);
+          return rd.type_covered == static_cast<uint16_t>(Type::NSEC) ||
+            (qtype != QType::SOA &&
+             rd.type_covered == static_cast<uint16_t>(Type::SOA));
+        });
 
       if (result.response_code == NO_ERROR && result.authorities.empty())
       {

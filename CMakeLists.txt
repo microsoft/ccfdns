@@ -18,6 +18,9 @@ target_link_options(ccfdns.virtual PUBLIC -fsanitize=undefined)
 if (VERBOSE_LOGGING)
   target_compile_definitions(ccfdns.virtual PRIVATE -DVERBOSE_LOGGING)
 endif()
+if (CMAKE_BUILD_TYPE MATCHES Debug)
+  target_compile_options(ccfdns.virtual PRIVATE -fstandalone-debug)
+endif()
 
 # Generate an ephemeral signing key
 add_custom_command(
@@ -54,6 +57,9 @@ function(add_unit_test name)
   set_property(TEST ${name} APPEND PROPERTY LABELS unit_test)
   if (VERBOSE_LOGGING)
     target_compile_definitions(${name} PRIVATE -DVERBOSE_LOGGING)
+  endif()
+  if (CMAKE_BUILD_TYPE MATCHES Debug)
+    target_compile_options(${name} PRIVATE -fstandalone-debug)
   endif()
 endfunction()
 
