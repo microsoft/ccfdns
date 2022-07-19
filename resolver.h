@@ -2,6 +2,7 @@
 // Licensed under the Apache 2.0 License.
 #pragma once
 
+#include "adns_types.h"
 #include "rfc1035.h"
 #include "rfc3596.h"
 #include "rfc4034.h"
@@ -41,6 +42,8 @@ namespace aDNS
     NSEC3 = static_cast<uint16_t>(RFC5155::Type::NSEC3),
     NSEC3PARAM = static_cast<uint16_t>(RFC5155::Type::NSEC3PARAM),
     OPT = static_cast<uint16_t>(RFC6891::Type::OPT),
+    TLSKEY = static_cast<uint16_t>(aDNSTypes::Type::TLSKEY),
+    ATTEST = static_cast<uint16_t>(aDNSTypes::Type::ATTEST),
   };
 
   enum class QType : uint16_t
@@ -59,6 +62,8 @@ namespace aDNS
     NSEC3 = static_cast<uint16_t>(RFC5155::Type::NSEC3),
     NSEC3PARAM = static_cast<uint16_t>(RFC5155::Type::NSEC3PARAM),
     OPT = static_cast<uint16_t>(RFC6891::Type::OPT),
+    TLSKEY = static_cast<uint16_t>(aDNSTypes::Type::TLSKEY),
+    ATTEST = static_cast<uint16_t>(aDNSTypes::Type::ATTEST),
 
     ASTERISK = static_cast<uint16_t>(RFC1035::QType::ASTERISK),
   };

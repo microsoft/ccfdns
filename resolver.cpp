@@ -3,6 +3,7 @@
 
 #include "resolver.h"
 
+#include "adns_types.h"
 #include "base32.h"
 #include "rfc1035.h"
 #include "rfc3596.h"
@@ -55,6 +56,9 @@ namespace aDNS
 
     {static_cast<uint16_t>(RFC5155::Type::NSEC3), Type::NSEC3},
     {static_cast<uint16_t>(RFC5155::Type::NSEC3PARAM), Type::NSEC3PARAM},
+
+    {static_cast<uint16_t>(aDNSTypes::Type::TLSKEY), Type::TLSKEY},
+    {static_cast<uint16_t>(aDNSTypes::Type::ATTEST), Type::ATTEST},
   };
 
   static const std::map<uint16_t, QType> supported_qtypes = {
@@ -141,6 +145,7 @@ namespace aDNS
     TFSF(RFC4034);
     TFSF(RFC6891);
     TFSF(RFC5155);
+    TFSF(aDNSTypes);
 
     throw std::runtime_error(
       fmt::format("unknown type string '{}'", type_string));
@@ -160,6 +165,7 @@ namespace aDNS
     SFTF(RFC4034);
     SFTF(RFC6891);
     SFTF(RFC5155);
+    SFTF(aDNSTypes);
 
     // https://datatracker.ietf.org/doc/html/rfc3597#section-5
     return "TYPE" + std::to_string(static_cast<uint16_t>(t));
@@ -247,6 +253,9 @@ namespace aDNS
       case Type::NSEC3PARAM: return std::make_shared<RFC5155::NSEC3PARAM>(rdata); break;
 
       case Type::OPT: return std::make_shared<RFC6891::OPT>(rdata); break;
+
+      case Type::TLSKEY: return std::make_shared<aDNSTypes::TLSKEY>(rdata); break;
+      case Type::ATTEST: return std::make_shared<aDNSTypes::ATTEST>(rdata); break;
 
       default: throw std::runtime_error("unsupported rdata format");
     }

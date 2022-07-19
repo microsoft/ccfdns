@@ -389,8 +389,8 @@ namespace ccfdns
     std::string table_name(
       const Name& origin, aDNS::Class class_, aDNS::Type type) const
     {
-      return "public:" + string_from_class(class_) + "-" +
-        (std::string)origin.lowered() + "-" + string_from_type(type);
+      return "public:" + (std::string)origin.lowered() + "-" +
+        string_from_type(type) + string_from_class(class_) + "-";
     }
   };
 
