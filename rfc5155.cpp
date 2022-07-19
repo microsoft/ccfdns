@@ -3,6 +3,8 @@
 
 #include "rfc5155.h"
 
+#include "resolver.h"
+#include "rfc1035.h"
 #include "rfc4034.h"
 #include "small_vector.h"
 
@@ -12,6 +14,8 @@
 #include <span>
 #include <vector>
 
+using namespace RFC1035;
+
 namespace RFC5155
 {
   NSEC3::NSEC3(
@@ -20,7 +24,6 @@ namespace RFC5155
     uint16_t iterations,
     const small_vector<uint8_t>& salt,
     const small_vector<uint8_t>& next_hashed_owner_name,
-    const std::vector<RFC1035::Type>& types,
     const std::function<std::string(const RFC4034::Type&)>& type2str) :
     hash_algorithm(hash_algorithm),
     flags(flags),
@@ -58,7 +61,10 @@ namespace RFC5155
 
   // https://datatracker.ietf.org/doc/html/rfc5155#section-5
   small_vector<uint8_t> NSEC3::hash(
-    const RFC1035::Name& origin, const RFC1035::Name& name) const
+    const RFC1035::Name& origin,
+    const RFC1035::Name& name,
+    uint16_t iterations,
+    const small_vector<uint8_t>& salt)
   {
     if (iterations == 0)
       throw std::runtime_error("NSEC3 requires at least one hash iteration");
@@ -91,4 +97,20 @@ namespace RFC5155
     }
     return small_vector<uint8_t>(a.size(), a.data());
   }
+
+  // bool validate_nsec3(const Name& origin, const Name& name, const NSEC3&
+  // rdata)
+  // {
+  //   if (rdata.hash_algorithm != HashAlgorithm::SHA1)
+  //     // https://datatracker.ietf.org/doc/html/rfc5155#section-8.1
+  //     return true;
+
+  //   if (rdata.flags > 1)
+  //     // https://datatracker.ietf.org/doc/html/rfc5155#section-8.2
+  //     return true;
+
+  //   // https://datatracker.ietf.org/doc/html/rfc5155#section-8.3
+  //   bool flag = false;
+  //   auto sname = name;
+  // }
 }

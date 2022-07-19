@@ -62,15 +62,24 @@ public:
   }
 
   virtual void remove(
-    const Name& origin, const Name& name, const aDNS::Type& t) override
+    const Name& origin, const Name& name, aDNS::Class c, aDNS::Type t) override
   {
-    Name aname = name;
-    if (!aname.is_absolute())
-      aname += origin;
-
     auto& zone = zones[origin];
-    std::erase_if(zone, [&aname, &t](const ResourceRecord& rr) {
-      bool r = rr.type == static_cast<uint16_t>(t) && rr.name == aname;
+    std::erase_if(zone, [&name, &c, &t](const ResourceRecord& rr) {
+      bool r = rr.type == static_cast<uint16_t>(t) && rr.name == name &&
+        rr.class_ == static_cast<uint16_t>(c);
+      if (r)
+        LOG_DEBUG_FMT("Remove: {}", string_from_resource_record(rr));
+      return r;
+    });
+  }
+
+  virtual void remove(const Name& origin, aDNS::Class c, aDNS::Type t) override
+  {
+    auto& zone = zones[origin];
+    std::erase_if(zone, [&c, &t](const ResourceRecord& rr) {
+      bool r = rr.type == static_cast<uint16_t>(t) &&
+        rr.class_ == static_cast<uint16_t>(c);
       if (r)
         LOG_DEBUG_FMT("Remove: {}", string_from_resource_record(rr));
       return r;

@@ -169,6 +169,7 @@ namespace ccfdns
         throw std::runtime_error("Origin not absolute");
       }
 
+      auto c = static_cast<aDNS::Class>(rr.class_);
       auto t = static_cast<aDNS::Type>(rr.type);
 
       LOG_TRACE_FMT(
@@ -182,7 +183,7 @@ namespace ccfdns
       if (!rs.name.is_absolute())
         rs.name += origin;
 
-      auto records = ctx->tx.rw<Records>(table_name(origin, t));
+      auto records = ctx->tx.rw<Records>(table_name(origin, c, t));
       records->insert(rs);
 
       Resolver::on_add(origin, rs);
@@ -200,6 +201,7 @@ namespace ccfdns
         throw std::runtime_error("Origin not absolute");
       }
 
+      auto c = static_cast<aDNS::Class>(rr.class_);
       auto t = static_cast<aDNS::Type>(rr.type);
 
       LOG_TRACE_FMT(
@@ -213,12 +215,16 @@ namespace ccfdns
       if (!rs.name.is_absolute())
         rs.name += origin;
 
-      auto records = ctx->tx.rw<Records>(table_name(origin, t));
-      records->remove(rs);
+      auto records = ctx->tx.rw<Records>(table_name(origin, c, t));
+      if (records)
+        records->remove(rs);
     }
 
     virtual void remove(
-      const Name& origin, const Name& name, const aDNS::Type& t) override
+      const Name& origin,
+      const Name& name,
+      aDNS::Class c,
+      aDNS::Type t) override
     {
       LOG_DEBUG_FMT(
         "Remove {} type {} at {}",
@@ -238,15 +244,38 @@ namespace ccfdns
       if (!aname.is_absolute())
         aname += origin;
 
-      auto records = ctx->tx.rw<Records>(table_name(origin, t));
-      records->foreach([origin, t, &aname, &records](const ResourceRecord& rr) {
-        if (rr.type == static_cast<uint16_t>(t) && rr.name == aname)
-        {
-          LOG_TRACE_FMT(" remove {}", string_from_resource_record(rr));
-          records->remove(rr);
-        }
-        return true;
-      });
+      auto records = ctx->tx.rw<Records>(table_name(origin, c, t));
+      if (records)
+      {
+        records->foreach(
+          [origin, t, &aname, &records](const ResourceRecord& rr) {
+            if (rr.type == static_cast<uint16_t>(t) && rr.name == aname)
+            {
+              LOG_TRACE_FMT(" remove {}", string_from_resource_record(rr));
+              records->remove(rr);
+            }
+            return true;
+          });
+      }
+    }
+
+    virtual void remove(
+      const Name& origin, aDNS::Class c, aDNS::Type t) override
+    {
+      LOG_DEBUG_FMT(
+        "Remove type {} at {}", string_from_type(t), (std::string)origin);
+
+      if (!ctx)
+        std::runtime_error("missing endpoint context");
+
+      if (!origin.is_absolute())
+      {
+        throw std::runtime_error("Origin not absolute");
+      }
+
+      auto records = ctx->tx.rw<Records>(table_name(origin, c, t));
+      if (records)
+        records->clear();
     }
 
     using Resolver::reply;
@@ -271,7 +300,9 @@ namespace ccfdns
       if (qtype == aDNS::QType::ASTERISK || qclass == aDNS::QClass::ASTERISK)
         throw std::runtime_error("for_each cannot handle wildcards");
 
-      std::string tn = table_name(origin, static_cast<aDNS::Type>(qtype));
+      auto c = static_cast<aDNS::Class>(qclass);
+      auto t = static_cast<aDNS::Type>(qtype);
+      std::string tn = table_name(origin, c, t);
 
       auto records = ctx->tx.ro<Records>(tn);
       records->foreach([&qclass, &qtype, &f](const auto& rr) {
@@ -355,10 +386,11 @@ namespace ccfdns
   protected:
     ccf::endpoints::EndpointContext* ctx;
 
-    std::string table_name(const Name& origin, aDNS::Type type) const
+    std::string table_name(
+      const Name& origin, aDNS::Class class_, aDNS::Type type) const
     {
-      return "public:" + (std::string)origin.lowered() + "-" +
-        string_from_type(type);
+      return "public:" + string_from_class(class_) + "-" +
+        (std::string)origin.lowered() + "-" + string_from_type(type);
     }
   };
 

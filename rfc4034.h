@@ -250,8 +250,35 @@ namespace RFC4034 // https://datatracker.ietf.org/doc/html/rfc4034
     return x;
   }
 
-  typedef std::set<RFC1035::ResourceRecord, RFC4034::CanonicalRROrdering>
-    CanonicalRRSet;
+  class CRRS
+  {
+  public:
+    RFC1035::Name name;
+    uint16_t class_;
+    uint16_t type;
+    uint32_t ttl;
+    std::set<small_vector<uint16_t>> rdata;
+
+    // bool operator<(const CRRS& other) const
+    // {
+    //   if (name != other.name)
+    //     return name < other.name;
+    //   if (class_ != other.class_)
+    //     return class_ < other.class_;
+    //   if (type != other.type)
+    //     return type < other.type;
+    //   if (ttl != other.ttl)
+    //     return ttl < other.ttl;
+    //   for (size_t i = 0; i < rdata.size(); i++)
+    //   {
+    //     if (i >= other.rdata.size())
+    //       return false;
+    //     if (rdata[i] != other.rdata[i])
+    //       return rdata[i] < other.rdata[i];
+    //   }
+    //   return true;
+    // }
+  };
 
   // https://datatracker.ietf.org/doc/html/rfc4034#section-2
   class DNSKEY : public RFC1035::RDataFormat
@@ -515,7 +542,8 @@ namespace RFC4034 // https://datatracker.ietf.org/doc/html/rfc4034
       uint32_t original_ttl,
       const RFC1035::Name& signer,
       uint16_t type_covered,
-      const CanonicalRRSet& rrset,
+      const RFC4034::CanonicalRRSet::iterator& begin,
+      const RFC4034::CanonicalRRSet::iterator& end,
       const std::function<std::string(const Type&)>& type2str);
 
     virtual ~RRSIGRR() = default;
@@ -730,7 +758,8 @@ namespace RFC4034 // https://datatracker.ietf.org/doc/html/rfc4034
     const RFC1035::Name& origin,
     uint16_t class_,
     uint16_t type_,
-    const CanonicalRRSet& rrset,
+    const CanonicalRRSet::iterator& begin,
+    const CanonicalRRSet::iterator& end,
     const std::function<std::string(const Type&)>& type2str);
 
   bool verify_rrsigs(

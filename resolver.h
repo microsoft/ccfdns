@@ -23,6 +23,7 @@ namespace aDNS
   using Name = RFC1035::Name;
   using Message = RFC1035::Message;
   using ResourceRecord = RFC1035::ResourceRecord;
+  using CRRS = RFC4034::CRRS;
 
   enum class Type : uint16_t
   {
@@ -80,6 +81,12 @@ namespace aDNS
     ASTERISK = static_cast<uint16_t>(RFC1035::QClass::ASTERISK),
   };
 
+  std::string string_from_class(const Class& class_);
+  std::string string_from_qclass(const QClass& c);
+
+  Class class_from_string(const std::string& s);
+  QClass qclass_from_string(const std::string& s);
+
   inline bool is_type_in_qtype(uint16_t t, QType qt)
   {
     return qt == QType::ASTERISK || t == static_cast<uint16_t>(qt);
@@ -100,6 +107,11 @@ namespace aDNS
         RFC4034::Algorithm::ECDSAP384SHA384;
       RFC4034::DigestType digest_type = RFC4034::DigestType::SHA384;
       bool use_key_signing_key = true;
+
+      bool use_nsec3 = true;
+      RFC5155::HashAlgorithm nsec3_hash_algorithm =
+        RFC5155::HashAlgorithm::SHA1;
+      uint16_t nsec3_hash_iterations = 3;
     };
 
     struct Resolution
@@ -137,7 +149,9 @@ namespace aDNS
     virtual void add(const Name& origin, const ResourceRecord& rr) = 0;
 
     virtual void remove(
-      const Name& origin, const Name& name, const Type& t) = 0;
+      const Name& origin, const Name& name, Class c, Type t) = 0;
+
+    virtual void remove(const Name& origin, Class c, Type t) = 0;
 
     virtual crypto::Pem get_private_key(
       const Name& origin,
@@ -154,8 +168,15 @@ namespace aDNS
   protected:
     Configuration config;
     bool ignore_on_add = false;
+    small_vector<uint8_t> nsec3_salt;
 
-    RFC4034::CanonicalRRSet order_records(const Name& origin, QClass c) const;
+    typedef std::set<Name, RFC4034::CanonicalNameOrdering> Names;
+
+    std::pair<RFC4034::CanonicalRRSet, Names> order_records(
+      const Name& origin, QClass c) const;
+
+    RFC4034::CanonicalRRSet get_record_set(
+      const Name& origin, const Name& name, QClass c, QType t) const;
 
     typedef std::pair<std::shared_ptr<crypto::KeyPair>, uint16_t> KeyAndTag;
 
@@ -177,6 +198,26 @@ namespace aDNS
       std::shared_ptr<crypto::KeyPair> key,
       uint16_t tag,
       const small_vector<uint16_t>& dnskey_rdata);
+
+    void add_nsec(
+      Class c,
+      const Name& origin,
+      uint32_t ttl,
+      const Name& next_owner_name,
+      RFC4034::CanonicalRRSet::iterator begin,
+      RFC4034::CanonicalRRSet::iterator end);
+
+    typedef std::
+      map<small_vector<uint8_t>, std::vector<RFC4034::CanonicalRRSet::iterator>>
+        HashedNamesMap;
+
+    void add_nsec3(
+      Class c,
+      const Name& origin,
+      uint32_t ttl,
+      const small_vector<uint8_t>& hashed_name,
+      const small_vector<uint8_t>& next_hashed_owner_name,
+      std::vector<RFC4034::CanonicalRRSet::iterator>& rrs);
   };
 
   uint16_t get_key_tag(const RFC4034::DNSKEY& dnskey_rdata);

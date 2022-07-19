@@ -224,6 +224,19 @@ public:
       ::put(data[i], r);
   }
 
+  bool operator<(const small_vector<T, E>& other) const
+  {
+    for (T i = 0; i < size_; i++)
+    {
+      if (i > other.size_)
+        return false;
+
+      if ((*this)[i] != other[i])
+        return (*this)[i] < other[i];
+    }
+    return size_ < other.size_;
+  }
+
 protected:
   T size_;
   E* data;

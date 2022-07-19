@@ -64,6 +64,7 @@ def check_record(host, port, ca, name, stype, expected_data=None):
                     qtype,
                     rdt.RRSIG,
                     rdt.NSEC,
+                    rdt.NSEC3,
                 ]
                 if expected_data:
                     if (

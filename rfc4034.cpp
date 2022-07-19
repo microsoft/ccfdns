@@ -6,6 +6,7 @@
 #include "resolver.h"
 #include "rfc1035.h"
 #include "rfc3596.h"
+#include "rfc5155.h"
 
 #include <cassert>
 #include <ccf/crypto/hash_provider.h>
@@ -102,6 +103,8 @@ namespace RFC4034
       case U(RFC3596::Type::AAAA):
       case U(RFC4034::Type::DS):
       case U(RFC4034::Type::DNSKEY):
+      case U(RFC5155::Type::NSEC3):
+      case U(RFC5155::Type::NSEC3PARAM):
         cr.rdata = rr.rdata;
         break;
       default:
@@ -133,7 +136,8 @@ namespace RFC4034
     uint32_t sig_inception,
     uint16_t keytag,
     const Name& signer_name,
-    const CanonicalRRSet& rrset)
+    const CanonicalRRSet::iterator& begin,
+    const CanonicalRRSet::iterator& end)
   {
     // https://datatracker.ietf.org/doc/html/rfc4034#section-3.1.8.1
 
@@ -147,8 +151,9 @@ namespace RFC4034
     put(keytag, data_to_sign);
     signer_name.put(data_to_sign);
 
-    for (const auto& rr : rrset)
+    for (auto it = begin; it != end; it++)
     {
+      const auto& rr = *it;
       LOG_DEBUG_FMT(
         "SIGN: record set: {}", aDNS::string_from_resource_record(rr));
       put(rr.name, data_to_sign);
@@ -181,12 +186,13 @@ namespace RFC4034
     const RFC1035::Name& signer,
     uint16_t class_,
     uint16_t type,
-    const CanonicalRRSet& rrset,
+    const CanonicalRRSet::iterator& begin,
+    const CanonicalRRSet::iterator& end,
     const std::function<std::string(const Type&)>& type2str)
   {
-    assert(rrset.size() > 0);
+    assert(begin != end);
 
-    const Name& owner = rrset.begin()->name;
+    const Name& owner = begin->name;
 
     assert(owner.is_absolute());
     assert(signer.is_absolute());
@@ -209,7 +215,8 @@ namespace RFC4034
       sig_inception,
       keytag,
       signer,
-      rrset);
+      begin,
+      end);
 
     return RRSIG(
       type,
@@ -485,7 +492,8 @@ namespace RFC4034
     uint32_t original_ttl,
     const RFC1035::Name& signer,
     uint16_t type_covered,
-    const CanonicalRRSet& rrset,
+    const RFC4034::CanonicalRRSet::iterator& begin,
+    const RFC4034::CanonicalRRSet::iterator& end,
     const std::function<std::string(const Type&)>& type2str) :
     RFC1035::ResourceRecord(owner, U(Type::RRSIG), U(class_), ttl, {}),
     rdata(RFC4034::sign(
@@ -496,7 +504,8 @@ namespace RFC4034
       signer,
       class_,
       type_covered,
-      rrset,
+      begin,
+      end,
       type2str))
   {
     RFC1035::ResourceRecord::rdata = rdata;

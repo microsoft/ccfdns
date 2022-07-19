@@ -22,7 +22,7 @@ namespace RFC5155 // https://datatracker.ietf.org/doc/html/rfc5155
   enum class HashAlgorithm : uint8_t
   {
     RESERVED = 0,
-    SHA_1 = 1,
+    SHA1 = 1,
   };
 
   class NSEC3 : public RFC1035::RDataFormat
@@ -45,7 +45,6 @@ namespace RFC5155 // https://datatracker.ietf.org/doc/html/rfc5155
       uint16_t iterations,
       const small_vector<uint8_t>& salt,
       const small_vector<uint8_t>& next_hashed_owner_name,
-      const std::vector<RFC1035::Type>& types,
       const std::function<std::string(const RFC4034::Type&)>& type2str);
 
     NSEC3(
@@ -115,8 +114,32 @@ namespace RFC5155 // https://datatracker.ietf.org/doc/html/rfc5155
       return r;
     }
 
-    small_vector<uint8_t> hash(
-      const RFC1035::Name& origin, const RFC1035::Name& name) const;
+    static small_vector<uint8_t> hash(
+      const RFC1035::Name& origin,
+      const RFC1035::Name& name,
+      uint16_t iterations,
+      const small_vector<uint8_t>& salt);
+
+    bool is_opt_out() const
+    {
+      return flags & 0x01;
+    }
+  };
+
+  class NSEC3RR : public RFC1035::ResourceRecord
+  {
+  public:
+    NSEC3RR(
+      const RFC1035::Name& owner,
+      RFC1035::Class class_,
+      uint32_t ttl,
+      HashAlgorithm hash_algorithm,
+      uint8_t flags,
+      uint16_t iterations,
+      const small_vector<uint8_t>& salt,
+      const small_vector<uint8_t>& next_hashed_owner_name);
+
+    virtual ~NSEC3RR() = default;
   };
 
   class NSEC3PARAM : public RFC1035::RDataFormat

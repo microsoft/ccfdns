@@ -259,8 +259,14 @@ namespace RFC1035 // https://datatracker.ietf.org/doc/html/rfc1035
       for (const auto& l : labels)
       {
         r[p++] = l.size();
+        if (p == 0)
+          throw std::runtime_error("name too long for small_vector");
         for (uint8_t i = 0; i < l.size(); i++)
+        {
           r[p++] = l[i];
+          if (p == 0)
+            throw std::runtime_error("name too long for small_vector");
+        }
       }
       return r;
     }
@@ -822,6 +828,21 @@ namespace RFC1035
     virtual ~RDataFormat() {}
     virtual operator small_vector<uint16_t>() const = 0;
     virtual operator std::string() const = 0;
+
+    bool operator<(const RDataFormat& other) const
+    {
+      return (small_vector<uint16_t>)(*this) < (small_vector<uint16_t>)other;
+    }
+
+    bool operator==(const RDataFormat& other) const
+    {
+      return (small_vector<uint16_t>)(*this) == (small_vector<uint16_t>)other;
+    }
+
+    bool operator!=(const RDataFormat& other) const
+    {
+      return !((*this) == other);
+    }
   };
 
   class A : public RDataFormat
