@@ -5,19 +5,7 @@
       "id": "node",
       "default": "0",
       "description": "Choose the node to debug (must be enabled with -d <n>)",
-      "options": [
-        "0",
-        "1",
-        "2",
-        "3",
-        "4",
-        "5",
-        "6",
-        "7",
-        "8",
-        "9",
-        "10"
-      ],
+      "options": ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10"],
       "type": "pickString"
     }
   ],
@@ -27,10 +15,7 @@
       "type": "cppdbg",
       "request": "launch",
       "program": "/bin/bash",
-      "args": [
-        "/tmp/vscode-gdb.sh",
-        "${input:node}"
-      ],
+      "args": ["/tmp/vscode-gdb.sh", "${input:node}"],
       "stopAtEntry": false,
       "cwd": "${workspaceFolder}",
       "additionalSOLibSearchPath": "${workspaceFolder}/build",
@@ -64,16 +49,11 @@
       "type": "lldb",
       "request": "launch",
       "program": "/bin/bash",
-      "args": [
-        "/tmp/vscode-gdb.sh",
-        "${input:node}"
-      ],
+      "args": ["/tmp/vscode-gdb.sh", "${input:node}"],
       "cwd": "${workspaceFolder}",
       "terminal": "console",
       "stopOnEntry": false,
-      "initCommands": [
-        "settings set target.process.stop-on-exec false"
-      ],
+      "initCommands": ["settings set target.process.stop-on-exec false"],
       "postRunCommands": [
         "process handle --pass true --stop false --notify true SIGILL"
       ]
@@ -84,10 +64,7 @@
       "request": "launch",
       "program": "/bin/bash",
       "miDebuggerPath": "/opt/openenclave/bin/oegdb",
-      "args": [
-        "/tmp/vscode-gdb.sh",
-        "${input:node}"
-      ],
+      "args": ["/tmp/vscode-gdb.sh", "${input:node}"],
       "stopAtEntry": false,
       "cwd": "${workspaceFolder}",
       "additionalSOLibSearchPath": "${workspaceFolder}/build",
@@ -135,10 +112,7 @@
       "type": "lldb",
       "request": "launch",
       "program": "/bin/bash",
-      "args": [
-        "/tmp/vscode-gdb.sh",
-        "${input:node}"
-      ],
+      "args": ["/tmp/vscode-gdb.sh", "${input:node}"],
       "cwd": "${workspaceFolder}",
       "env": {
         "OE_LOG_LEVEL": "WARNING"
@@ -148,9 +122,7 @@
       },
       "terminal": "console",
       "stopOnEntry": false,
-      "initCommands": [
-        "settings set target.process.stop-on-exec false"
-      ],
+      "initCommands": ["settings set target.process.stop-on-exec false"],
       "preRunCommands": [
         "command script import /opt/openenclave/lib/openenclave/debugger/lldb-sgx-plugin/lldb_sgx_plugin.py"
       ],
@@ -177,5 +149,16 @@
         }
       ]
     },
+    {
+      "name": "e2e_simple",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/tests/e2e_simple.py",
+      "args": ["-b", "/opt/ccf/bin"],
+      "stopOnEntry": false,
+      "cwd": "${workspaceFolder}/build",
+      "envFile": "${workspaceFolder}/.vscode/.env",
+      "console": "integratedTerminal"
+    }
   ]
 }

@@ -8,8 +8,9 @@
 #include "small_vector.h"
 
 #include <ccf/ds/hex.h>
+#include <ccf/quote_info.h>
 
-namespace aDNSTypes
+namespace aDNS::Types
 {
   enum class Type : uint16_t
   {
@@ -23,39 +24,47 @@ namespace aDNSTypes
   class ATTEST : public RFC1035::RDataFormat
   {
   public:
-    small_vector<uint16_t> evidence;
+    ccf::QuoteInfo quote_info;
+
+    ATTEST(const ccf::QuoteInfo& quote_info) : quote_info(quote_info) {}
 
     ATTEST(const std::string& s)
     {
-      evidence = small_vector<uint16_t>::from_hex(s);
+      auto sj = nlohmann::json::parse(s);
+      quote_info = sj.get<ccf::QuoteInfo>();
     }
 
     ATTEST(const small_vector<uint16_t>& data)
     {
-      size_t pos = 0;
-      evidence = small_vector<uint16_t>(data, pos);
+      auto j = nlohmann::json::parse(&data[0], &data[0] + data.size());
+      quote_info = j.get<ccf::QuoteInfo>();
     }
 
     virtual ~ATTEST() = default;
 
     virtual operator small_vector<uint16_t>() const override
     {
-      std::vector<uint8_t> r;
-      evidence.put(r);
-      return small_vector<uint16_t>(r.size(), r.data());
+      nlohmann::json j = quote_info;
+      auto sj = j.dump();
+      if (sj.size() >= 65535)
+        throw std::runtime_error("quote info too large for rdata");
+      return sj;
     }
 
     virtual operator std::string() const override
     {
-      return ds::to_hex(evidence);
+      nlohmann::json j = quote_info;
+      return j.dump();
     }
+
+    static ccf::QuoteInfo generate_quote_info(
+      const std::vector<uint8_t>& node_public_key_der);
   };
 
   class TLSKEY : public RFC4034::DNSKEY
   {
   public:
-    TLSKEY(const std::string& data) : RFC4034::DNSKEY(data) {}
-    TLSKEY(const small_vector<uint16_t>& data) : RFC4034::DNSKEY(data) {}
+    using DNSKEY::DNSKEY;
     virtual ~TLSKEY() = default;
 
     using RFC4034::DNSKEY::operator small_vector<uint16_t>;

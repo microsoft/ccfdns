@@ -5,6 +5,7 @@
 
 #include "adns_types.h"
 #include "base32.h"
+#include "formatting.h"
 #include "rfc1035.h"
 #include "rfc3596.h"
 #include "rfc4034.h"
@@ -30,9 +31,6 @@
 #include <stdexcept>
 #include <unordered_set>
 
-#define FMT_HEADER_ONLY
-#include <fmt/format.h>
-
 using namespace RFC1035;
 
 namespace aDNS
@@ -57,8 +55,8 @@ namespace aDNS
     {static_cast<uint16_t>(RFC5155::Type::NSEC3), Type::NSEC3},
     {static_cast<uint16_t>(RFC5155::Type::NSEC3PARAM), Type::NSEC3PARAM},
 
-    {static_cast<uint16_t>(aDNSTypes::Type::TLSKEY), Type::TLSKEY},
-    {static_cast<uint16_t>(aDNSTypes::Type::ATTEST), Type::ATTEST},
+    {static_cast<uint16_t>(aDNS::Types::Type::TLSKEY), Type::TLSKEY},
+    {static_cast<uint16_t>(aDNS::Types::Type::ATTEST), Type::ATTEST},
   };
 
   static const std::map<uint16_t, QType> supported_qtypes = {
@@ -145,7 +143,7 @@ namespace aDNS
     TFSF(RFC4034);
     TFSF(RFC6891);
     TFSF(RFC5155);
-    TFSF(aDNSTypes);
+    TFSF(aDNS::Types);
 
     throw std::runtime_error(
       fmt::format("unknown type string '{}'", type_string));
@@ -165,7 +163,7 @@ namespace aDNS
     SFTF(RFC4034);
     SFTF(RFC6891);
     SFTF(RFC5155);
-    SFTF(aDNSTypes);
+    SFTF(aDNS::Types);
 
     // https://datatracker.ietf.org/doc/html/rfc3597#section-5
     return "TYPE" + std::to_string(static_cast<uint16_t>(t));
@@ -254,8 +252,8 @@ namespace aDNS
 
       case Type::OPT: return std::make_shared<RFC6891::OPT>(rdata); break;
 
-      case Type::TLSKEY: return std::make_shared<aDNSTypes::TLSKEY>(rdata); break;
-      case Type::ATTEST: return std::make_shared<aDNSTypes::ATTEST>(rdata); break;
+      case Type::TLSKEY: return std::make_shared<aDNS::Types::TLSKEY>(rdata); break;
+      case Type::ATTEST: return std::make_shared<aDNS::Types::ATTEST>(rdata); break;
 
       default: throw std::runtime_error("unsupported rdata format");
     }
@@ -324,12 +322,12 @@ namespace aDNS
           fmt::format("algorithm {} not supported", algorithm));
       auto coords = signing_key->coordinates();
       LOG_DEBUG_FMT(
-        "SIGN: key x/y {}{}", ds::to_hex(coords.x), ds::to_hex(coords.y));
+        "ADNS: SIGN: key x/y {}{}", ds::to_hex(coords.x), ds::to_hex(coords.y));
       LOG_DEBUG_FMT("SIGN: data={}", ds::to_hex(data_to_sign));
       auto sig = signing_key->sign(data_to_sign, crypto::MDType::SHA384);
-      LOG_DEBUG_FMT("SIGN: sig={}", ds::to_hex(sig));
+      LOG_DEBUG_FMT("ADNS: SIGN: sig={}", ds::to_hex(sig));
       convert_ec_signature_to_ieee_p1363(sig, signing_key);
-      LOG_DEBUG_FMT("SIGN: r/s sig={}", ds::to_hex(sig));
+      LOG_DEBUG_FMT("ADNS: SIGN: r/s sig={}", ds::to_hex(sig));
       return sig;
     };
     return r;
@@ -387,7 +385,7 @@ namespace aDNS
       bool have_opt = false;
       if (rr.type == static_cast<uint16_t>(Type::OPT))
       {
-        LOG_DEBUG_FMT("EDNS(0): {}", string_from_resource_record(rr));
+        LOG_DEBUG_FMT("ADNS: EDNS(0): {}", string_from_resource_record(rr));
         if (have_opt)
         {
           // https://datatracker.ietf.org/doc/html/rfc6891#section-6.1.1
@@ -409,7 +407,7 @@ namespace aDNS
           (uint32_t)ttl,
           {});
         LOG_DEBUG_FMT(
-          "EDNS(0) reply: {}", string_from_resource_record(opt_reply));
+          "ADNS: EDNS(0) reply: {}", string_from_resource_record(opt_reply));
         r.additionals.push_back(opt_reply);
         have_opt = true;
       }
@@ -431,9 +429,9 @@ namespace aDNS
     std::optional<std::function<bool(const ResourceRecord&)>> condition)
   {
     LOG_DEBUG_FMT(
-      "Find: {} {} {} {}",
-      (std::string)origin,
-      (std::string)name,
+      "ADNS: Find: {} {} {} {}",
+      origin,
+      name,
       string_from_qtype(qtype),
       string_from_qclass(qclass));
     RFC4034::CanonicalRRSet records;
@@ -442,7 +440,7 @@ namespace aDNS
       qclass,
       qtype,
       [this, &origin, &name, &qclass, &records, &condition](const auto& rr) {
-        LOG_DEBUG_FMT(" - {}", string_from_resource_record(rr));
+        LOG_DEBUG_FMT("ADNS:  - {}", string_from_resource_record(rr));
         if (rr.name == name && (!condition || (*condition)(rr)))
           records.insert(rr);
         return true;
@@ -541,13 +539,13 @@ namespace aDNS
     }
 
     LOG_TRACE_FMT(
-      "Resolve: {} type {} class {}:{}",
-      (std::string)qname,
+      "ADNS: Resolve: {} type {} class {}:{}",
+      qname,
       string_from_qtype(static_cast<QType>(qtype)),
       string_from_qclass(static_cast<QClass>(qclass)),
       result_set.empty() ? " <nothing>" : "");
     for (const auto& rr : result_set)
-      LOG_TRACE_FMT(" - {}", string_from_resource_record(rr));
+      LOG_TRACE_FMT("ADNS:  - {}", string_from_resource_record(rr));
 
     return result;
   }
@@ -596,9 +594,9 @@ namespace aDNS
       add_dnskey(origin, class_, new_zsk_pk, key_signing);
     auto new_zsk_tag = get_key_tag(dnskey_rr.rdata);
 
-    LOG_DEBUG_FMT("NEW KEY for {}, tag={}:", (std::string)origin, new_zsk_tag);
-    LOG_DEBUG_FMT(" - {}", string_from_resource_record(dnskey_rr));
-    LOG_DEBUG_FMT(" - xy={}", ds::to_hex(new_zsk_pk));
+    LOG_DEBUG_FMT("ADNS: NEW KEY for {}, tag={}:", origin, new_zsk_tag);
+    LOG_DEBUG_FMT("ADNS: - {}", string_from_resource_record(dnskey_rr));
+    LOG_DEBUG_FMT("ADNS:  - xy={}", ds::to_hex(new_zsk_pk));
 
     if (!config.use_key_signing_key || key_signing)
 
@@ -767,7 +765,7 @@ namespace aDNS
 
   void Resolver::sign(const Name& origin)
   {
-    LOG_DEBUG_FMT("(Re)signing {}", (std::string)origin);
+    LOG_DEBUG_FMT("ADNS: (Re)signing {}", origin);
 
     assert(origin.is_absolute());
 
@@ -790,9 +788,9 @@ namespace aDNS
 
       auto [crecords, names] = order_records(origin, static_cast<QClass>(c));
 
-      LOG_DEBUG_FMT("Records to sign at {}:", (std::string)origin);
+      LOG_DEBUG_FMT("ADNS: Records to sign at {}:", origin);
       for (const auto& rr : crecords)
-        LOG_DEBUG_FMT(" {}", string_from_resource_record(rr));
+        LOG_DEBUG_FMT("ADNS:  {}", string_from_resource_record(rr));
 
       {
         // Remove existing RRSIGs and NSECs
@@ -800,7 +798,7 @@ namespace aDNS
         // noise?
         for (const auto& name : names)
         {
-          LOG_DEBUG_FMT("Remove {}", (std::string)name);
+          LOG_DEBUG_FMT("ADNS: Remove {}", name);
           remove(origin, name, c, Type::RRSIG);
           remove(origin, name, c, Type::NSEC);
           remove(origin, c, Type::NSEC3);
@@ -822,7 +820,7 @@ namespace aDNS
           next++;
           if (it->ttl != ttl)
             LOG_INFO_FMT(
-              "warning: TTL mismatch in record set for {}", (std::string)name);
+              "ADNS: warning: TTL mismatch in record set for {}", name);
         }
 
         // https://datatracker.ietf.org/doc/html/rfc4035#section-2.2
@@ -838,7 +836,7 @@ namespace aDNS
 
         auto [key, key_tag] = is_dnskey ? ksk_and_tag : zsk_and_tag;
 
-        LOG_DEBUG_FMT("SIGN: key tag: {}", key_tag);
+        LOG_DEBUG_FMT("ADNS: SIGN: key tag: {}", key_tag);
 
         ignore_on_add = true;
         add(
@@ -903,11 +901,11 @@ namespace aDNS
         for (auto it = hashed_names_map.begin(); it != hashed_names_map.end();
              it++)
         {
-          LOG_DEBUG_FMT(" - {}: ", ds::to_hex(it->first));
+          LOG_DEBUG_FMT("ADNS:  - {}: ", ds::to_hex(it->first));
           for (size_t i = 0; i < it->second.size(); i++)
           {
             LOG_DEBUG_FMT(
-              "   - {}", string_from_resource_record(*(it->second)[i]));
+              "ADNS:    - {}", string_from_resource_record(*(it->second)[i]));
           }
         }
 
@@ -960,7 +958,7 @@ namespace aDNS
 
     auto t = static_cast<Type>(rr.type);
     LOG_DEBUG_FMT(
-      "{}: on_add: {}", (std::string)origin, string_from_resource_record(rr));
+      "ADNS: {}: on_add: {}", origin, string_from_resource_record(rr));
     switch (t)
     {
       case Type::A:
@@ -975,13 +973,101 @@ namespace aDNS
       case Type::NSEC3:
       case Type::DS:
       case Type::DNSKEY:
+      case Type::ATTEST:
+      case Type::TLSKEY:
         sign(origin);
         break;
       default:
       {
-        LOG_DEBUG_FMT("Ignoring update to {} record", string_from_type(t));
+        LOG_DEBUG_FMT(
+          "ADNS: Ignoring update to {} record", string_from_type(t));
         break;
       }
     }
+  }
+
+  static bool verify_quote(const ccf::QuoteInfo& quote_info)
+  {
+    // TODO
+    return true;
+  }
+
+  void Resolver::register_service(
+    const Name& origin,
+    const Name& name,
+    const RFC1035::A& address,
+    const ccf::QuoteInfo& quote_info,
+    RFC4034::Algorithm algorithm,
+    const crypto::Pem& public_key)
+  {
+    LOG_DEBUG_FMT("ADNS: Register {} in {}", name, origin);
+
+    if (!name.is_absolute())
+      throw std::runtime_error("service name must be absolute");
+
+    if (!verify_quote(quote_info))
+      throw std::runtime_error("quote validation failed");
+
+    Name abs_name = name;
+    if (!name.is_absolute())
+      abs_name += origin;
+
+    RFC4034::CanonicalRRSet records =
+      find_records(origin, abs_name, QType::TLSKEY, QClass::IN);
+
+    if (!records.empty())
+      throw std::runtime_error(
+        fmt::format("name already exists in {}", origin));
+
+    // publish ATTEST, TLSKEY
+    ResourceRecord att_rr(
+      abs_name,
+      static_cast<uint16_t>(aDNS::Types::Type::ATTEST),
+      static_cast<uint16_t>(Class::IN),
+      config.default_ttl,
+      aDNS::Types::ATTEST(quote_info));
+    ignore_on_add = true;
+    add(origin, att_rr);
+
+    uint16_t flags = 0x0000;
+    auto pk = crypto::make_public_key(public_key);
+
+    small_vector<uint16_t> public_key_sv(public_key.size(), public_key.data());
+
+    ResourceRecord tlskey_rr(
+      abs_name,
+      static_cast<uint16_t>(aDNS::Types::Type::TLSKEY),
+      static_cast<uint16_t>(Class::IN),
+      config.default_ttl,
+      aDNS::Types::TLSKEY(flags, algorithm, public_key_sv));
+    ignore_on_add = true;
+    add(origin, tlskey_rr);
+
+    ResourceRecord address_rr(
+      abs_name,
+      static_cast<uint16_t>(RFC1035::Type::A),
+      static_cast<uint16_t>(Class::IN),
+      config.default_ttl,
+      address);
+    ignore_on_add = false; // will trigger zone signing
+    add(origin, address_rr);
+  }
+
+  void Resolver::install_acme_token(
+    const Name& origin, const Name& name, const RFC1035::TXT& txt)
+  {
+    // Note: does not necessarily have to be installed on the same DNS server;
+    // we can delegate the challenge to someone else, e.g. a non-DNSSEC server.
+
+    // Note: need some strategy for removing tokens periodically.
+
+    add(
+      origin,
+      ResourceRecord(
+        name,
+        static_cast<uint16_t>(Type::TXT),
+        static_cast<uint16_t>(Class::IN),
+        config.default_ttl,
+        txt));
   }
 }

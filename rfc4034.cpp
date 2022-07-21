@@ -105,6 +105,8 @@ namespace RFC4034
       case U(RFC4034::Type::DNSKEY):
       case U(RFC5155::Type::NSEC3):
       case U(RFC5155::Type::NSEC3PARAM):
+      case U(aDNS::Types::Type::ATTEST):
+      case U(aDNS::Types::Type::TLSKEY):
         cr.rdata = rr.rdata;
         break;
       default:
@@ -155,7 +157,7 @@ namespace RFC4034
     {
       const auto& rr = *it;
       LOG_DEBUG_FMT(
-        "SIGN: record set: {}", aDNS::string_from_resource_record(rr));
+        "ADNS: SIGN: record set: {}", aDNS::string_from_resource_record(rr));
       put(rr.name, data_to_sign);
       put(rr.type, data_to_sign);
       put(rr.class_, data_to_sign);
@@ -390,16 +392,17 @@ namespace RFC4034
   {
     std::vector<std::tuple<crypto::PublicKeyPtr, uint16_t, bool>> pks;
 
-    LOG_DEBUG_FMT("VERIFY: Public keys:");
+    LOG_DEBUG_FMT("ADNS: VERIFY: Public keys:");
     for (const auto& rr : dnskey_rrset)
     {
       if (rr.type == static_cast<uint16_t>(Type::DNSKEY))
       {
-        LOG_DEBUG_FMT(" - {}", aDNS::string_from_resource_record(rr));
+        LOG_DEBUG_FMT("ADNS:  - {}", aDNS::string_from_resource_record(rr));
         RFC4034::DNSKEY rdata(rr.rdata);
         small_vector<uint16_t> rdata_bytes = rdata;
         auto tag = keytag(&rdata_bytes[0], rdata_bytes.size());
-        LOG_DEBUG_FMT("   tag: {} x/y: {}", tag, ds::to_hex(rdata.public_key));
+        LOG_DEBUG_FMT(
+          "ADNS:    tag: {} x/y: {}", tag, ds::to_hex(rdata.public_key));
         auto pk = crypto::make_public_key(der_from_coord(rdata.public_key));
         pks.push_back(std::make_tuple(pk, tag, rdata.is_zone_key()));
       }
@@ -416,9 +419,9 @@ namespace RFC4034
         rrs.insert(rr);
     }
 
-    LOG_DEBUG_FMT("VERIFY: record set:");
+    LOG_DEBUG_FMT("ADNS: VERIFY: record set:");
     for (const auto& rr : rrs)
-      LOG_DEBUG_FMT(" - {}", aDNS::string_from_resource_record(rr));
+      LOG_DEBUG_FMT("ADNS:  - {}", aDNS::string_from_resource_record(rr));
 
     if (rrs.empty())
       throw std::runtime_error("no records to verify");
@@ -441,18 +444,19 @@ namespace RFC4034
         rr.rdata.put(data_to_sign);
       }
 
-      LOG_DEBUG_FMT("VERIFY: data={}", ds::to_hex(data_to_sign));
+      LOG_DEBUG_FMT("ADNS: VERIFY: data={}", ds::to_hex(data_to_sign));
       auto sig = rrsig_rdata.signature;
-      LOG_DEBUG_FMT("VERIFY: r/s sig={}", ds::to_hex(sig));
+      LOG_DEBUG_FMT("ADNS: VERIFY: r/s sig={}", ds::to_hex(sig));
       convert_signature_to_asn1(sig);
-      LOG_DEBUG_FMT("VERIFY: sig={}", ds::to_hex(sig));
+      LOG_DEBUG_FMT("ADNS: VERIFY: sig={}", ds::to_hex(sig));
 
       LOG_DEBUG_FMT(
-        "VERIFY: try rrsig: {}", aDNS::string_from_resource_record(rrsig));
+        "ADNS: VERIFY: try rrsig: {}",
+        aDNS::string_from_resource_record(rrsig));
 
       for (const auto& [key, tag, zone_key] : pks)
       {
-        LOG_DEBUG_FMT("VERIFY: trying key with tag {}", tag);
+        LOG_DEBUG_FMT("ADNS: VERIFY: trying key with tag {}", tag);
         if (rrsig_rdata.key_tag == tag && key->verify(data_to_sign, sig))
         {
           return true;
@@ -534,12 +538,8 @@ namespace RFC4034
     if (digest_type != RFC4034::DigestType::SHA384)
       throw std::runtime_error("digest type not supported");
 
-    LOG_DEBUG_FMT("HASH: in: {}", ds::to_hex(t));
-
     auto hp = crypto::make_hash_provider();
     rdata.digest = hp->Hash(t.data(), t.size(), crypto::MDType::SHA384);
-
-    LOG_DEBUG_FMT("HASH: out: {}", ds::to_hex(rdata.digest));
 
     RFC1035::ResourceRecord::rdata = rdata;
   }

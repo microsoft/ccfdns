@@ -1,11 +1,15 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the Apache 2.0 License.
 
+#include "ccfdns_rpc_types.h"
+#include "formatting.h"
 #include "keys.h"
 #include "resolver.h"
 #include "rfc1035.h"
+#include "rfc4034.h"
 
 #include <ccf/app_interface.h>
+#include <ccf/base_endpoint_registry.h>
 #include <ccf/common_auth_policies.h>
 #include <ccf/crypto/base64.h>
 #include <ccf/crypto/key_pair.h>
@@ -21,10 +25,8 @@
 #include <nlohmann/json.hpp>
 #include <odata_error.h>
 #include <optional>
+#include <quote_info.h>
 #include <stdexcept>
-
-#define FMT_HEADER_ONLY
-#include <fmt/format.h>
 
 using namespace aDNS;
 using namespace RFC1035;
@@ -83,11 +85,40 @@ inline void fill_json_schema(
 
 namespace RFC1035
 {
-  DECLARE_JSON_ENUM(aDNS::Type, {{aDNS::Type::A, "A"}});
+  DECLARE_JSON_ENUM(Type, {{Type::A, "A"}});
   DECLARE_JSON_STRINGIFIED(Name, "^[A-Za-z0-9]+(\\.[A-Za-z0-9]+)+$");
 
   DECLARE_JSON_TYPE(ResourceRecord);
   DECLARE_JSON_REQUIRED_FIELDS(ResourceRecord, name, type, class_, ttl, rdata);
+}
+
+namespace RFC4034
+{
+  DECLARE_JSON_ENUM(
+    Algorithm,
+    {
+      {Algorithm::DELETE, "DELETE"},
+      {Algorithm::RSAMD5, "RSAMD5"},
+      {Algorithm::DH, "DH"},
+      {Algorithm::DSA, "DSA"},
+      {Algorithm::RESERVED1, "RESERVED1"},
+      {Algorithm::RSASHA1, "RSASHA1"},
+      {Algorithm::DSA_NSEC3_SHA1, "DSA_NSEC3_SHA1"},
+      {Algorithm::RSASHA1_NSEC3_SHA1, "RSASHA1_NSEC3_SHA1"},
+      {Algorithm::RSASHA256, "RSASHA256"},
+      {Algorithm::RESERVED2, "RESERVED2"},
+      {Algorithm::RSASHA512, "RSASHA512"},
+      {Algorithm::RESERVED3, "RESERVED3"},
+      {Algorithm::ECC_GOST, "ECC_GOST"},
+      {Algorithm::ECDSAP256SHA256, "ECDSAP256SHA256"},
+      {Algorithm::ECDSAP384SHA384, "ECDSAP384SHA384"},
+      {Algorithm::ED25519, "ED25519"},
+      {Algorithm::ED448, "ED448"},
+      {Algorithm::INDIRECT, "INDIRECT"},
+      {Algorithm::PRIVATE_DNS, "PRIVATE_DNS"},
+      {Algorithm::PRIVATE_OID, "PRIVATE_OID"},
+      {Algorithm::RESERVED4, "RESERVED4"},
+    });
 }
 
 namespace ccfdns
@@ -159,7 +190,7 @@ namespace ccfdns
 
     virtual void add(const Name& origin, const ResourceRecord& rr) override
     {
-      LOG_DEBUG_FMT("Add: {}", string_from_resource_record(rr));
+      LOG_DEBUG_FMT("CCFDNS: Add: {}", string_from_resource_record(rr));
 
       if (!ctx)
         std::runtime_error("missing endpoint context");
@@ -173,10 +204,7 @@ namespace ccfdns
       auto t = static_cast<aDNS::Type>(rr.type);
 
       LOG_TRACE_FMT(
-        "Add {} type {} to {}",
-        (std::string)rr.name,
-        string_from_type(t),
-        (std::string)origin);
+        "CCFDNS: Add {} type {} to {}", rr.name, string_from_type(t), origin);
 
       ResourceRecord rs(rr);
 
@@ -191,7 +219,7 @@ namespace ccfdns
 
     virtual void remove(const Name& origin, const ResourceRecord& rr)
     {
-      LOG_DEBUG_FMT("Remove: {}", string_from_resource_record(rr));
+      LOG_DEBUG_FMT("CCFDNS: Remove: {}", string_from_resource_record(rr));
 
       if (!ctx)
         std::runtime_error("missing endpoint context");
@@ -205,10 +233,10 @@ namespace ccfdns
       auto t = static_cast<aDNS::Type>(rr.type);
 
       LOG_TRACE_FMT(
-        "Remove {} type {} at {}",
-        (std::string)rr.name,
+        "CCFDNS: Remove {} type {} at {}",
+        rr.name,
         string_from_type(t),
-        (std::string)origin);
+        origin);
 
       ResourceRecord rs(rr);
 
@@ -227,10 +255,7 @@ namespace ccfdns
       aDNS::Type t) override
     {
       LOG_DEBUG_FMT(
-        "Remove {} type {} at {}",
-        (std::string)name,
-        string_from_type(t),
-        (std::string)origin);
+        "Remove {} type {} at {}", name, string_from_type(t), origin);
 
       if (!ctx)
         std::runtime_error("missing endpoint context");
@@ -251,7 +276,8 @@ namespace ccfdns
           [origin, t, &aname, &records](const ResourceRecord& rr) {
             if (rr.type == static_cast<uint16_t>(t) && rr.name == aname)
             {
-              LOG_TRACE_FMT(" remove {}", string_from_resource_record(rr));
+              LOG_TRACE_FMT(
+                "CCFDNS:  remove {}", string_from_resource_record(rr));
               records->remove(rr);
             }
             return true;
@@ -263,7 +289,7 @@ namespace ccfdns
       const Name& origin, aDNS::Class c, aDNS::Type t) override
     {
       LOG_DEBUG_FMT(
-        "Remove type {} at {}", string_from_type(t), (std::string)origin);
+        "CCFDNS: Remove type {} at {}", string_from_type(t), origin);
 
       if (!ctx)
         std::runtime_error("missing endpoint context");
@@ -390,7 +416,7 @@ namespace ccfdns
       const Name& origin, aDNS::Class class_, aDNS::Type type) const
     {
       return "public:" + (std::string)origin.lowered() + "-" +
-        string_from_type(type) + string_from_class(class_) + "-";
+        string_from_type(type) + "-" + string_from_class(class_);
     }
   };
 
@@ -475,7 +501,7 @@ namespace ccfdns
               ccf::errors::InvalidInput,
               "unsupported HTTP verb; use GET or POST");
           }
-          LOG_INFO_FMT("query: {}", ds::to_hex(bytes));
+          LOG_INFO_FMT("CCFDNS: query: {}", ds::to_hex(bytes));
 
           ccfdns.set_endpoint_context(ctx);
           auto reply = ccfdns.reply(Message(bytes));
@@ -484,7 +510,7 @@ namespace ccfdns
           ctx.rpc_ctx->set_response_header(
             http::headers::CONTENT_TYPE, "application/dns-query");
           std::vector<uint8_t> out = reply;
-          LOG_INFO_FMT("response: {}", ds::to_hex(out));
+          LOG_INFO_FMT("CCFDNS: response: {}", ds::to_hex(out));
 
           ctx.rpc_ctx->set_response_body(out);
           return ccf::make_success();
@@ -501,6 +527,38 @@ namespace ccfdns
         .install();
 
       make_endpoint("/dns-query", HTTP_POST, dns_query, ccf::no_auth_required)
+        .set_auto_schema<void, std::vector<uint8_t>>()
+        .install();
+
+      auto register_service = [this](auto& ctx, nlohmann::json&& params) {
+        try
+        {
+          const auto in = params.get<RegisterService::In>();
+
+          ccfdns.set_endpoint_context(ctx);
+          ccfdns.register_service(
+            Name(in.origin),
+            Name(in.name),
+            RFC1035::A(in.address),
+            in.quote_info,
+            in.algorithm,
+            in.public_key);
+
+          ctx.rpc_ctx->set_response_status(HTTP_STATUS_OK);
+          return ccf::make_success();
+        }
+        catch (std::exception& ex)
+        {
+          return ccf::make_error(
+            HTTP_STATUS_BAD_REQUEST, ccf::errors::InternalError, ex.what());
+        }
+      };
+
+      make_endpoint(
+        "/register",
+        HTTP_POST,
+        ccf::json_adapter(register_service),
+        ccf::no_auth_required)
         .set_auto_schema<void, std::vector<uint8_t>>()
         .install();
     }

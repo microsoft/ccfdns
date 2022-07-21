@@ -66,7 +66,7 @@ namespace RFC4034 // https://datatracker.ietf.org/doc/html/rfc4034
     INDIRECT = 252, // Not for zone signing.
     PRIVATE_DNS = 253,
     PRIVATE_OID = 254,
-    RESERVED_2 = 255,
+    RESERVED4 = 255,
   };
 
   static std::map<Algorithm, std::string> algorithm_mnemonic_map = {

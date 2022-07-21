@@ -3,6 +3,11 @@
 
 import glob
 import http
+import cryptography
+
+from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ec
 
 import infra.e2e_args
 import infra.network
@@ -37,6 +42,22 @@ def add_record(client, origin, name, stype, rdata_obj):
                 "ttl": 3600,
                 "rdata": base64.urlsafe_b64encode(rdata_obj.to_wire()).decode(),
             },
+        },
+    )
+    assert r.status_code == http.HTTPStatus.NO_CONTENT
+    return r
+
+
+def submit_service_registration(client, origin, name, address, public_pem):
+    r = client.post(
+        "/app/register",
+        {
+            "origin": str(origin),
+            "name": str(name),
+            "address": str(address),
+            "quote_info": {"format": "OE_SGX_v1", "quote": [], "endorsements": []},
+            "algorithm": "ECDSAP384SHA384",
+            "public_key": public_pem.decode("ascii"),
         },
     )
     assert r.status_code == http.HTTPStatus.NO_CONTENT
@@ -104,6 +125,18 @@ def get_records(host, port, ca, qname, stype, keys=None):
     return None
 
 
+def get_keys(host, port, ca, origin):
+    r = get_records(host, port, ca, origin, "DNSKEY", None)
+    key_rrs = r.find_rrset(r.answer, origin, rdc.IN, rdt.DNSKEY)
+    keys = {origin: key_rrs}
+    validate_rrsigs(r, rdt.DNSKEY, keys)
+    return keys
+
+
+def A(s):
+    return dns.rdata.from_text(rdc.IN, rdt.A, s)
+
+
 def test_basic(network, args):
     """Basic tests"""
     primary, _ = network.find_primary()
@@ -115,22 +148,19 @@ def test_basic(network, args):
 
         origin = dns.name.from_text("example.com.")
 
-        rd = dns.rdata.from_text(rdc.IN, rdt.A, "1.2.3.4")
+        rd = A("1.2.3.4")
         add_record(client, origin, "www", "A", rd)
         check_record(host, port, ca, "www.example.com.", "A", rd)
 
-        rd2 = dns.rdata.from_text(rdc.IN, rdt.A, "1.2.3.5")
+        rd2 = A("1.2.3.5")
         add_record(client, origin, "www", "A", rd2)
         check_record(host, port, ca, "www.example.com.", "A", rd2)
         check_record(host, port, ca, "www.example.com.", "A", rd)
 
-        rd2 = dns.rdata.from_text(rdc.IN, rdt.A, "1.2.3.5")
+        rd2 = A("1.2.3.5")
         add_record(client, origin, "www2", "A", rd2)
 
-        r = get_records(host, port, ca, origin, "DNSKEY", None)
-        key_rrs = r.find_rrset(r.answer, origin, rdc.IN, rdt.DNSKEY)
-        keys = {origin: key_rrs}
-        validate_rrsigs(r, rdt.DNSKEY, keys)
+        keys = get_keys(host, port, ca, origin)
 
         name = dns.name.from_text("www2.example.com.")
         get_records(host, port, ca, name, "A", keys)
@@ -149,6 +179,35 @@ def test_basic(network, args):
             raise Exception("DS record hash mismatch")
 
 
+def test_service_reg(network, args):
+    """Service registration tests"""
+    primary, _ = network.find_primary()
+
+    with primary.client() as client:
+        host = primary.get_public_rpc_host()
+        port = primary.get_public_rpc_port()
+        ca = primary.session_ca()["ca"]
+
+        origin = dns.name.from_text("example.com.")
+
+        keys = get_keys(host, port, ca, origin)
+
+        service_name = "service42.example.com."
+        service_key = ec.generate_private_key(ec.SECP384R1(), default_backend())
+        service_public_key = service_key.public_key()
+        public_pem = service_public_key.public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+
+        submit_service_registration(client, origin, service_name, "1.2.3.4", public_pem)
+
+        check_record(host, port, ca, service_name, "A", A("1.2.3.4"))
+
+        r = get_records(host, port, ca, service_name, "A", keys)
+        print(r)
+
+
 def run(args):
     """Run tests"""
     with infra.network.network(
@@ -156,6 +215,7 @@ def run(args):
     ) as network:
         network.start_and_open(args)
         test_basic(network, args)
+        test_service_reg(network, args)
 
 
 if __name__ == "__main__":

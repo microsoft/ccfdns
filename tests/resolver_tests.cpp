@@ -3,6 +3,7 @@
 
 #include "base32.h"
 #include "ccf/crypto/key_pair.h"
+#include "formatting.h"
 #include "resolver.h"
 #include "rfc1035.h"
 #include "rfc4034.h"
@@ -132,7 +133,7 @@ public:
 
   virtual void show(const Name& origin) const
   {
-    LOG_DEBUG_FMT("Current entries at {}:", (std::string)origin);
+    LOG_DEBUG_FMT("Current entries at {}:", origin);
     auto oit = zones.find(origin);
     if (oit != zones.end())
     {
@@ -453,6 +454,54 @@ TEST_CASE("RRSIG tests")
   REQUIRE(RFC4034::verify_rrsigs(r.answers, dnskey_rrs, type2str));
 
   s.show(origin);
+}
+
+TEST_CASE("Service registration")
+{
+  TestResolver s;
+
+  Name origin("example.com.");
+
+  REQUIRE_NOTHROW(s.add(
+    origin,
+    RR(
+      origin,
+      aDNS::Type::SOA,
+      aDNS::Class::IN,
+      RFC1035::SOA(
+        "ns1.example.com. joe.example.com. 4 604800 86400 2419200 0"))));
+
+  Name service_name("service42.example.com.");
+  auto service_key = crypto::make_key_pair(crypto::CurveID::SECP384R1);
+  ccf::QuoteInfo quote_info;
+
+  RFC1035::A address("192.168.0.1");
+
+  s.register_service(
+    origin,
+    service_name,
+    address,
+    quote_info,
+    RFC4034::Algorithm::ECDSAP384SHA384,
+    service_key->public_key_pem());
+
+  auto dnskey_rrs =
+    s.resolve(origin, aDNS::QType::DNSKEY, aDNS::QClass::IN).answers;
+  REQUIRE(RFC4034::verify_rrsigs(dnskey_rrs, dnskey_rrs, type2str));
+
+  auto r = s.resolve(service_name, aDNS::QType::TLSKEY, aDNS::QClass::IN);
+  REQUIRE(RFC4034::verify_rrsigs(r.answers, dnskey_rrs, type2str));
+
+  r = s.resolve(service_name, aDNS::QType::ATTEST, aDNS::QClass::IN);
+  REQUIRE(RFC4034::verify_rrsigs(r.answers, dnskey_rrs, type2str));
+
+  r = s.resolve(service_name, aDNS::QType::A, aDNS::QClass::IN);
+  REQUIRE(RFC4034::verify_rrsigs(r.answers, dnskey_rrs, type2str));
+
+  auto challenge_name = Name("_acme-challenge") + service_name;
+  s.install_acme_token(origin, challenge_name, RFC1035::TXT("sometoken"));
+  r = s.resolve(challenge_name, aDNS::QType::TXT, aDNS::QClass::IN);
+  REQUIRE(RFC4034::verify_rrsigs(r.answers, dnskey_rrs, type2str));
 }
 
 int main(int argc, char** argv)

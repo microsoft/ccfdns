@@ -42,8 +42,8 @@ namespace aDNS
     NSEC3 = static_cast<uint16_t>(RFC5155::Type::NSEC3),
     NSEC3PARAM = static_cast<uint16_t>(RFC5155::Type::NSEC3PARAM),
     OPT = static_cast<uint16_t>(RFC6891::Type::OPT),
-    TLSKEY = static_cast<uint16_t>(aDNSTypes::Type::TLSKEY),
-    ATTEST = static_cast<uint16_t>(aDNSTypes::Type::ATTEST),
+    TLSKEY = static_cast<uint16_t>(aDNS::Types::Type::TLSKEY),
+    ATTEST = static_cast<uint16_t>(aDNS::Types::Type::ATTEST),
   };
 
   enum class QType : uint16_t
@@ -62,14 +62,14 @@ namespace aDNS
     NSEC3 = static_cast<uint16_t>(RFC5155::Type::NSEC3),
     NSEC3PARAM = static_cast<uint16_t>(RFC5155::Type::NSEC3PARAM),
     OPT = static_cast<uint16_t>(RFC6891::Type::OPT),
-    TLSKEY = static_cast<uint16_t>(aDNSTypes::Type::TLSKEY),
-    ATTEST = static_cast<uint16_t>(aDNSTypes::Type::ATTEST),
+    TLSKEY = static_cast<uint16_t>(aDNS::Types::Type::TLSKEY),
+    ATTEST = static_cast<uint16_t>(aDNS::Types::Type::ATTEST),
 
     ASTERISK = static_cast<uint16_t>(RFC1035::QType::ASTERISK),
   };
 
-  std::string string_from_type(const Type& type);
-  std::string string_from_qtype(const QType& type);
+  std::string string_from_type(const aDNS::Type& type);
+  std::string string_from_qtype(const aDNS::QType& type);
   std::string string_from_resource_record(const ResourceRecord& rr);
 
   Type type_from_string(const std::string& s);
@@ -169,6 +169,17 @@ namespace aDNS
       uint16_t tag,
       const crypto::Pem& pem,
       bool key_signing) = 0;
+
+    virtual void register_service(
+      const Name& origin,
+      const Name& name,
+      const RFC1035::A& address,
+      const ccf::QuoteInfo& quote_info,
+      RFC4034::Algorithm algorithm,
+      const crypto::Pem& public_key);
+
+    virtual void install_acme_token(
+      const Name& origin, const Name& name, const RFC1035::TXT& txt);
 
   protected:
     Configuration config;
