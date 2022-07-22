@@ -443,9 +443,9 @@ namespace ccfdns
     Handlers(ccfapp::AbstractNodeContext& context) :
       ccf::UserEndpointRegistry(context)
     {
-      openapi_info.title = "CCF DNS";
+      openapi_info.title = "CCF aDNS";
       openapi_info.description =
-        "This CCF sample app implements a simple DNS-over-HTTPS server.";
+        "This application implements an attested DNS-over-HTTPS server.";
       openapi_info.document_version = "0.0.0";
 
       auto add = [this](auto& ctx, nlohmann::json&& params) {

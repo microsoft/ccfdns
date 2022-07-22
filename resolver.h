@@ -215,19 +215,11 @@ namespace aDNS
       uint16_t tag,
       const small_vector<uint16_t>& dnskey_rdata);
 
-    void add_nsec(
-      Class c,
-      const Name& origin,
-      uint32_t ttl,
-      const Name& next_owner_name,
-      RFC4034::CanonicalRRSet::iterator begin,
-      RFC4034::CanonicalRRSet::iterator end);
-
     typedef std::
       map<small_vector<uint8_t>, std::vector<RFC4034::CanonicalRRSet::iterator>>
         HashedNamesMap;
 
-    void add_nsec3(
+    ResourceRecord add_nsec3(
       Class c,
       const Name& origin,
       uint32_t ttl,

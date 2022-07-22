@@ -227,7 +227,7 @@ namespace aDNS
     return string_from_type(static_cast<Type>(x));
   };
 
-  std::shared_ptr<RDataFormat> mk_rdata(
+  std::shared_ptr<RDataFormat> mk_rdata_format(
     Type t, const small_vector<uint16_t>& rdata)
   {
     // clang-format off
@@ -276,7 +276,8 @@ namespace aDNS
       r += " " + std::to_string(rr.ttl);
     }
     r += " " + string_from_type(static_cast<Type>(rr.type));
-    r += " " + (std::string)*mk_rdata(static_cast<Type>(rr.type), rr.rdata);
+    r +=
+      " " + (std::string)*mk_rdata_format(static_cast<Type>(rr.type), rr.rdata);
     return r;
   }
 
@@ -526,10 +527,16 @@ namespace aDNS
       }
 
       result.authorities += find_records(
-        origin, qname, QType::RRSIG, qclass, [&qtype](const auto& rr) {
+        origin,
+        qname,
+        QType::RRSIG,
+        qclass,
+        [&cfg = config, &qtype](const auto& rr) {
           RFC4034::RRSIG rd(rr.rdata, type2str);
-          return rd.type_covered == static_cast<uint16_t>(Type::NSEC) ||
-            rd.type_covered == static_cast<uint16_t>(Type::NSEC3) ||
+          return (!cfg.use_nsec3 &&
+                  rd.type_covered == static_cast<uint16_t>(Type::NSEC)) ||
+            (cfg.use_nsec3 &&
+             rd.type_covered == static_cast<uint16_t>(Type::NSEC3)) ||
             (qtype != QType::SOA &&
              rd.type_covered == static_cast<uint16_t>(Type::SOA));
         });
@@ -558,7 +565,7 @@ namespace aDNS
 
     for (const auto& [_, t] : supported_types)
     {
-      if (t == Type::RRSIG || t == Type::NSEC || t == Type::NSEC3)
+      if (t == Type::RRSIG)
         continue; // signatures are not signed but recreated
 
       std::vector<ResourceRecord> records;
@@ -599,8 +606,8 @@ namespace aDNS
     LOG_DEBUG_FMT("ADNS:  - xy={}", ds::to_hex(new_zsk_pk));
 
     if (!config.use_key_signing_key || key_signing)
-
       add_ds(origin, class_, new_zsk, new_zsk_tag, dnskey_rr.rdata);
+
     on_new_signing_key(
       origin,
       new_zsk_tag,
@@ -695,33 +702,7 @@ namespace aDNS
         dnskey_rdata));
   }
 
-  void Resolver::add_nsec(
-    Class c,
-    const Name& origin,
-    uint32_t ttl,
-    const Name& next_owner_name,
-    RFC4034::CanonicalRRSet::iterator begin,
-    RFC4034::CanonicalRRSet::iterator end)
-  {
-    assert(begin != end);
-
-    RFC4034::NSEC rdata(next_owner_name, type2str);
-
-    for (auto nit = begin; nit != end; nit++)
-      rdata.type_bit_maps.insert(static_cast<uint16_t>(nit->type));
-
-    ResourceRecord nsec(
-      begin->name,
-      static_cast<uint16_t>(Type::NSEC),
-      static_cast<uint16_t>(c),
-      ttl,
-      rdata);
-
-    ignore_on_add = true;
-    add(origin, nsec);
-  }
-
-  void Resolver::add_nsec3(
+  ResourceRecord Resolver::add_nsec3(
     Class c,
     const Name& origin,
     uint32_t ttl,
@@ -752,6 +733,9 @@ namespace aDNS
     for (const auto& rec : rrs)
       rdata.type_bit_maps.insert(static_cast<uint16_t>(rec->type));
 
+    rdata.type_bit_maps.insert(static_cast<uint16_t>(Type::RRSIG));
+    rdata.type_bit_maps.insert(static_cast<uint16_t>(Type::NSEC3));
+
     ResourceRecord rr(
       name,
       static_cast<uint16_t>(Type::NSEC3),
@@ -761,6 +745,8 @@ namespace aDNS
 
     ignore_on_add = true;
     add(origin, rr);
+
+    return rr;
   }
 
   void Resolver::sign(const Name& origin)
@@ -812,13 +798,14 @@ namespace aDNS
         uint32_t ttl = it->ttl;
         const auto& name = it->name;
         const auto& type = it->type;
+        const auto& class_ = it->class_;
 
         RFC4034::CanonicalRRSet::iterator next = std::next(it);
-        while (next != crecords.end() && next->name == it->name &&
-               next->type == it->type && next->class_ == it->class_)
+        while (next != crecords.end() && next->name == name &&
+               next->type == type && next->class_ == class_)
         {
           next++;
-          if (it->ttl != ttl)
+          if (next->ttl != ttl)
             LOG_INFO_FMT(
               "ADNS: warning: TTL mismatch in record set for {}", name);
         }
@@ -826,33 +813,30 @@ namespace aDNS
         // https://datatracker.ietf.org/doc/html/rfc4035#section-2.2
         if (
           static_cast<Type>(type) == Type::RRSIG ||
-          (static_cast<Type>(type) == Type::NS && name != origin))
+          (static_cast<Type>(type) == Type::NS && name != origin) ||
+          static_cast<Type>(type) == Type::NSEC ||
+          static_cast<Type>(type) == Type::NSEC3)
         {
           it = next;
           continue;
         }
 
         bool is_dnskey = static_cast<Type>(type) == Type::DNSKEY;
-
         auto [key, key_tag] = is_dnskey ? ksk_and_tag : zsk_and_tag;
 
-        LOG_DEBUG_FMT("ADNS: SIGN: key tag: {}", key_tag);
+        RFC4034::CRRS crrs(name, class_, type, ttl);
+        for (auto rit = it; rit != next; rit++)
+          crrs.rdata.insert(rit->rdata);
 
         ignore_on_add = true;
         add(
           origin,
           RFC4034::RRSIGRR(
-            name,
-            static_cast<RFC1035::Class>(c),
-            ttl,
             make_signing_function(key),
             key_tag,
             config.signing_algorithm,
-            ttl,
             origin,
-            static_cast<uint16_t>(type),
-            it,
-            next,
+            crrs,
             type2str));
 
         it = next;
@@ -917,12 +901,33 @@ namespace aDNS
 
           auto next = std::next(it);
 
+          auto first = *it->second.begin();
+          const Name& owner = first->name;
           small_vector<uint8_t> next_hashed_owner_name =
             next != hashed_names_map.end() ? next->first :
                                              hashed_names_map.begin()->first;
 
-          add_nsec3(
+          auto rr = add_nsec3(
             c, origin, ttl, it->first, next_hashed_owner_name, it->second);
+
+          RFC4034::CRRS crrs(
+            owner,
+            static_cast<RFC1035::Class>(c),
+            static_cast<uint16_t>(Type::NSEC3),
+            ttl,
+            rr.rdata);
+
+          ignore_on_add = true;
+          auto [key, key_tag] = zsk_and_tag;
+          add(
+            origin,
+            RFC4034::RRSIGRR(
+              make_signing_function(key),
+              key_tag,
+              config.signing_algorithm,
+              origin,
+              crrs,
+              type2str));
         }
       }
       else
@@ -930,17 +935,51 @@ namespace aDNS
         auto next = std::next(crecords.begin());
         for (auto it = crecords.begin(); it != crecords.end();)
         {
-          while (next != crecords.end() && next->name == it->name &&
-                 next->type == it->type && next->class_ == it->class_)
-          {
-            next++;
-          }
-
-          Name next_owner_name = next != crecords.end() ?
+          Name next_domain_name = next != crecords.end() ?
             next->name :
             (is_authoritative ? soa_records.begin()->name : origin);
 
-          add_nsec(c, origin, ttl, next_owner_name, it, next);
+          std::set<RFC4034::Type> types = {
+            static_cast<RFC4034::Type>(it->type),
+            RFC4034::Type::RRSIG,
+            RFC4034::Type::NSEC};
+
+          while (next != crecords.end() && next->name == it->name &&
+                 next->class_ == it->class_)
+          {
+            types.insert(static_cast<RFC4034::Type>(next->type));
+            next++;
+          }
+
+          RFC4034::NSECRR rr(
+            it->name,
+            static_cast<RFC1035::Class>(c),
+            ttl,
+            next_domain_name,
+            types,
+            type2str);
+
+          ignore_on_add = true;
+          add(origin, rr);
+
+          RFC4034::CRRS crrs(
+            it->name,
+            static_cast<RFC1035::Class>(c),
+            static_cast<uint16_t>(Type::NSEC),
+            ttl,
+            rr.rdata);
+
+          auto [key, key_tag] = zsk_and_tag;
+          ignore_on_add = true;
+          add(
+            origin,
+            RFC4034::RRSIGRR(
+              make_signing_function(key),
+              key_tag,
+              config.signing_algorithm,
+              origin,
+              crrs,
+              type2str));
 
           it = next;
         }

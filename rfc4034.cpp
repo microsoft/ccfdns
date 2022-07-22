@@ -3,6 +3,7 @@
 
 #include "rfc4034.h"
 
+#include "formatting.h"
 #include "resolver.h"
 #include "rfc1035.h"
 #include "rfc3596.h"
@@ -128,46 +129,6 @@ namespace RFC4034
     return r;
   }
 
-  static std::vector<uint8_t> compute_rrset_signature(
-    SigningFunction signing_function,
-    uint16_t t,
-    RFC4034::Algorithm algorithm,
-    uint8_t num_labels,
-    uint32_t original_ttl,
-    uint32_t sig_expiration,
-    uint32_t sig_inception,
-    uint16_t keytag,
-    const Name& signer_name,
-    const CanonicalRRSet::iterator& begin,
-    const CanonicalRRSet::iterator& end)
-  {
-    // https://datatracker.ietf.org/doc/html/rfc4034#section-3.1.8.1
-
-    std::vector<uint8_t> data_to_sign;
-    put(static_cast<uint16_t>(t), data_to_sign);
-    put(static_cast<uint8_t>(algorithm), data_to_sign);
-    put(num_labels, data_to_sign);
-    put(original_ttl, data_to_sign);
-    put(sig_expiration, data_to_sign);
-    put(sig_inception, data_to_sign);
-    put(keytag, data_to_sign);
-    signer_name.put(data_to_sign);
-
-    for (auto it = begin; it != end; it++)
-    {
-      const auto& rr = *it;
-      LOG_DEBUG_FMT(
-        "ADNS: SIGN: record set: {}", aDNS::string_from_resource_record(rr));
-      put(rr.name, data_to_sign);
-      put(rr.type, data_to_sign);
-      put(rr.class_, data_to_sign);
-      put(original_ttl, data_to_sign);
-      rr.rdata.put(data_to_sign);
-    }
-
-    return signing_function(algorithm, data_to_sign);
-  }
-
   static uint8_t num_labels(const Name& name)
   {
     // https://www.rfc-editor.org/rfc/rfc4034.html#section-3.1.3
@@ -184,17 +145,14 @@ namespace RFC4034
     const SigningFunction& signing_function,
     uint16_t keytag,
     Algorithm algorithm,
-    uint32_t original_ttl,
     const RFC1035::Name& signer,
-    uint16_t class_,
-    uint16_t type,
-    const CanonicalRRSet::iterator& begin,
-    const CanonicalRRSet::iterator& end,
+    const CRRS& crrs,
     const std::function<std::string(const Type&)>& type2str)
   {
-    assert(begin != end);
+    if (crrs.rdata.empty())
+      throw std::runtime_error("no records to sign");
 
-    const Name& owner = begin->name;
+    const Name& owner = crrs.name;
 
     assert(owner.is_absolute());
     assert(signer.is_absolute());
@@ -207,24 +165,43 @@ namespace RFC4034
     uint32_t sig_expiration =
       duration_cast<std::chrono::seconds>(tp + std::chrono::days(90)).count();
 
-    std::vector<uint8_t> signature = compute_rrset_signature(
-      signing_function,
-      type,
-      algorithm,
-      nl,
-      original_ttl,
-      sig_expiration,
-      sig_inception,
-      keytag,
-      signer,
-      begin,
-      end);
+    // https://datatracker.ietf.org/doc/html/rfc4034#section-3.1.8.1
+
+    std::vector<uint8_t> data_to_sign;
+    put(static_cast<uint16_t>(crrs.type), data_to_sign);
+    put(static_cast<uint8_t>(algorithm), data_to_sign);
+    put(nl, data_to_sign);
+    put(crrs.ttl, data_to_sign);
+    put(sig_expiration, data_to_sign);
+    put(sig_inception, data_to_sign);
+    put(keytag, data_to_sign);
+    signer.put(data_to_sign);
+
+    LOG_DEBUG_FMT(
+      "ADNS: SIGN: record set: {} {} {} {}",
+      crrs.name,
+      crrs.type,
+      crrs.class_,
+      crrs.ttl);
+
+    for (const auto& rd : crrs.rdata)
+    {
+      LOG_DEBUG_FMT("ADNS:  - {}", ds::to_hex(rd));
+
+      put(crrs.name, data_to_sign);
+      put(crrs.type, data_to_sign);
+      put(crrs.class_, data_to_sign);
+      put(crrs.ttl, data_to_sign);
+      rd.put(data_to_sign);
+    }
+
+    std::vector<uint8_t> signature = signing_function(algorithm, data_to_sign);
 
     return RRSIG(
-      type,
+      crrs.type,
       static_cast<uint8_t>(algorithm),
       nl,
-      original_ttl,
+      crrs.ttl,
       sig_expiration,
       sig_inception,
       keytag,
@@ -487,30 +464,15 @@ namespace RFC4034
   }
 
   RRSIGRR::RRSIGRR(
-    const RFC1035::Name& owner,
-    RFC1035::Class class_,
-    uint32_t ttl,
     const SigningFunction& signing_function,
     uint16_t key_tag,
     Algorithm algorithm,
-    uint32_t original_ttl,
     const RFC1035::Name& signer,
-    uint16_t type_covered,
-    const RFC4034::CanonicalRRSet::iterator& begin,
-    const RFC4034::CanonicalRRSet::iterator& end,
+    const CRRS& crrs,
     const std::function<std::string(const Type&)>& type2str) :
-    RFC1035::ResourceRecord(owner, U(Type::RRSIG), U(class_), ttl, {}),
-    rdata(RFC4034::sign(
-      signing_function,
-      key_tag,
-      algorithm,
-      original_ttl,
-      signer,
-      class_,
-      type_covered,
-      begin,
-      end,
-      type2str))
+    RFC1035::ResourceRecord(
+      crrs.name, U(Type::RRSIG), U(crrs.class_), crrs.ttl, {}),
+    rdata(sign(signing_function, key_tag, algorithm, signer, crrs, type2str))
   {
     RFC1035::ResourceRecord::rdata = rdata;
   }
@@ -541,6 +503,19 @@ namespace RFC4034
     auto hp = crypto::make_hash_provider();
     rdata.digest = hp->Hash(t.data(), t.size(), crypto::MDType::SHA384);
 
+    RFC1035::ResourceRecord::rdata = rdata;
+  }
+
+  NSECRR::NSECRR(
+    const RFC1035::Name& owner,
+    RFC1035::Class class_,
+    uint32_t ttl,
+    const RFC1035::Name& next_domain_name,
+    const std::set<Type>& types,
+    const std::function<std::string(const Type&)>& type2str) :
+    RFC1035::ResourceRecord(owner, U(Type::NSEC), U(class_), ttl, {}),
+    rdata(next_domain_name, types, type2str)
+  {
     RFC1035::ResourceRecord::rdata = rdata;
   }
 }

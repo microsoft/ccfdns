@@ -253,6 +253,44 @@ namespace RFC4034 // https://datatracker.ietf.org/doc/html/rfc4034
   class CRRS
   {
   public:
+    CRRS(
+      const RFC1035::Name& name, uint16_t class_, uint16_t type, uint32_t ttl) :
+      name(name),
+      class_(class_),
+      type(type),
+      ttl(ttl)
+    {}
+
+    CRRS(
+      const RFC1035::Name& name,
+      uint16_t class_,
+      uint16_t type,
+      uint32_t ttl,
+      small_vector<uint16_t>&& rdata_) :
+      name(name),
+      class_(class_),
+      type(type),
+      ttl(ttl)
+    {
+      rdata.emplace(std::move(rdata_));
+    }
+
+    CRRS(
+      const RFC1035::Name& name,
+      uint16_t class_,
+      uint16_t type,
+      uint32_t ttl,
+      const small_vector<uint16_t>& rdata_) :
+      name(name),
+      class_(class_),
+      type(type),
+      ttl(ttl)
+    {
+      rdata.insert(rdata_);
+    }
+
+    virtual ~CRRS() = default;
+
     RFC1035::Name name;
     uint16_t class_;
     uint16_t type;
@@ -533,17 +571,11 @@ namespace RFC4034 // https://datatracker.ietf.org/doc/html/rfc4034
   {
   public:
     RRSIGRR(
-      const RFC1035::Name& owner,
-      RFC1035::Class class_,
-      uint32_t ttl,
       const SigningFunction& signing_function,
       uint16_t key_tag,
       Algorithm algorithm,
-      uint32_t original_ttl,
       const RFC1035::Name& signer,
-      uint16_t type_covered,
-      const RFC4034::CanonicalRRSet::iterator& begin,
-      const RFC4034::CanonicalRRSet::iterator& end,
+      const RFC4034::CRRS& crrs,
       const std::function<std::string(const Type&)>& type2str);
 
     virtual ~RRSIGRR() = default;
@@ -595,11 +627,15 @@ namespace RFC4034 // https://datatracker.ietf.org/doc/html/rfc4034
     TypeBitMaps type_bit_maps;
 
     NSEC(
-      RFC1035::Name& next_domain_name,
+      const RFC1035::Name& next_domain_name,
+      const std::set<Type>& types,
       const std::function<std::string(const Type&)>& type2str) :
       next_domain_name(next_domain_name),
       type_bit_maps(type2str)
-    {}
+    {
+      for (const auto& type : types)
+        type_bit_maps.insert(static_cast<uint16_t>(type));
+    }
 
     NSEC(
       const std::string& data,
@@ -639,6 +675,22 @@ namespace RFC4034 // https://datatracker.ietf.org/doc/html/rfc4034
       r += " " + (std::string)type_bit_maps;
       return r;
     }
+  };
+
+  class NSECRR : public RFC1035::ResourceRecord
+  {
+  public:
+    NSECRR(
+      const RFC1035::Name& owner,
+      RFC1035::Class class_,
+      uint32_t ttl,
+      const RFC1035::Name& next_domain_name,
+      const std::set<Type>& types,
+      const std::function<std::string(const Type&)>& type2str);
+
+    virtual ~NSECRR() = default;
+
+    NSEC rdata;
   };
 
   class DS : public RFC1035::RDataFormat
@@ -758,8 +810,7 @@ namespace RFC4034 // https://datatracker.ietf.org/doc/html/rfc4034
     const RFC1035::Name& origin,
     uint16_t class_,
     uint16_t type_,
-    const CanonicalRRSet::iterator& begin,
-    const CanonicalRRSet::iterator& end,
+    const CanonicalRRSet& crrs_to_sign,
     const std::function<std::string(const Type&)>& type2str);
 
   bool verify_rrsigs(
