@@ -5,7 +5,9 @@
 
 #include "adns_types.h"
 #include "base32.h"
+#include "ccf/crypto/sha256_hash.h"
 #include "formatting.h"
+#include "qvl.h"
 #include "rfc1035.h"
 #include "rfc3596.h"
 #include "rfc4034.h"
@@ -19,6 +21,7 @@
 #include <ccf/crypto/md_type.h>
 #include <ccf/ds/logger.h>
 #include <ccf/kv/map.h>
+#include <ccf/node/quote.h>
 #include <ccf/tx.h>
 #include <chrono>
 #include <cstddef>
@@ -1051,10 +1054,13 @@ namespace aDNS
     }
   }
 
-  static bool verify_quote(const ccf::QuoteInfo& quote_info)
+  bool verify_quote(
+    const ccf::QuoteInfo& quote_info, const crypto::Pem& public_key)
   {
-    // TODO
-    return true;
+    ccf::CodeDigest unique_id;
+    crypto::Sha256Hash hash_node_public_key;
+    return QVL::verify_quote(quote_info, unique_id, hash_node_public_key) ==
+      QVL::Result::Verified;
   }
 
   void Resolver::register_service(
@@ -1070,8 +1076,8 @@ namespace aDNS
     if (!name.is_absolute())
       throw std::runtime_error("service name must be absolute");
 
-    if (!verify_quote(quote_info))
-      throw std::runtime_error("quote validation failed");
+    if (!verify_quote(quote_info, public_key))
+      throw std::runtime_error("quote verification failed");
 
     Name abs_name = name;
     if (!name.is_absolute())
@@ -1122,7 +1128,8 @@ namespace aDNS
     const Name& origin, const Name& name, const RFC1035::TXT& txt)
   {
     // Note: does not necessarily have to be installed on the same DNS server;
-    // we can delegate the challenge to someone else, e.g. a non-DNSSEC server.
+    // we can delegate the challenge to someone else, e.g. a non-DNSSEC
+    // server.
 
     // Note: need some strategy for removing tokens periodically.
 

@@ -4,12 +4,13 @@
 #include "base32.h"
 #include "ccf/crypto/key_pair.h"
 #include "formatting.h"
+#include "qvl.h"
 #include "resolver.h"
 #include "rfc1035.h"
 #include "rfc4034.h"
 
 #include <ccf/ds/logger.h>
-
+#include <ccf/node/quote.h>
 #define DOCTEST_CONFIG_IMPLEMENT
 #include <doctest/doctest.h>
 #include <random>
@@ -23,6 +24,18 @@ auto type2str = [](const auto& x) {
   return aDNS::string_from_type(static_cast<aDNS::Type>(x));
 };
 
+namespace QVL
+{
+  Result verify_quote(
+    const ccf::QuoteInfo& quote_info,
+    ccf::CodeDigest& unique_id,
+    crypto::Sha256Hash& hash_node_public_key)
+  {
+    // Disable quote checking in these tests
+    return Result::Verified;
+  }
+}
+
 class TestResolver : public Resolver
 {
 public:
@@ -35,6 +48,7 @@ public:
     std::set<ResourceRecord, RFC4034::CanonicalRROrdering>,
     RFC4034::CanonicalNameOrdering>
     zones;
+  std::set<Name, RFC4034::CanonicalNameOrdering> origins;
 
   std::map<Name, crypto::Pem, RFC4034::CanonicalNameOrdering> key_signing_keys;
   std::map<Name, crypto::Pem, RFC4034::CanonicalNameOrdering> zone_signing_keys;
@@ -45,8 +59,9 @@ public:
     if (!rs.name.is_absolute())
       rs.name += origin;
 
-    LOG_DEBUG_FMT("Add: {}", string_from_resource_record(rs));
+    LOG_DEBUG_FMT("Add: {} to {}", string_from_resource_record(rs), origin);
 
+    origins.insert(origin);
     zones[origin].insert(rs);
     Resolver::on_add(origin, rs);
   }
@@ -105,6 +120,11 @@ public:
             break;
       }
     }
+  }
+
+  virtual bool origin_exists(const Name& origin) const override
+  {
+    return origins.contains(origin);
   }
 
   virtual crypto::Pem get_private_key(
