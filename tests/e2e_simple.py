@@ -168,15 +168,10 @@ def test_basic(network, args):
         name = dns.name.from_text("www.example.com.")
         get_records(host, port, ca, name, "A", keys)
 
+        # We're not authoritative for com., so we don't expect a DS record
         name = dns.name.from_text("example.com.")
         ds_rrs = get_records(host, port, ca, name, "DS", None)
-        assert len(ds_rrs.answer) == 1
-        assert len(ds_rrs.answer[0]) == 1
-        ds_rrs = ds_rrs.answer[0][0]
-        key = keys[origin][1]
-        ds = dns.dnssec.make_ds(origin, key, "SHA384")
-        if ds_rrs.digest != ds.digest:
-            raise Exception("DS record hash mismatch")
+        assert len(ds_rrs.answer) == 0
 
 
 def test_service_reg(network, args):

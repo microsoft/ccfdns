@@ -467,13 +467,22 @@ namespace aDNS
     if (!qname.is_absolute())
       throw std::runtime_error("cannot resolve relative names");
 
+    // Find an origin
+    Name origin;
+    for (size_t i = 0; i < qname.labels.size(); i++)
+    {
+      Name po = Name(std::span(qname.labels).last(i + 1));
+      if (origin_exists(po))
+      {
+        origin = po;
+        break; // Keep walking down the tree?
+      }
+    }
+
     auto& result_set = result.answers;
 
-    Name origin;
-    for (size_t i = 1; i <= qname.labels.size(); i++)
+    if (origin.is_absolute())
     {
-      origin = Name(std::span(qname.labels).last(i));
-
       RFC4034::CanonicalRRSet records =
         find_records(origin, qname, qtype, qclass);
 
@@ -497,52 +506,52 @@ namespace aDNS
         }
 
         result_set += records;
-        break; // Keep walking down the tree?
       }
-    }
 
-    if (result_set.empty())
-    {
-      if (config.use_nsec3)
+      if (result_set.empty())
       {
-        auto name_hash = RFC5155::NSEC3::hash(
-          origin, qname, config.nsec3_hash_iterations, nsec3_salt);
-        std::string nameb32 = base32hex_encode(&name_hash[0], name_hash.size());
-        assert(nameb32.size() <= 63);
-        RFC1035::Name name(nameb32);
-        const RFC1035::Name& suffix = qname;
-        name += suffix;
-        result.authorities +=
-          find_records(origin, name, static_cast<QType>(Type::NSEC3), qclass);
+        if (config.use_nsec3)
+        {
+          auto name_hash = RFC5155::NSEC3::hash(
+            origin, qname, config.nsec3_hash_iterations, nsec3_salt);
+          std::string nameb32 =
+            base32hex_encode(&name_hash[0], name_hash.size());
+          assert(nameb32.size() <= 63);
+          RFC1035::Name name(nameb32);
+          const RFC1035::Name& suffix = qname;
+          name += suffix;
+          result.authorities +=
+            find_records(origin, name, static_cast<QType>(Type::NSEC3), qclass);
+        }
+        else
+          result.authorities +=
+            find_records(origin, qname, static_cast<QType>(Type::NSEC), qclass);
+
+        if (qtype != QType::SOA)
+        {
+          auto soa_records = find_records(origin, origin, QType::SOA, qclass);
+          if (soa_records.size() > 0)
+            result.authorities += *soa_records.begin();
+        }
+
+        result.authorities += find_records(
+          origin,
+          qname,
+          QType::RRSIG,
+          qclass,
+          [&cfg = config, &qtype](const auto& rr) {
+            RFC4034::RRSIG rd(rr.rdata, type2str);
+            return (!cfg.use_nsec3 &&
+                    rd.type_covered == static_cast<uint16_t>(Type::NSEC)) ||
+              (cfg.use_nsec3 &&
+               rd.type_covered == static_cast<uint16_t>(Type::NSEC3)) ||
+              (qtype != QType::SOA &&
+               rd.type_covered == static_cast<uint16_t>(Type::SOA));
+          });
+
+        if (result.response_code == NO_ERROR && result.authorities.empty())
+          result.response_code = NAME_ERROR; // NXDOMAIN
       }
-      else
-        result.authorities +=
-          find_records(origin, qname, static_cast<QType>(Type::NSEC), qclass);
-
-      if (qtype != QType::SOA)
-      {
-        auto soa_records = find_records(origin, origin, QType::SOA, qclass);
-        if (soa_records.size() > 0)
-          result.authorities += *soa_records.begin();
-      }
-
-      result.authorities += find_records(
-        origin,
-        qname,
-        QType::RRSIG,
-        qclass,
-        [&cfg = config, &qtype](const auto& rr) {
-          RFC4034::RRSIG rd(rr.rdata, type2str);
-          return (!cfg.use_nsec3 &&
-                  rd.type_covered == static_cast<uint16_t>(Type::NSEC)) ||
-            (cfg.use_nsec3 &&
-             rd.type_covered == static_cast<uint16_t>(Type::NSEC3)) ||
-            (qtype != QType::SOA &&
-             rd.type_covered == static_cast<uint16_t>(Type::SOA));
-        });
-
-      if (result.response_code == NO_ERROR && result.authorities.empty())
-        result.response_code = NAME_ERROR; // NXDOMAIN
     }
 
     LOG_TRACE_FMT(
@@ -605,7 +614,9 @@ namespace aDNS
     LOG_DEBUG_FMT("ADNS: - {}", string_from_resource_record(dnskey_rr));
     LOG_DEBUG_FMT("ADNS:  - xy={}", ds::to_hex(new_zsk_pk));
 
-    if (!config.use_key_signing_key || key_signing)
+    if (
+      origin_exists(origin.parent()) &&
+      (!config.use_key_signing_key || key_signing))
       add_ds(origin, class_, new_zsk, new_zsk_tag, dnskey_rr.rdata);
 
     on_new_signing_key(
@@ -928,6 +939,21 @@ namespace aDNS
               origin,
               crrs,
               type2str));
+        }
+
+        if (is_authoritative)
+        {
+          ignore_on_add = true;
+          add(
+            origin,
+            RFC5155::NSEC3PARAMRR(
+              origin,
+              static_cast<RFC1035::Class>(c),
+              ttl,
+              config.nsec3_hash_algorithm,
+              0x00,
+              config.nsec3_hash_iterations,
+              nsec3_salt));
         }
       }
       else

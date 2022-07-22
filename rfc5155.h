@@ -152,6 +152,17 @@ namespace RFC5155 // https://datatracker.ietf.org/doc/html/rfc5155
 
     NSEC3PARAM() = default;
 
+    NSEC3PARAM(
+      HashAlgorithm hash_algorithm,
+      uint8_t flags,
+      uint16_t iterations,
+      const small_vector<uint8_t>& salt) :
+      hash_algorithm(hash_algorithm),
+      flags(flags),
+      iterations(iterations),
+      salt(salt)
+    {}
+
     NSEC3PARAM(const std::string& s)
     {
       std::istringstream f(s);
@@ -195,5 +206,20 @@ namespace RFC5155 // https://datatracker.ietf.org/doc/html/rfc5155
       r += " " + (salt.size() > 0 ? ds::to_hex(salt) : "-");
       return r;
     }
+  };
+
+  class NSEC3PARAMRR : public RFC1035::ResourceRecord
+  {
+  public:
+    NSEC3PARAMRR(
+      const RFC1035::Name& owner,
+      RFC1035::Class class_,
+      uint32_t ttl,
+      HashAlgorithm hash_algorithm,
+      uint8_t flags,
+      uint16_t iterations,
+      const small_vector<uint8_t>& salt);
+
+    virtual ~NSEC3PARAMRR() = default;
   };
 }

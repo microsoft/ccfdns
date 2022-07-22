@@ -113,4 +113,20 @@ namespace RFC5155
   //   bool flag = false;
   //   auto sname = name;
   // }
+
+  NSEC3PARAMRR::NSEC3PARAMRR(
+    const RFC1035::Name& owner,
+    RFC1035::Class class_,
+    uint32_t ttl,
+    HashAlgorithm hash_algorithm,
+    uint8_t flags,
+    uint16_t iterations,
+    const small_vector<uint8_t>& salt) :
+    RFC1035::ResourceRecord(
+      owner,
+      static_cast<uint16_t>(Type::NSEC3PARAM),
+      static_cast<uint16_t>(class_),
+      ttl,
+      NSEC3PARAM(hash_algorithm, flags, iterations, salt))
+  {}
 }

@@ -182,6 +182,8 @@ namespace ccfdns
     virtual ~CCFDNS() {}
 
     using Records = ccf::ServiceSet<ResourceRecord>;
+    using Origins = ccf::ServiceSet<RFC1035::Name>;
+    std::string origins_table_name = "public:origins";
 
     void set_endpoint_context(ccf::endpoints::EndpointContext& ctx)
     {
@@ -199,6 +201,10 @@ namespace ccfdns
       {
         throw std::runtime_error("Origin not absolute");
       }
+
+      auto origins = ctx->tx.rw<Origins>(origins_table_name);
+      if (!origins->contains(origin))
+        origins->insert(origin);
 
       auto c = static_cast<aDNS::Class>(rr.class_);
       auto t = static_cast<aDNS::Type>(rr.type);
@@ -340,6 +346,12 @@ namespace ccfdns
         }
         return f(rr);
       });
+    }
+
+    virtual bool origin_exists(const Name& origin) const override
+    {
+      auto origins = ctx->tx.ro<Origins>(origins_table_name);
+      return origins->contains(origin);
     }
 
     virtual crypto::Pem get_private_key(
