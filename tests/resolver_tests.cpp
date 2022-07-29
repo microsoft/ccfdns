@@ -10,7 +10,7 @@
 #include "rfc4034.h"
 
 #include <ccf/ds/logger.h>
-#include <ccf/node/quote.h>
+
 #define DOCTEST_CONFIG_IMPLEMENT
 #include <doctest/doctest.h>
 #include <random>
@@ -26,10 +26,8 @@ auto type2str = [](const auto& x) {
 
 namespace QVL
 {
-  Result verify_quote(
-    const ccf::QuoteInfo& quote_info,
-    ccf::CodeDigest& unique_id,
-    crypto::Sha256Hash& hash_node_public_key)
+  Result verify(
+    const Attestation& attestation, const std::string& public_key_pem)
   {
     // Disable quote checking in these tests
     return Result::Verified;
@@ -59,7 +57,7 @@ public:
     if (!rs.name.is_absolute())
       rs.name += origin;
 
-    LOG_DEBUG_FMT("Add: {} to {}", string_from_resource_record(rs), origin);
+    CCF_APP_DEBUG("Add: {} to {}", string_from_resource_record(rs), origin);
 
     origins.insert(origin);
     zones[origin].insert(rs);
@@ -72,7 +70,7 @@ public:
     if (!rs.name.is_absolute())
       rs.name += origin;
 
-    LOG_DEBUG_FMT("Remove: {}", string_from_resource_record(rs));
+    CCF_APP_DEBUG("Remove: {}", string_from_resource_record(rs));
 
     zones[origin].erase(rs);
   }
@@ -85,7 +83,7 @@ public:
       bool r = rr.type == static_cast<uint16_t>(t) && rr.name == name &&
         rr.class_ == static_cast<uint16_t>(c);
       if (r)
-        LOG_DEBUG_FMT("Remove: {}", string_from_resource_record(rr));
+        CCF_APP_DEBUG("Remove: {}", string_from_resource_record(rr));
       return r;
     });
   }
@@ -97,7 +95,7 @@ public:
       bool r = rr.type == static_cast<uint16_t>(t) &&
         rr.class_ == static_cast<uint16_t>(c);
       if (r)
-        LOG_DEBUG_FMT("Remove: {}", string_from_resource_record(rr));
+        CCF_APP_DEBUG("Remove: {}", string_from_resource_record(rr));
       return r;
     });
   }
@@ -153,15 +151,15 @@ public:
 
   virtual void show(const Name& origin) const
   {
-    LOG_DEBUG_FMT("Current entries at {}:", origin);
+    CCF_APP_DEBUG("Current entries at {}:", origin);
     auto oit = zones.find(origin);
     if (oit != zones.end())
     {
       for (const auto& rr : oit->second)
-        LOG_DEBUG_FMT(" {}", string_from_resource_record(rr));
+        CCF_APP_DEBUG(" {}", string_from_resource_record(rr));
     }
     else
-      LOG_DEBUG_FMT("<empty>");
+      CCF_APP_DEBUG("<empty>");
   }
 };
 
@@ -493,7 +491,7 @@ TEST_CASE("Service registration")
 
   Name service_name("service42.example.com.");
   auto service_key = crypto::make_key_pair(crypto::CurveID::SECP384R1);
-  ccf::QuoteInfo quote_info;
+  QVL::Attestation attestation;
 
   RFC1035::A address("192.168.0.1");
 
@@ -501,7 +499,7 @@ TEST_CASE("Service registration")
     origin,
     service_name,
     address,
-    quote_info,
+    attestation,
     RFC4034::Algorithm::ECDSAP384SHA384,
     service_key->public_key_pem());
 

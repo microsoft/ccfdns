@@ -2,12 +2,29 @@
 // Licensed under the Apache 2.0 License.
 #pragma once
 
-#include <ccf/crypto/hash_provider.h>
-#include <ccf/quote_info.h>
-#include <ccf/service/code_digest.h>
+#include <cstdint>
+#include <vector>
 
 namespace QVL
 {
+  enum class Format : uint8_t
+  {
+    NONE = 0,
+    SGX = 1,
+    AMD = 2
+  };
+
+  struct Attestation
+  {
+    Attestation() = default;
+    Attestation(const Attestation&) = default;
+    Attestation& operator=(const Attestation&) = default;
+
+    Format format = Format::NONE;
+    std::vector<uint8_t> evidence;
+    std::vector<uint8_t> endorsements;
+  };
+
   enum class Result
   {
     Verified = 0,
@@ -16,8 +33,6 @@ namespace QVL
     FailedInvalidQuotedPublicKey,
   };
 
-  Result verify_quote(
-    const ccf::QuoteInfo& quote_info,
-    ccf::CodeDigest& unique_id,
-    crypto::Sha256Hash& hash_node_public_key);
+  Result verify(
+    const Attestation& attestation, const std::string& public_key_pem);
 };

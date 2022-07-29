@@ -5,7 +5,6 @@ import glob
 import http
 
 import time
-import http
 import base64
 import json
 
@@ -59,6 +58,8 @@ def populate_adns_ccf_dev(network, args):
             "ns1.adns.ccf.dev. some-dev.microsoft.com. 4 604800 86400 2419200 0",
         )
         add_record(client, origin, origin, "SOA", rd)
+        rd = dns.rdata.from_text(rdc.IN, rdt.A, "51.143.161.224")
+        add_record(client, origin, origin, "A", rd)
 
         rd = dns.rdata.from_text(rdc.IN, rdt.NS, "ns1.adns.ccf.dev.")
         add_record(client, origin, origin, "NS", rd)
@@ -135,6 +136,6 @@ if __name__ == "__main__":
     targs.nodes = infra.e2e_args.min_nodes(targs, f=0)
     targs.constitution = glob.glob("../tests/constitution/*")
     targs.package = "libccfdns"
-    targs.binary_dir = "/data/cwinter/installed/ccf-http2/bin/"
+    targs.binary_dir = "/data/cwinter/installed/ccf/bin/"
 
     run(targs)

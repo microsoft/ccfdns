@@ -64,7 +64,7 @@ public:
     if (size_ > 0)
     {
       data = new E[size_ * sizeof(E)];
-      for (uint8_t i = 0; i < size_; i++)
+      for (T i = 0; i < size_; i++)
         data[i] = get<E>(bytes, pos);
     }
   }
@@ -77,7 +77,7 @@ public:
     if (size_ > 0)
     {
       data = new E[size_ * sizeof(E)];
-      for (uint8_t i = 0; i < size_; i++)
+      for (T i = 0; i < size_; i++)
         data[i] = get<E>(bytes, pos);
     }
   }
@@ -246,7 +246,7 @@ template <typename T, typename E>
 inline void put_n(
   const small_vector<T, E>& vec, std::vector<uint8_t>& r, size_t n)
 {
-  for (size_t i = 0; i < n; i++)
+  for (T i = 0; i < n; i++)
   {
     r.push_back(vec[i]);
   }

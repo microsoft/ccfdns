@@ -177,7 +177,7 @@ namespace RFC4034
     put(keytag, data_to_sign);
     signer.put(data_to_sign);
 
-    LOG_DEBUG_FMT(
+    CCF_APP_DEBUG(
       "ADNS: SIGN: record set: {} {} {} {}",
       crrs.name,
       crrs.type,
@@ -186,7 +186,7 @@ namespace RFC4034
 
     for (const auto& rd : crrs.rdata)
     {
-      LOG_DEBUG_FMT("ADNS:  - {}", ds::to_hex(rd));
+      CCF_APP_DEBUG("ADNS:  - {}", ds::to_hex(rd));
 
       put(crrs.name, data_to_sign);
       put(crrs.type, data_to_sign);
@@ -369,16 +369,16 @@ namespace RFC4034
   {
     std::vector<std::tuple<crypto::PublicKeyPtr, uint16_t, bool>> pks;
 
-    LOG_DEBUG_FMT("ADNS: VERIFY: Public keys:");
+    CCF_APP_DEBUG("ADNS: VERIFY: Public keys:");
     for (const auto& rr : dnskey_rrset)
     {
       if (rr.type == static_cast<uint16_t>(Type::DNSKEY))
       {
-        LOG_DEBUG_FMT("ADNS:  - {}", aDNS::string_from_resource_record(rr));
+        CCF_APP_DEBUG("ADNS:  - {}", aDNS::string_from_resource_record(rr));
         RFC4034::DNSKEY rdata(rr.rdata);
         small_vector<uint16_t> rdata_bytes = rdata;
         auto tag = keytag(&rdata_bytes[0], rdata_bytes.size());
-        LOG_DEBUG_FMT(
+        CCF_APP_DEBUG(
           "ADNS:    tag: {} x/y: {}", tag, ds::to_hex(rdata.public_key));
         auto pk = crypto::make_public_key(der_from_coord(rdata.public_key));
         pks.push_back(std::make_tuple(pk, tag, rdata.is_zone_key()));
@@ -396,9 +396,9 @@ namespace RFC4034
         rrs.insert(rr);
     }
 
-    LOG_DEBUG_FMT("ADNS: VERIFY: record set:");
+    CCF_APP_DEBUG("ADNS: VERIFY: record set:");
     for (const auto& rr : rrs)
-      LOG_DEBUG_FMT("ADNS:  - {}", aDNS::string_from_resource_record(rr));
+      CCF_APP_DEBUG("ADNS:  - {}", aDNS::string_from_resource_record(rr));
 
     if (rrs.empty())
       throw std::runtime_error("no records to verify");
@@ -421,19 +421,19 @@ namespace RFC4034
         rr.rdata.put(data_to_sign);
       }
 
-      LOG_DEBUG_FMT("ADNS: VERIFY: data={}", ds::to_hex(data_to_sign));
+      CCF_APP_DEBUG("ADNS: VERIFY: data={}", ds::to_hex(data_to_sign));
       auto sig = rrsig_rdata.signature;
-      LOG_DEBUG_FMT("ADNS: VERIFY: r/s sig={}", ds::to_hex(sig));
+      CCF_APP_DEBUG("ADNS: VERIFY: r/s sig={}", ds::to_hex(sig));
       convert_signature_to_asn1(sig);
-      LOG_DEBUG_FMT("ADNS: VERIFY: sig={}", ds::to_hex(sig));
+      CCF_APP_DEBUG("ADNS: VERIFY: sig={}", ds::to_hex(sig));
 
-      LOG_DEBUG_FMT(
+      CCF_APP_DEBUG(
         "ADNS: VERIFY: try rrsig: {}",
         aDNS::string_from_resource_record(rrsig));
 
       for (const auto& [key, tag, zone_key] : pks)
       {
-        LOG_DEBUG_FMT("ADNS: VERIFY: trying key with tag {}", tag);
+        CCF_APP_DEBUG("ADNS: VERIFY: trying key with tag {}", tag);
         if (rrsig_rdata.key_tag == tag && key->verify(data_to_sign, sig))
         {
           return true;

@@ -1,11 +1,12 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the Apache 2.0 License.
 
+#include "qvl.h"
 #include "rfc4034.h"
 
 #include <ccf/crypto/pem.h>
-#include <ccf/quote_info.h>
 #include <cstdint>
+#include <ds/json.h>
 
 namespace ccfdns
 {
@@ -17,21 +18,34 @@ namespace ccfdns
       std::string name;
       std::string address;
 
-      ccf::QuoteInfo quote_info;
+      QVL::Attestation attestation;
 
       RFC4034::Algorithm algorithm = RFC4034::Algorithm::ECDSAP384SHA384;
       crypto::Pem public_key;
     };
     using Out = void;
   };
+}
 
+namespace QVL
+{
+  DECLARE_JSON_ENUM(
+    Format,
+    {{Format::NONE, "NONE"}, {Format::SGX, "SGX"}, {Format::AMD, "AMD"}});
+
+  DECLARE_JSON_TYPE(Attestation);
+  DECLARE_JSON_REQUIRED_FIELDS(Attestation, format, evidence, endorsements);
+}
+
+namespace ccfdns
+{
   DECLARE_JSON_TYPE(RegisterService::In);
   DECLARE_JSON_REQUIRED_FIELDS(
     RegisterService::In,
     origin,
     name,
     address,
-    quote_info,
+    attestation,
     algorithm,
     public_key);
 }

@@ -3,8 +3,9 @@
 
 #include "adns_types.h"
 
+#include "qvl.h"
+
 #include <ccf/crypto/hash_provider.h>
-#include <ccf/quote_info.h>
 #include <openenclave/attestation/attester.h>
 #include <openenclave/attestation/custom_claims.h>
 #include <openenclave/attestation/sgx/evidence.h>
@@ -68,11 +69,11 @@ struct Endorsements
 static constexpr oe_uuid_t oe_quote_format = {OE_FORMAT_UUID_SGX_ECDSA};
 static constexpr auto sgx_report_data_claim_name = OE_CLAIM_SGX_REPORT_DATA;
 
-ccf::QuoteInfo aDNSTypes::ATTEST::generate_quote_info(
+QVL::Attestation aDNS::Types::ATTEST::generate_quote_info(
   const std::vector<uint8_t>& node_public_key_der)
 {
-  ccf::QuoteInfo node_quote_info;
-  node_quote_info.format = ccf::QuoteFormat::oe_sgx_v1;
+  QVL::Attestation attestation;
+  attestation.format = QVL::Format::SGX;
 
   crypto::Sha256Hash h{node_public_key_der};
 
@@ -116,10 +117,9 @@ ccf::QuoteInfo aDNSTypes::ATTEST::generate_quote_info(
       fmt::format("Failed to get evidence: {}", oe_result_str(rc)));
   }
 
-  node_quote_info.quote.assign(
-    evidence.buffer, evidence.buffer + evidence.size);
-  node_quote_info.endorsements.assign(
+  attestation.evidence.assign(evidence.buffer, evidence.buffer + evidence.size);
+  attestation.endorsements.assign(
     endorsements.buffer, endorsements.buffer + endorsements.size);
 
-  return node_quote_info;
+  return attestation;
 }

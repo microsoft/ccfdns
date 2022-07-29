@@ -2,13 +2,14 @@
 // Licensed under the Apache 2.0 License.
 #pragma once
 
+#include "qvl.h"
 #include "rfc1035.h"
 #include "rfc4034.h"
 #include "serialization.h"
 #include "small_vector.h"
 
+#include <ccf/crypto/base64.h>
 #include <ccf/ds/hex.h>
-#include <ccf/quote_info.h>
 
 namespace aDNS::Types
 {
@@ -24,40 +25,50 @@ namespace aDNS::Types
   class ATTEST : public RFC1035::RDataFormat
   {
   public:
-    ccf::QuoteInfo quote_info;
+    QVL::Attestation attestation;
 
-    ATTEST(const ccf::QuoteInfo& quote_info) : quote_info(quote_info) {}
+    ATTEST(const QVL::Attestation& attestation) : attestation(attestation) {}
 
-    ATTEST(const std::string& s)
+    ATTEST(const std::string& data)
     {
-      auto sj = nlohmann::json::parse(s);
-      quote_info = sj.get<ccf::QuoteInfo>();
+      std::stringstream s(data);
+      uint8_t format;
+      s >> format;
+      attestation.format = static_cast<QVL::Format>(format);
+      std::string t;
+      s >> t;
+      attestation.evidence = crypto::raw_from_b64(t);
+      s >> t;
+      attestation.endorsements = crypto::raw_from_b64(t);
     }
 
     ATTEST(const small_vector<uint16_t>& data)
     {
-      auto j = nlohmann::json::parse(&data[0], &data[0] + data.size());
-      quote_info = j.get<ccf::QuoteInfo>();
+      size_t pos = 0;
+      attestation.format = static_cast<QVL::Format>(get<uint8_t>(data, pos));
+      attestation.evidence = get<uint8_t, size_t>(data, pos);
+      attestation.evidence = get<uint8_t, size_t>(data, pos);
     }
 
     virtual ~ATTEST() = default;
 
     virtual operator small_vector<uint16_t>() const override
     {
-      nlohmann::json j = quote_info;
-      auto sj = j.dump();
-      if (sj.size() >= 65535)
-        throw std::runtime_error("quote info too large for rdata");
-      return sj;
+      std::vector<uint8_t> r;
+      put(static_cast<uint8_t>(attestation.format), r);
+      put(attestation.evidence, r);
+      put(attestation.endorsements, r);
+      return small_vector<uint16_t>(r.size(), r.data());
     }
 
     virtual operator std::string() const override
     {
-      nlohmann::json j = quote_info;
-      return j.dump();
+      return std::to_string(static_cast<uint8_t>(attestation.format)) + " " +
+        crypto::b64_from_raw(attestation.evidence) + " " +
+        crypto::b64_from_raw(attestation.endorsements);
     }
 
-    static ccf::QuoteInfo generate_quote_info(
+    static QVL::Attestation generate_quote_info(
       const std::vector<uint8_t>& node_public_key_der);
   };
 

@@ -192,7 +192,7 @@ namespace ccfdns
 
     virtual void add(const Name& origin, const ResourceRecord& rr) override
     {
-      LOG_DEBUG_FMT("CCFDNS: Add: {}", string_from_resource_record(rr));
+      CCF_APP_DEBUG("CCFDNS: Add: {}", string_from_resource_record(rr));
 
       if (!ctx)
         std::runtime_error("missing endpoint context");
@@ -209,7 +209,7 @@ namespace ccfdns
       auto c = static_cast<aDNS::Class>(rr.class_);
       auto t = static_cast<aDNS::Type>(rr.type);
 
-      LOG_TRACE_FMT(
+      CCF_APP_TRACE(
         "CCFDNS: Add {} type {} to {}", rr.name, string_from_type(t), origin);
 
       ResourceRecord rs(rr);
@@ -225,7 +225,7 @@ namespace ccfdns
 
     virtual void remove(const Name& origin, const ResourceRecord& rr)
     {
-      LOG_DEBUG_FMT("CCFDNS: Remove: {}", string_from_resource_record(rr));
+      CCF_APP_DEBUG("CCFDNS: Remove: {}", string_from_resource_record(rr));
 
       if (!ctx)
         std::runtime_error("missing endpoint context");
@@ -238,7 +238,7 @@ namespace ccfdns
       auto c = static_cast<aDNS::Class>(rr.class_);
       auto t = static_cast<aDNS::Type>(rr.type);
 
-      LOG_TRACE_FMT(
+      CCF_APP_TRACE(
         "CCFDNS: Remove {} type {} at {}",
         rr.name,
         string_from_type(t),
@@ -260,7 +260,7 @@ namespace ccfdns
       aDNS::Class c,
       aDNS::Type t) override
     {
-      LOG_DEBUG_FMT(
+      CCF_APP_DEBUG(
         "Remove {} type {} at {}", name, string_from_type(t), origin);
 
       if (!ctx)
@@ -282,7 +282,7 @@ namespace ccfdns
           [origin, t, &aname, &records](const ResourceRecord& rr) {
             if (rr.type == static_cast<uint16_t>(t) && rr.name == aname)
             {
-              LOG_TRACE_FMT(
+              CCF_APP_TRACE(
                 "CCFDNS:  remove {}", string_from_resource_record(rr));
               records->remove(rr);
             }
@@ -294,7 +294,7 @@ namespace ccfdns
     virtual void remove(
       const Name& origin, aDNS::Class c, aDNS::Type t) override
     {
-      LOG_DEBUG_FMT(
+      CCF_APP_DEBUG(
         "CCFDNS: Remove type {} at {}", string_from_type(t), origin);
 
       if (!ctx)
@@ -513,7 +513,7 @@ namespace ccfdns
               ccf::errors::InvalidInput,
               "unsupported HTTP verb; use GET or POST");
           }
-          LOG_INFO_FMT("CCFDNS: query: {}", ds::to_hex(bytes));
+          CCF_APP_INFO("CCFDNS: query: {}", ds::to_hex(bytes));
 
           ccfdns.set_endpoint_context(ctx);
           auto reply = ccfdns.reply(Message(bytes));
@@ -522,7 +522,7 @@ namespace ccfdns
           ctx.rpc_ctx->set_response_header(
             http::headers::CONTENT_TYPE, "application/dns-query");
           std::vector<uint8_t> out = reply;
-          LOG_INFO_FMT("CCFDNS: response: {}", ds::to_hex(out));
+          CCF_APP_INFO("CCFDNS: response: {}", ds::to_hex(out));
 
           ctx.rpc_ctx->set_response_body(out);
           return ccf::make_success();
@@ -552,12 +552,12 @@ namespace ccfdns
             Name(in.origin),
             Name(in.name),
             RFC1035::A(in.address),
-            in.quote_info,
+            in.attestation,
             in.algorithm,
             in.public_key);
 
           ctx.rpc_ctx->set_response_status(HTTP_STATUS_OK);
-          return ccf::make_success();
+          return ccf::make_success(true);
         }
         catch (std::exception& ex)
         {
@@ -571,7 +571,7 @@ namespace ccfdns
         HTTP_POST,
         ccf::json_adapter(register_service),
         ccf::no_auth_required)
-        .set_auto_schema<void, std::vector<uint8_t>>()
+        .set_auto_schema<void, bool>()
         .install();
     }
   };

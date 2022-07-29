@@ -42,8 +42,8 @@ inline std::vector<uint8_t> get_n(
   return r;
 }
 
-template <typename T, typename SIZE_TYPE>
-inline std::vector<T> get(const std::vector<uint8_t>& bytes, size_t& pos)
+template <typename T, typename SIZE_TYPE, typename V = std::vector<uint8_t>>
+inline std::vector<T> get(const V& bytes, size_t& pos)
 {
   SIZE_TYPE sz = get<SIZE_TYPE>(bytes, pos);
   std::vector<T> r((size_t)sz);
@@ -60,6 +60,13 @@ inline void put(const T& x, std::vector<uint8_t>& r)
     uint8_t b = (x >> 8 * (sizeof(T) - 1 - i)) & 0xFF;
     r.push_back(b);
   }
+}
+
+template <>
+inline void put(const std::vector<uint8_t>& x, std::vector<uint8_t>& r)
+{
+  put(x.size(), r);
+  r.insert(r.end(), x.begin(), x.end());
 }
 
 template <typename T>

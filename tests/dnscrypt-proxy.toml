@@ -862,4 +862,5 @@ skip_incompatible = false
   #   stamp = 'sdns://AQcAAAAAAAAAAAAQMi5kbnNjcnlwdC1jZXJ0Lg'
 
   [static.'ccfdns']
-    stamp = 'sdns://AgcAAAAAAAAADjEyNy4wLjAuMTo4MDAwAA4xMjcuMC4wLjE6ODAwMA4vYXBwL2Rucy1xdWVyeQ'
+    # stamp = 'sdns://AgcAAAAAAAAADjEyNy4wLjAuMTo4MDAwAA4xMjcuMC4wLjE6ODAwMA4vYXBwL2Rucy1xdWVyeQ' # 127.0.0.1:8000/app/dns-query
+    stamp = 'sdns://AgcAAAAAAAAACDEwLjEuMC40AA0xMC4xLjAuNDo4MDAwDi9hcHAvZG5zLXF1ZXJ5' # 10.1.0.4:8000/app/dns-query

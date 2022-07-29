@@ -325,13 +325,13 @@ namespace aDNS
         throw std::runtime_error(
           fmt::format("algorithm {} not supported", algorithm));
       auto coords = signing_key->coordinates();
-      LOG_DEBUG_FMT(
+      CCF_APP_DEBUG(
         "ADNS: SIGN: key x/y {}{}", ds::to_hex(coords.x), ds::to_hex(coords.y));
-      LOG_DEBUG_FMT("SIGN: data={}", ds::to_hex(data_to_sign));
+      CCF_APP_DEBUG("SIGN: data={}", ds::to_hex(data_to_sign));
       auto sig = signing_key->sign(data_to_sign, crypto::MDType::SHA384);
-      LOG_DEBUG_FMT("ADNS: SIGN: sig={}", ds::to_hex(sig));
+      CCF_APP_DEBUG("ADNS: SIGN: sig={}", ds::to_hex(sig));
       convert_ec_signature_to_ieee_p1363(sig, signing_key);
-      LOG_DEBUG_FMT("ADNS: SIGN: r/s sig={}", ds::to_hex(sig));
+      CCF_APP_DEBUG("ADNS: SIGN: r/s sig={}", ds::to_hex(sig));
       return sig;
     };
     return r;
@@ -389,7 +389,7 @@ namespace aDNS
       bool have_opt = false;
       if (rr.type == static_cast<uint16_t>(Type::OPT))
       {
-        LOG_DEBUG_FMT("ADNS: EDNS(0): {}", string_from_resource_record(rr));
+        CCF_APP_DEBUG("ADNS: EDNS(0): {}", string_from_resource_record(rr));
         if (have_opt)
         {
           // https://datatracker.ietf.org/doc/html/rfc6891#section-6.1.1
@@ -410,7 +410,7 @@ namespace aDNS
           udp_payload_size,
           (uint32_t)ttl,
           {});
-        LOG_DEBUG_FMT(
+        CCF_APP_DEBUG(
           "ADNS: EDNS(0) reply: {}", string_from_resource_record(opt_reply));
         r.additionals.push_back(opt_reply);
         have_opt = true;
@@ -432,7 +432,7 @@ namespace aDNS
     QClass qclass,
     std::optional<std::function<bool(const ResourceRecord&)>> condition)
   {
-    LOG_DEBUG_FMT(
+    CCF_APP_DEBUG(
       "ADNS: Find: {} {} {} {}",
       origin,
       name,
@@ -444,7 +444,7 @@ namespace aDNS
       qclass,
       qtype,
       [this, &origin, &name, &qclass, &records, &condition](const auto& rr) {
-        LOG_DEBUG_FMT("ADNS:  - {}", string_from_resource_record(rr));
+        CCF_APP_DEBUG("ADNS:  - {}", string_from_resource_record(rr));
         if (rr.name == name && (!condition || (*condition)(rr)))
           records.insert(rr);
         return true;
@@ -557,14 +557,14 @@ namespace aDNS
       }
     }
 
-    LOG_TRACE_FMT(
+    CCF_APP_TRACE(
       "ADNS: Resolve: {} type {} class {}:{}",
       qname,
       string_from_qtype(static_cast<QType>(qtype)),
       string_from_qclass(static_cast<QClass>(qclass)),
       result_set.empty() ? " <nothing>" : "");
     for (const auto& rr : result_set)
-      LOG_TRACE_FMT("ADNS:  - {}", string_from_resource_record(rr));
+      CCF_APP_TRACE("ADNS:  - {}", string_from_resource_record(rr));
 
     return result;
   }
@@ -613,9 +613,9 @@ namespace aDNS
       add_dnskey(origin, class_, new_zsk_pk, key_signing);
     auto new_zsk_tag = get_key_tag(dnskey_rr.rdata);
 
-    LOG_DEBUG_FMT("ADNS: NEW KEY for {}, tag={}:", origin, new_zsk_tag);
-    LOG_DEBUG_FMT("ADNS: - {}", string_from_resource_record(dnskey_rr));
-    LOG_DEBUG_FMT("ADNS:  - xy={}", ds::to_hex(new_zsk_pk));
+    CCF_APP_DEBUG("ADNS: NEW KEY for {}, tag={}:", origin, new_zsk_tag);
+    CCF_APP_DEBUG("ADNS: - {}", string_from_resource_record(dnskey_rr));
+    CCF_APP_DEBUG("ADNS:  - xy={}", ds::to_hex(new_zsk_pk));
 
     if (
       origin_exists(origin.parent()) &&
@@ -765,7 +765,7 @@ namespace aDNS
 
   void Resolver::sign(const Name& origin)
   {
-    LOG_DEBUG_FMT("ADNS: (Re)signing {}", origin);
+    CCF_APP_DEBUG("ADNS: (Re)signing {}", origin);
 
     assert(origin.is_absolute());
 
@@ -788,9 +788,9 @@ namespace aDNS
 
       auto [crecords, names] = order_records(origin, static_cast<QClass>(c));
 
-      LOG_DEBUG_FMT("ADNS: Records to sign at {}:", origin);
+      CCF_APP_DEBUG("ADNS: Records to sign at {}:", origin);
       for (const auto& rr : crecords)
-        LOG_DEBUG_FMT("ADNS:  {}", string_from_resource_record(rr));
+        CCF_APP_DEBUG("ADNS:  {}", string_from_resource_record(rr));
 
       {
         // Remove existing RRSIGs and NSECs
@@ -798,7 +798,7 @@ namespace aDNS
         // noise?
         for (const auto& name : names)
         {
-          LOG_DEBUG_FMT("ADNS: Remove {}", name);
+          CCF_APP_DEBUG("ADNS: Remove {}", name);
           remove(origin, name, c, Type::RRSIG);
           remove(origin, name, c, Type::NSEC);
           remove(origin, c, Type::NSEC3);
@@ -820,7 +820,7 @@ namespace aDNS
         {
           next++;
           if (next->ttl != ttl)
-            LOG_INFO_FMT(
+            CCF_APP_INFO(
               "ADNS: warning: TTL mismatch in record set for {}", name);
         }
 
@@ -899,10 +899,10 @@ namespace aDNS
         for (auto it = hashed_names_map.begin(); it != hashed_names_map.end();
              it++)
         {
-          LOG_DEBUG_FMT("ADNS:  - {}: ", ds::to_hex(it->first));
+          CCF_APP_DEBUG("ADNS:  - {}: ", ds::to_hex(it->first));
           for (size_t i = 0; i < it->second.size(); i++)
           {
-            LOG_DEBUG_FMT(
+            CCF_APP_DEBUG(
               "ADNS:    - {}", string_from_resource_record(*(it->second)[i]));
           }
         }
@@ -1025,7 +1025,7 @@ namespace aDNS
     }
 
     auto t = static_cast<Type>(rr.type);
-    LOG_DEBUG_FMT(
+    CCF_APP_DEBUG(
       "ADNS: {}: on_add: {}", origin, string_from_resource_record(rr));
     switch (t)
     {
@@ -1047,48 +1047,42 @@ namespace aDNS
         break;
       default:
       {
-        LOG_DEBUG_FMT(
+        CCF_APP_DEBUG(
           "ADNS: Ignoring update to {} record", string_from_type(t));
         break;
       }
     }
   }
 
-  bool verify_quote(
-    const ccf::QuoteInfo& quote_info, const crypto::Pem& public_key)
-  {
-    ccf::CodeDigest unique_id;
-    crypto::Sha256Hash hash_node_public_key;
-    return QVL::verify_quote(quote_info, unique_id, hash_node_public_key) ==
-      QVL::Result::Verified;
-  }
-
   void Resolver::register_service(
     const Name& origin,
     const Name& name,
     const RFC1035::A& address,
-    const ccf::QuoteInfo& quote_info,
+    const QVL::Attestation& attestation,
     RFC4034::Algorithm algorithm,
     const crypto::Pem& public_key)
   {
-    LOG_DEBUG_FMT("ADNS: Register {} in {}", name, origin);
+    CCF_APP_DEBUG("ADNS: Register {} in {}", name, origin);
 
     if (!name.is_absolute())
       throw std::runtime_error("service name must be absolute");
 
-    if (!verify_quote(quote_info, public_key))
+    if (verify(attestation, public_key.str()) != QVL::Result::Verified)
       throw std::runtime_error("quote verification failed");
 
     Name abs_name = name;
     if (!name.is_absolute())
       abs_name += origin;
 
-    RFC4034::CanonicalRRSet records =
-      find_records(origin, abs_name, QType::TLSKEY, QClass::IN);
+    // RFC4034::CanonicalRRSet records =
+    //   find_records(origin, abs_name, QType::TLSKEY, QClass::IN);
 
-    if (!records.empty())
-      throw std::runtime_error(
-        fmt::format("name already exists in {}", origin));
+    // if (!records.empty())
+    //   throw std::runtime_error(
+    //     fmt::format("name already exists in {}", origin));
+
+    remove(origin, name, Class::IN, Type::TLSKEY);
+    remove(origin, name, Class::IN, Type::ATTEST);
 
     // publish ATTEST, TLSKEY
     ResourceRecord att_rr(
@@ -1096,7 +1090,7 @@ namespace aDNS
       static_cast<uint16_t>(aDNS::Types::Type::ATTEST),
       static_cast<uint16_t>(Class::IN),
       config.default_ttl,
-      aDNS::Types::ATTEST(quote_info));
+      aDNS::Types::ATTEST(attestation));
     ignore_on_add = true;
     add(origin, att_rr);
 
