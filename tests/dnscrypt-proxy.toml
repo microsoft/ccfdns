@@ -378,7 +378,7 @@ cache = false
 
 ## Cache size
 
-cache_size = 4096
+cache_size = 0
 
 
 ## Minimum TTL for cached entries

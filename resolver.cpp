@@ -1054,6 +1054,44 @@ namespace aDNS
     }
   }
 
+  void Resolver::on_remove(const Name& origin, const ResourceRecord& rr)
+  {
+    if (ignore_on_remove)
+    {
+      ignore_on_remove = false;
+      return;
+    }
+
+    // TODO: for_each may not see the name of the removed record, which leaves
+    // stale RRSIG/NSEC/NSEC3 entries.
+
+    auto t = static_cast<Type>(rr.type);
+    CCF_APP_DEBUG(
+      "ADNS: {}: on_remove: {}", origin, string_from_resource_record(rr));
+    switch (t)
+    {
+      case Type::A:
+      case Type::NS:
+      case Type::CNAME:
+      case Type::SOA:
+      case Type::MX:
+      case Type::TXT:
+      case Type::AAAA:
+      case Type::DS:
+      case Type::DNSKEY:
+      case Type::ATTEST:
+      case Type::TLSKEY:
+        sign(origin);
+        break;
+      default:
+      {
+        CCF_APP_DEBUG(
+          "ADNS: Ignoring update to {} record", string_from_type(t));
+        break;
+      }
+    }
+  }
+
   void Resolver::register_service(
     const Name& origin,
     const Name& name,

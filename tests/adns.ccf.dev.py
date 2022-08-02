@@ -36,8 +36,8 @@ def add_record(client, origin, name, stype, rdata_obj):
                 "name": name,
                 "type": int(rdt.from_text(stype)),
                 "class_": int(rdc.IN),
-                "ttl": 0 if stype == "SOA" else 68400,
-                "rdata": base64.urlsafe_b64encode(rdata_obj.to_wire()).decode(),
+                "ttl": 0 if stype == "SOA" else 86400,
+                "rdata": base64.b64encode(rdata_obj.to_wire()).decode(),
             },
         },
     )
@@ -85,7 +85,9 @@ def populate_adns_ccf_dev(network, args):
         add_record(client, origin, "cwinter", "A", rd)
 
         rd = dns.rdata.from_text(rdc.IN, rdt.TXT, "some text")
+        print(rd.to_wire())
         add_record(client, origin, "cwinter", "TXT", rd)
+        # b'\x04some\x04text'
 
 
 def run(args):

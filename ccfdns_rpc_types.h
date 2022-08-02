@@ -1,15 +1,28 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the Apache 2.0 License.
+#pragma once
 
+#include "ccfdns_json.h"
 #include "qvl.h"
+#include "rfc1035.h"
 #include "rfc4034.h"
 
 #include <ccf/crypto/pem.h>
+#include <ccf/ds/json.h>
 #include <cstdint>
-#include <ds/json.h>
 
 namespace ccfdns
 {
+
+  struct AddRecord
+  {
+    struct In
+    {
+      RFC1035::Name origin;
+      RFC1035::ResourceRecord record;
+    };
+  };
+
   struct RegisterService
   {
     struct In
@@ -39,6 +52,9 @@ namespace QVL
 
 namespace ccfdns
 {
+  DECLARE_JSON_TYPE(AddRecord::In)
+  DECLARE_JSON_REQUIRED_FIELDS(AddRecord::In, origin, record)
+
   DECLARE_JSON_TYPE(RegisterService::In);
   DECLARE_JSON_REQUIRED_FIELDS(
     RegisterService::In,

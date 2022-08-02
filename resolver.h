@@ -154,6 +154,8 @@ namespace aDNS
 
     virtual void on_add(const Name& origin, const ResourceRecord& rr);
 
+    virtual void on_remove(const Name& origin, const ResourceRecord& rr);
+
     virtual void add(const Name& origin, const ResourceRecord& rr) = 0;
 
     virtual void remove(
@@ -187,6 +189,7 @@ namespace aDNS
   protected:
     Configuration config;
     bool ignore_on_add = false;
+    bool ignore_on_remove = false;
     small_vector<uint8_t> nsec3_salt;
 
     typedef std::set<Name, RFC4034::CanonicalNameOrdering> Names;
