@@ -76,60 +76,6 @@ namespace aDNS
     {"IN", Class::IN},
   };
 
-  static inline Type get_supported_type(uint16_t t)
-  {
-    auto mit = supported_types.find(t);
-    if (mit == supported_types.end())
-      throw std::runtime_error(fmt::format("unsupported type {}", t));
-    return mit->second;
-  };
-
-  static inline bool is_supported_type(uint16_t t)
-  {
-    return supported_types.find(t) != supported_types.end();
-  }
-
-  static inline QType get_supported_qtype(uint16_t t)
-  {
-    auto mit = supported_qtypes.find(t);
-    if (mit == supported_qtypes.end())
-      return static_cast<QType>(get_supported_type(t));
-    return mit->second;
-  };
-
-  static inline bool is_supported_qtype(uint16_t t)
-  {
-    return supported_qtypes.find(t) != supported_qtypes.end() ||
-      is_supported_type(t);
-  }
-
-  static inline Class get_supported_class(uint16_t t)
-  {
-    auto mit = supported_classes.find(t);
-    if (mit == supported_classes.end())
-      throw std::runtime_error("unsupported class");
-    return mit->second;
-  };
-
-  static inline bool is_supported_class(uint16_t t)
-  {
-    return supported_classes.find(t) != supported_classes.end();
-  }
-
-  static inline QClass get_supported_qclass(uint16_t t)
-  {
-    auto mit = supported_qclasses.find(t);
-    if (mit == supported_qclasses.end())
-      return static_cast<QClass>(get_supported_class(t));
-    return mit->second;
-  };
-
-  static inline bool is_supported_qclass(uint16_t t)
-  {
-    return supported_qclasses.find(t) != supported_qclasses.end() ||
-      is_supported_class(t);
-  }
-
   Type type_from_string(const std::string& type_string)
   {
 #define TFSF(RFC) \
@@ -353,75 +299,94 @@ namespace aDNS
 
   Message Resolver::reply(const Message& msg)
   {
-    Message r;
+    try
+    {
+      Message r;
 
+      r.header.id = msg.header.id;
+      r.header.qr = true;
+      r.header.opcode = msg.header.opcode;
+      r.header.aa = true;
+      r.header.tc = false;
+      r.header.rd = false;
+      r.header.ra = false;
+      r.header.rcode = ResponseCode::NO_ERROR;
+
+      for (const auto& q : msg.questions)
+      {
+        auto resolution = resolve(
+          q.qname,
+          static_cast<aDNS::QType>(q.qtype),
+          static_cast<aDNS::QClass>(q.qclass));
+
+        r.header.rcode = resolution.response_code;
+
+        r.questions.push_back(q);
+
+        r.answers.insert(
+          r.answers.end(),
+          resolution.answers.begin(),
+          resolution.answers.end());
+
+        r.authorities.insert(
+          r.authorities.end(),
+          resolution.authorities.begin(),
+          resolution.authorities.end());
+      }
+
+      for (const auto& rr : msg.additionals)
+      {
+        bool have_opt = false;
+        if (rr.type == static_cast<uint16_t>(Type::OPT))
+        {
+          CCF_APP_DEBUG("ADNS: EDNS(0): {}", string_from_resource_record(rr));
+          if (have_opt)
+          {
+            // https://datatracker.ietf.org/doc/html/rfc6891#section-6.1.1
+            r.header.rcode = ResponseCode::FORMAT;
+            break;
+          }
+
+          RFC6891::TTL ttl(rr.ttl);
+          ttl.version = 0;
+          ttl.dnssec_ok = true;
+          ttl.extended_rcode = 0;
+          ttl.z = 0;
+
+          uint16_t udp_payload_size = 4096;
+          ResourceRecord opt_reply(
+            Name("."),
+            static_cast<uint16_t>(Type::OPT),
+            udp_payload_size,
+            (uint32_t)ttl,
+            {});
+          CCF_APP_DEBUG(
+            "ADNS: EDNS(0) reply: {}", string_from_resource_record(opt_reply));
+          r.additionals.push_back(opt_reply);
+          have_opt = true;
+        }
+      }
+
+      r.header.qdcount = r.questions.size();
+      r.header.ancount = r.answers.size();
+      r.header.nscount = r.authorities.size();
+      r.header.arcount = r.additionals.size();
+
+      return r;
+    }
+    catch (std::exception& ex)
+    {
+      CCF_APP_DEBUG("ADNS: Exception: {}", ex.what());
+    }
+    catch (...)
+    {
+      CCF_APP_DEBUG("ADNS: Unknown exception");
+    }
+
+    Message r;
     r.header.id = msg.header.id;
     r.header.qr = true;
-    r.header.opcode = msg.header.opcode;
-    r.header.aa = true;
-    r.header.tc = false;
-    r.header.rd = false;
-    r.header.ra = false;
-    r.header.rcode = ResponseCode::NO_ERROR;
-
-    for (const auto& q : msg.questions)
-    {
-      auto resolution = resolve(
-        q.qname,
-        get_supported_qtype(static_cast<uint16_t>(q.qtype)),
-        get_supported_qclass(static_cast<uint16_t>(q.qclass)));
-
-      r.header.rcode = resolution.response_code;
-
-      r.questions.push_back(q);
-
-      r.answers.insert(
-        r.answers.end(), resolution.answers.begin(), resolution.answers.end());
-
-      r.authorities.insert(
-        r.authorities.end(),
-        resolution.authorities.begin(),
-        resolution.authorities.end());
-    }
-
-    for (const auto& rr : msg.additionals)
-    {
-      bool have_opt = false;
-      if (rr.type == static_cast<uint16_t>(Type::OPT))
-      {
-        CCF_APP_DEBUG("ADNS: EDNS(0): {}", string_from_resource_record(rr));
-        if (have_opt)
-        {
-          // https://datatracker.ietf.org/doc/html/rfc6891#section-6.1.1
-          r.header.rcode = ResponseCode::FORMAT;
-          break;
-        }
-
-        RFC6891::TTL ttl(rr.ttl);
-        ttl.version = 0;
-        ttl.dnssec_ok = true;
-        ttl.extended_rcode = 0;
-        ttl.z = 0;
-
-        uint16_t udp_payload_size = 4096;
-        ResourceRecord opt_reply(
-          Name("."),
-          static_cast<uint16_t>(Type::OPT),
-          udp_payload_size,
-          (uint32_t)ttl,
-          {});
-        CCF_APP_DEBUG(
-          "ADNS: EDNS(0) reply: {}", string_from_resource_record(opt_reply));
-        r.additionals.push_back(opt_reply);
-        have_opt = true;
-      }
-    }
-
-    r.header.qdcount = r.questions.size();
-    r.header.ancount = r.answers.size();
-    r.header.nscount = r.authorities.size();
-    r.header.arcount = r.additionals.size();
-
+    r.header.rcode = SERVER_FAILURE;
     return r;
   }
 
@@ -456,13 +421,6 @@ namespace aDNS
     const Name& qname, QType qtype, QClass qclass)
   {
     Resolution result;
-
-    if (
-      !is_supported_qtype(static_cast<uint16_t>(qtype)) ||
-      !is_supported_qclass(static_cast<uint16_t>(qclass)))
-    {
-      throw std::runtime_error("unsupported question type or class");
-    }
 
     if (qtype == QType::ASTERISK || qclass == QClass::ASTERISK)
       return {ResponseCode::NOT_IMPLEMENTED, {}, {}};

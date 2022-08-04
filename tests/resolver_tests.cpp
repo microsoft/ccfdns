@@ -59,7 +59,7 @@ public:
 
     CCF_APP_DEBUG("Add: {} to {}", string_from_resource_record(rs), origin);
 
-    origins.insert(origin);
+    origins.insert(origin.lowered());
     zones[origin].insert(rs);
     Resolver::on_add(origin, rs);
   }
@@ -122,7 +122,7 @@ public:
 
   virtual bool origin_exists(const Name& origin) const override
   {
-    return origins.contains(origin);
+    return origins.contains(origin.lowered());
   }
 
   virtual crypto::Pem get_private_key(
@@ -350,6 +350,32 @@ TEST_CASE("Basic lookups")
     REQUIRE(response.answers.size() > 0);
     NS ns(response.answers[0].rdata);
     REQUIRE(Name(response.answers[0].rdata) == Name("ns1.elsewhere.com."));
+  }
+
+  REQUIRE_NOTHROW(s.add(
+    origin,
+    RR(
+      Name("_acme-challenge.service42") + origin,
+      aDNS::Type::TXT,
+      aDNS::Class::IN,
+      RFC1035::TXT("some text"))));
+
+  {
+    RFC1035::Message msg =
+      mk_question("_AcMe-CHAllENGE.sErvice42.eXaMple.com.", aDNS::QType::TXT);
+    auto response = s.reply(msg);
+    REQUIRE(response.answers.size() > 0);
+    TXT txt(response.answers[0].rdata);
+    REQUIRE(txt.txt == "some text");
+  }
+
+  {
+    // Test unsupported type
+    RFC1035::Message msg =
+      mk_question("www.example.com.", static_cast<aDNS::QType>(9999));
+    auto response = s.reply(msg);
+    REQUIRE(response.answers.size() == 0);
+    REQUIRE(response.header.rcode == ResponseCode::NO_ERROR);
   }
 
   s.show(origin);

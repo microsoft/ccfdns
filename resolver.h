@@ -148,7 +148,7 @@ namespace aDNS
       QType qtype,
       const std::function<bool(const ResourceRecord&)>& f) const = 0;
 
-    virtual bool origin_exists(const Name& origin) const = 0;
+    virtual bool origin_exists(const Name& name) const = 0;
 
     virtual void sign(const Name& origin);
 

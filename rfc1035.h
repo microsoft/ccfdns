@@ -290,6 +290,11 @@ namespace RFC1035 // https://datatracker.ietf.org/doc/html/rfc1035
       return labels.size() == 1 && labels.back().empty();
     }
 
+    bool empty() const
+    {
+      return labels.empty();
+    }
+
     /// Converts the name to its string representation.
     operator std::string() const
     {

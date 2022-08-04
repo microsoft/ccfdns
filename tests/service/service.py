@@ -142,9 +142,8 @@ def get_acme_certificate(
 
         requests.post(url, headers=headers, json=data, verify=False)
 
-        # time.sleep(1)
-
         acme_client.answer_challenge(challenge, response)
+
         finalized_order = acme_client.poll_and_finalize(order)
         certificate = finalized_order.fullchain_pem
     except Exception as ex:
@@ -154,7 +153,7 @@ def get_acme_certificate(
         raise ex
     finally:
         if data:
-            # Remove the challenge TXT record
+            // Remove the challenge TXT record
             url = adns_base_url + "/remove"
             requests.post(url, headers=headers, json=data, verify=False)
 
@@ -193,8 +192,8 @@ def main(argv):
         format=serialization.PublicFormat.SubjectPublicKeyInfo,
     ).decode("ascii")
 
-    acme_directory_url = "https://127.0.0.1:1024/dir"
-    # acme_directory_url = "https://acme-staging-v02.api.letsencrypt.org/directory"
+    # acme_directory_url = "https://127.0.0.1:1024/dir"
+    acme_directory_url = "https://acme-staging-v02.api.letsencrypt.org/directory"
     adns_base_url = "https://adns.ccf.dev:8000/app"
     email = "cwinter@microsoft.com"
     service_name = "service42.adns.ccf.dev"

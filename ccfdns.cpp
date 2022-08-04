@@ -242,10 +242,11 @@ namespace ccfdns
       });
     }
 
-    virtual bool origin_exists(const Name& origin) const override
+    virtual bool origin_exists(const Name& name) const override
     {
+      CCF_APP_DEBUG("Looking for origin: {}", name);
       auto origins = ctx->tx.ro<Origins>(origins_table_name);
-      return origins->contains(origin);
+      return origins->contains(name.lowered());
     }
 
     virtual crypto::Pem get_private_key(
