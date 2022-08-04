@@ -13,9 +13,14 @@ import dns.query
 import dns.rdatatype as rdt
 import dns.rdataclass as rdc
 
-# from sevsnpmeasure import guest
-# from sevsnpmeasure import vcpu_types
-# from sevsnpmeasure.sev_mode import SevMode
+import platform
+
+is_abc = platform.processor() == ""
+
+if is_abc:
+    from sevsnpmeasure import guest
+    from sevsnpmeasure import vcpu_types
+    from sevsnpmeasure.sev_mode import SevMode
 
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization
@@ -26,9 +31,6 @@ from cryptography.hazmat.primitives import hashes
 
 headers = {"content-type": "application/json"}
 origin = "adns.ccf.dev."
-adns_service_cert = (
-    "/data/cwinter/ccfdns/build/workspace/adns.ccf.dev_common/service_cert.pem"
-)
 
 
 def find_dns01_challenge(acme_order):
@@ -48,17 +50,19 @@ def get_attestation():
     initrd_path = ""
     cmdline_str = ""
     vcpus_num = 1
-    ld = bytes()
-    # ld = guest.calc_launch_digest(
-    #     SevMode.SEV_SNP,
-    #     vcpus_num,
-    #     vcpu_types.CPU_SIGS["EPYC-v4"],
-    #     ovmf_path,
-    #     kernel_path,
-    #     initrd_path,
-    #     cmdline_str,
-    # )
-    print("Calculated measurement:", ld.hex())
+    if is_abc:
+        ld = guest.calc_launch_digest(
+            SevMode.SEV_SNP,
+            vcpus_num,
+            vcpu_types.CPU_SIGS["EPYC-v4"],
+            ovmf_path,
+            kernel_path,
+            initrd_path,
+            cmdline_str,
+        )
+    else:
+        ld = bytes()
+    print("Measurement:", ld.hex())
     return ld, bytes()
 
 
@@ -153,7 +157,7 @@ def get_acme_certificate(
         raise ex
     finally:
         if data:
-            // Remove the challenge TXT record
+            # Remove the challenge TXT record
             url = adns_base_url + "/remove"
             requests.post(url, headers=headers, json=data, verify=False)
 
@@ -212,6 +216,8 @@ def main(argv):
     certificate = get_acme_certificate(
         service_name, csr, account_private_key, acme_directory_url, adns_base_url, email
     )
+    with open("app_cert.pem", "w", encoding="ascii") as cf:
+        cf.write(certificate)
     print(f"Certificate: {certificate}")
 
 
