@@ -1,13 +1,23 @@
 import os
+import sys
 import json
 import subprocess
 import time
 import socket
 import urllib
+import urllib.request
 import ssl
-import infra.e2e_args
+import datetime
 
 from loguru import logger as LOG
+
+from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ec
+
+from cryptography import x509
+from cryptography.x509.oid import NameOID
+from cryptography.hazmat.primitives import hashes
 
 
 def wait_for_port_to_listen(host, port, timeout=10):
@@ -52,6 +62,25 @@ def get_pebble_ca_certs(mgmt_address):
     return ca, intermediate
 
 
+def generate_self_signed_cert(key, subject):
+    subject = issuer = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, subject)])
+
+    return (
+        x509.CertificateBuilder()
+        .subject_name(subject)
+        .issuer_name(issuer)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(datetime.datetime.utcnow())
+        .not_valid_after(datetime.datetime.utcnow() + datetime.timedelta(days=90))
+        .add_extension(
+            x509.SubjectAlternativeName([x509.DNSName("localhost")]),
+            critical=False,
+        )
+        .sign(key, hashes.SHA256())
+    )
+
+
 def run_pebble(args):
     binary_filename = "/opt/pebble/pebble_linux-amd64"
     config_filename = "pebble.config.json"
@@ -61,11 +90,9 @@ def run_pebble(args):
     error_filename = "pebble.err"
     listen_address = "127.0.0.1:1024"
     mgmt_address = "127.0.0.1:1025"
-    dns_address = "ns1.adns.ccf.dev"
+    dns_address = "ns1.adns.ccf.dev:53"
     tls_port = 1026
     http_port = 1027
-
-    network_name = "my-network.ccf.dev"
 
     if not os.path.exists(binary_filename) or not os.path.exists(binary_filename):
         raise Exception("pebble not found; run playbooks to install it")
@@ -85,26 +112,22 @@ def run_pebble(args):
     with open(config_filename, "w", encoding="ascii") as f:
         json.dump(config, f)
 
-    ca_key, _ = infra.crypto.generate_ec_keypair("secp384r1")
+    ca_key = ec.generate_private_key(ec.SECP384R1(), default_backend())
+
     with open(ca_key_filename, "w", encoding="ascii") as f:
-        f.write(ca_key)
+        f.write(
+            ca_key.private_bytes(
+                encoding=serialization.Encoding.PEM,
+                format=serialization.PrivateFormat.PKCS8,
+                encryption_algorithm=serialization.NoEncryption(),
+            ).decode("ascii")
+        )
 
-    ca_cert = infra.crypto.generate_cert(ca_key, ca=True, cn="Pebble Test CA")
+    ca_cert = generate_self_signed_cert(ca_key, "Pebble Test CA")
     with open(ca_cert_filename, "w", encoding="ascii") as f:
-        f.write(ca_cert)
-
-    args.acme = {
-        "configurations": {
-            "pebble": {
-                "ca_certs": [ca_cert],
-                "directory_url": f"https://{listen_address}/dir",
-                "service_dns_name": network_name,
-                "contact": ["mailto:nobody@example.com"],
-                "terms_of_service_agreed": True,
-                "challenge_type": "dns-01",
-            }
-        }
-    }
+        f.write(
+            ca_cert.public_bytes(encoding=serialization.Encoding.PEM).decode("ascii")
+        )
 
     exception_seen = None
     pebble_proc = None
@@ -144,7 +167,4 @@ def run_pebble(args):
 
 
 if __name__ == "__main__":
-    args = infra.e2e_args.cli_args()
-    args.package = "samples/apps/logging/liblogging"
-    args.nodes = infra.e2e_args.min_nodes(args, f=1)
-    run_pebble(args)
+    run_pebble(sys.argv)
