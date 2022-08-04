@@ -5,10 +5,9 @@ from azure.mgmt.resource import ResourceManagementClient
 from azure.mgmt.resource.resources.models import DeploymentMode
 from azure.identity import DefaultAzureCredential
 
-# subscription_id = os.environ["AZURE_SUBSCRIPTION_ID"]
-subscription_id = "12f7cac3-b4c7-45c0-ba6a-f6cf93e8d730"
-resource_group = "ADNS"
-identity = "/subscriptions/12f7cac3-b4c7-45c0-ba6a-f6cf93e8d730/resourcegroups/ADNS/providers/Microsoft.ManagedIdentity/userAssignedIdentities/cwinter-adns"
+subscription_id = os.getenv("AZURE_SUBSCRIPTION_ID")
+resource_group = os.getenv("AZURE_RESOURCE_GROUP")
+identity = os.getenv("AZURE_MIDENTITY")
 
 credentials = DefaultAzureCredential(managed_identity_client_id=identity)
 
