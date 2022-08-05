@@ -71,17 +71,22 @@ endfunction()
 add_unit_test(resolver_tests ../tests/resolver_tests.cpp resolver.cpp rfc4034.cpp rfc5155.cpp base32.cpp)
 
 
-# add_ccf_app(service SRCS tests/service.cpp)
-# if (VERBOSE_LOGGING)
-#   target_compile_definitions(service.enclave PRIVATE -DVERBOSE_LOGGING)
-#   target_compile_definitions(service.virtual PRIVATE -DVERBOSE_LOGGING)
-# endif()
-# if (CMAKE_BUILD_TYPE MATCHES Debug)
-#   target_compile_definitions(service.virtual PRIVATE QUOTE_VERIFICATION_FAILURE_OK)
-#   target_compile_options(service.virtual PRIVATE -fstandalone-debug)
-# endif()
+set(CCF_EXTRA_INCLUDES "${ccf_DIR}/../include/ccf/_private" "${ccf_DIR}/../include/3rdparty/nghttp2/includes")
+add_ccf_app(ccf_demo_service SRCS tests/ccf_demo_service.cpp qvl.cpp)
+target_include_directories(ccf_demo_service.enclave PRIVATE ${CCF_EXTRA_INCLUDES})
+target_include_directories(ccf_demo_service.virtual PRIVATE ${CCF_EXTRA_INCLUDES})
+if (VERBOSE_LOGGING)
+  target_compile_definitions(ccf_demo_service.enclave PRIVATE -DVERBOSE_LOGGING)
+  target_compile_definitions(ccf_demo_service.virtual PRIVATE -DVERBOSE_LOGGING)
+endif()
+if (CMAKE_BUILD_TYPE MATCHES Debug)
+  target_compile_definitions(ccf_demo_service.virtual PRIVATE QUOTE_VERIFICATION_FAILURE_OK)
+  target_compile_options(ccf_demo_service.virtual PRIVATE -fstandalone-debug)
+endif()
 
-# sign_app_library(
-#   service.enclave ${CMAKE_CURRENT_SOURCE_DIR}/oe_sign.conf
-#   ${CMAKE_CURRENT_BINARY_DIR}/signing_key.pem
-# )
+sign_app_library(
+  ccf_demo_service.enclave ${CMAKE_CURRENT_SOURCE_DIR}/oe_sign.conf
+  ${CMAKE_CURRENT_BINARY_DIR}/signing_key.pem
+)
+
+add_test(NAME ccf_demo_service COMMAND python ../tests/ccf_demo_service_test.py -b "${ccf_DIR}/../bin")

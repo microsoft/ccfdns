@@ -215,11 +215,11 @@ def run(args):
 
 if __name__ == "__main__":
 
-    def add(parser):
+    def cliparser(parser):
         """Add parser"""
         parser.description = "DNS tests"
 
-    targs = infra.e2e_args.cli_args(add)
+    targs = infra.e2e_args.cli_args(cliparser)
 
     targs.nodes = infra.e2e_args.min_nodes(targs, f=0)
     targs.constitution = glob.glob("../tests/constitution/*")

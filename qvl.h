@@ -19,6 +19,14 @@ namespace QVL
     Attestation() = default;
     Attestation(const Attestation&) = default;
     Attestation& operator=(const Attestation&) = default;
+    Attestation(
+      const Format& format,
+      const std::vector<uint8_t>& evidence,
+      const std::vector<uint8_t>& endorsements) :
+      format(format),
+      evidence(evidence),
+      endorsements(endorsements)
+    {}
 
     Format format = Format::NONE;
     std::vector<uint8_t> evidence;
@@ -35,4 +43,6 @@ namespace QVL
 
   Result verify(
     const Attestation& attestation, const std::string& public_key_pem);
+
+  Attestation get_oe_attestation(const std::vector<uint8_t>& extra);
 };
