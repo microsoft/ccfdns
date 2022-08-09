@@ -242,6 +242,15 @@ TEST_CASE("Name ordering")
     REQUIRE(names[i] == shuffled[i]);
 }
 
+const ResourceRecord& first(
+  const std::vector<ResourceRecord>& rrs, aDNS::Type type)
+{
+  for (const auto& rr : rrs)
+    if (rr.type == static_cast<uint16_t>(type))
+      return rr;
+  throw std::runtime_error("expected resource record not found");
+}
+
 TEST_CASE("Basic lookups")
 {
   TestResolver s;
@@ -364,9 +373,31 @@ TEST_CASE("Basic lookups")
     RFC1035::Message msg =
       mk_question("_AcMe-CHAllENGE.sErvice42.eXaMple.com.", aDNS::QType::TXT);
     auto response = s.reply(msg);
-    REQUIRE(response.answers.size() > 0);
-    TXT txt(response.answers[0].rdata);
-    REQUIRE(txt.txt == "some text");
+    REQUIRE(response.answers.size() >= 2);
+    auto rr = first(response.answers, aDNS::Type::TXT);
+    TXT txt(rr.rdata);
+    REQUIRE(txt.strings.size() == 1);
+    REQUIRE(txt.strings[0] == small_vector<uint8_t>{"some text"});
+  }
+
+  REQUIRE_NOTHROW(s.add(
+    origin,
+    RR(
+      Name("AnOther") + origin,
+      aDNS::Type::TXT,
+      aDNS::Class::IN,
+      RFC1035::TXT(std::vector<std::string>{"some", "texts"}))));
+
+  {
+    RFC1035::Message msg =
+      mk_question("AnOther.eXaMple.com.", aDNS::QType::TXT);
+    auto response = s.reply(msg);
+    REQUIRE(response.answers.size() >= 2);
+    auto rr = first(response.answers, aDNS::Type::TXT);
+    TXT txt(rr.rdata);
+    REQUIRE(txt.strings.size() == 2);
+    REQUIRE(txt.strings[0] == small_vector<uint8_t>("some"));
+    REQUIRE(txt.strings[1] == small_vector<uint8_t>("texts"));
   }
 
   {

@@ -1063,28 +1063,61 @@ namespace RFC1035
   class TXT : public RDataFormat
   {
   public:
-    std::string txt;
+    std::vector<small_vector<uint8_t>> strings;
 
     TXT(const std::string& data)
     {
-      txt = data;
+      for (size_t i = 0; i < data.size();)
+      {
+        size_t j = std::min(i + 255, data.size());
+        strings.push_back(data.substr(i, j - i));
+        i = j;
+      }
+    }
+
+    TXT(const std::vector<std::string>& data)
+    {
+      for (const auto& s : data)
+      {
+        if (s.size() > 255)
+          throw std::runtime_error("excessive string length");
+        strings.push_back(s);
+      }
     }
 
     TXT(const small_vector<uint16_t>& data)
     {
-      txt = {&data[0], &data[0] + data.size()};
+      size_t pos = 0;
+      while (pos < data.size())
+      {
+        strings.push_back(small_vector<uint8_t>(data, pos));
+      }
     }
 
     virtual operator small_vector<uint16_t>() const override
     {
-      if (txt.size() > 65535)
-        throw std::runtime_error("excessive string length");
-      return small_vector<uint16_t>((uint16_t)txt.size(), (uint8_t*)txt.data());
+      std::vector<uint8_t> r;
+      for (const auto& s : strings)
+      {
+        if (s.size() > 255)
+          throw std::runtime_error("excessive string length");
+        s.put(r);
+        if (r.size() > 65535)
+          throw std::runtime_error("excessive TXT rdata length");
+      }
+      return small_vector<uint16_t>((uint16_t)r.size(), (uint8_t*)r.data());
     }
 
     virtual operator std::string() const override
     {
-      return txt;
+      std::string r;
+      for (const auto& s : strings)
+      {
+        if (!r.empty())
+          r += " ";
+        r += std::string("\"") + ds::to_hex(s) + "\"";
+      }
+      return r;
     }
 
     virtual ~TXT() = default;
