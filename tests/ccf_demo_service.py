@@ -44,6 +44,7 @@ def run(args):
                 "contact": ["mailto:nobody@example.com"],
                 "terms_of_service_agreed": True,
                 "challenge_type": "dns-01",
+                "challenge_server_interface": "",
             }
         }
     }

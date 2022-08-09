@@ -337,12 +337,7 @@ namespace ccfdns
     {
       std::string r, error_reason;
       if (!http::get_query_value(parsed_query, name, r, error_reason))
-      {
-        throw ccf::make_error(
-          HTTP_STATUS_BAD_REQUEST,
-          ccf::errors::InvalidQueryParameterValue,
-          fmt::format("Value '{}' missing.", name));
-      }
+        throw std::runtime_error(fmt::format("parameter '{}' missing.", name));
       return r;
     }
 
@@ -435,7 +430,7 @@ namespace ccfdns
 
           ctx.rpc_ctx->set_response_status(HTTP_STATUS_OK);
           ctx.rpc_ctx->set_response_header(
-            http::headers::CONTENT_TYPE, "application/dns-query");
+            http::headers::CONTENT_TYPE, "application/dns-message");
           std::vector<uint8_t> out = reply;
           CCF_APP_INFO("CCFDNS: response: {}", ds::to_hex(out));
 

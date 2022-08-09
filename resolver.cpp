@@ -372,6 +372,8 @@ namespace aDNS
       r.header.nscount = r.authorities.size();
       r.header.arcount = r.additionals.size();
 
+      r.header.aa = r.header.ancount > 0;
+
       return r;
     }
     catch (std::exception& ex)

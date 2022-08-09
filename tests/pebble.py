@@ -129,20 +129,51 @@ def run_pebble(args):
             ca_cert.public_bytes(encoding=serialization.Encoding.PEM).decode("ascii")
         )
 
+    wait_forever(
+        output_filename,
+        error_filename,
+        binary_filename,
+        config_filename,
+        dns_address,
+        listen_address,
+        mgmt_address,
+    )
+
+
+def run_proc(binary_filename, config_filename, dns_address, listen_address, out, err):
+    return start_pebble_process(
+        binary_filename,
+        config_filename,
+        dns_address,
+        listen_address,
+        out,
+        err,
+        env={"PEBBLE_WFE_NONCEREJECT": "0", "PEBBLE_VA_NOSLEEP": "1"},
+    )
+
+
+def wait_forever(
+    output_filename,
+    error_filename,
+    binary_filename,
+    config_filename,
+    dns_address,
+    listen_address,
+    mgmt_address,
+):
     exception_seen = None
     pebble_proc = None
 
     try:
         with open(output_filename, "w", encoding="ascii") as out:
             with open(error_filename, "w", encoding="ascii") as err:
-                pebble_proc = start_pebble_process(
+                pebble_proc = run_proc(
                     binary_filename,
                     config_filename,
                     dns_address,
                     listen_address,
                     out,
                     err,
-                    env={"PEBBLE_WFE_NONCEREJECT": "0", "PEBBLE_VA_NOSLEEP": "1"},
                 )
 
                 a_certs = get_pebble_ca_certs(mgmt_address)
