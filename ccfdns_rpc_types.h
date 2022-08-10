@@ -23,6 +23,8 @@ namespace ccfdns
     };
   };
 
+  typedef AddRecord RemoveRecord;
+
   struct RegisterService
   {
     struct In

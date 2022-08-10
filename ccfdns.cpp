@@ -373,7 +373,7 @@ namespace ccfdns
       auto remove = [this](auto& ctx, nlohmann::json&& params) {
         try
         {
-          const auto in = params.get<AddRecord::In>();
+          const auto in = params.get<RemoveRecord::In>();
           ccfdns.set_endpoint_context(ctx);
           ccfdns.remove(in.origin, in.record);
           return ccf::make_success();
