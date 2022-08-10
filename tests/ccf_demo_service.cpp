@@ -71,6 +71,8 @@ namespace service
 
 namespace ccfapp
 {
+  static bool registered = false;
+
   struct Configuration
   {
     std::string interface_id = "endorsed_interface";
@@ -94,6 +96,8 @@ namespace ccfapp
 
   void register_app(ccfapp::AbstractNodeContext& context)
   {
+    CCF_APP_DEBUG("DEMO: submitting app registration");
+
     auto acmess = context.get_subsystem<ccf::ACMESubsystemInterface>();
 
     ccfdns::RegisterService::In regopts;
@@ -158,6 +162,15 @@ namespace ccfapp
 
     void add_challenge_response(const std::string& token)
     {
+      if (!registered)
+      {
+        // Can't do this during make_user_endpoints as the node isn't
+        // initialized yet. ACME challenges happen early on, just after node
+        // initialization, so we use that as a trigger.
+        register_app(context);
+        registered = true;
+      }
+
       auto rit = token_responses.find(token);
       if (rit == token_responses.end())
       {
