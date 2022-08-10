@@ -366,7 +366,7 @@ namespace ccfdns
 
       make_endpoint(
         "/add", HTTP_POST, ccf::json_adapter(add), ccf::no_auth_required)
-        .set_auto_schema<AddRecord::In, void>()
+        .set_auto_schema<AddRecord::In, AddRecord::Out>()
         .install();
 
       auto remove = [this](auto& ctx, nlohmann::json&& params) {
@@ -386,7 +386,33 @@ namespace ccfdns
 
       make_endpoint(
         "/remove", HTTP_POST, ccf::json_adapter(remove), ccf::no_auth_required)
-        .set_auto_schema<AddRecord::In, void>()
+        .set_auto_schema<RemoveRecord::In, RemoveRecord::Out>()
+        .install();
+
+      auto remove_all = [this](auto& ctx, nlohmann::json&& params) {
+        try
+        {
+          const auto in = params.get<RemoveAll::In>();
+          ccfdns.set_endpoint_context(ctx);
+          ccfdns.remove(
+            in.origin,
+            static_cast<aDNS::Class>(in.class_),
+            static_cast<aDNS::Type>(in.type));
+          return ccf::make_success();
+        }
+        catch (std::exception& ex)
+        {
+          return ccf::make_error(
+            HTTP_STATUS_BAD_REQUEST, ccf::errors::InternalError, ex.what());
+        }
+      };
+
+      make_endpoint(
+        "/remove_all",
+        HTTP_POST,
+        ccf::json_adapter(remove_all),
+        ccf::no_auth_required)
+        .set_auto_schema<RemoveAll::In, RemoveAll::Out>()
         .install();
 
       auto dns_query = [this](auto& ctx) {

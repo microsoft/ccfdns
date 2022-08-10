@@ -168,6 +168,28 @@ namespace ccfapp
       {
         auto acmess = context.get_subsystem<ccf::ACMESubsystemInterface>();
         const auto& response = rit->second;
+        auto challenge_name =
+          aDNS::Name("_acme-challenge." + configuration.service_name);
+
+        // First clear old records, just in case.
+        ccfdns::RemoveAll::In remopts;
+        remopts.origin = configuration.origin;
+        remopts.name = challenge_name;
+        remopts.class_ = static_cast<uint16_t>(aDNS::Class::IN);
+        remopts.type = static_cast<uint16_t>(aDNS::Type::TXT);
+
+        auto rembody =
+          serdes::pack(nlohmann::json(remopts), serdes::Pack::Text);
+
+        acmess->make_http_request(
+          "POST",
+          configuration.adns_base_url + "/remove_all",
+          {{"content-type", "application/json"}},
+          rembody,
+          [](
+            const enum http_status&,
+            const http::HeaderMap&,
+            const std::vector<uint8_t>&) { return true; });
 
         CCF_APP_TRACE("ACME: response for token '{}' is '{}'", token, response);
 
@@ -182,7 +204,7 @@ namespace ccfapp
         ccfdns::AddRecord::In addopts;
         addopts.origin = configuration.origin;
         addopts.record = RFC1035::ResourceRecord(
-          RFC1035::Name("_acme-challenge." + configuration.service_name),
+          challenge_name,
           static_cast<uint16_t>(aDNS::Type::TXT),
           static_cast<uint16_t>(aDNS::Class::IN),
           0,
