@@ -9,6 +9,7 @@
 #include "rfc4034.h"
 #include "rfc5155.h"
 #include "rfc6891.h"
+#include "rfc7671.h"
 
 #include <ccf/crypto/pem.h>
 #include <functional>
@@ -42,6 +43,7 @@ namespace aDNS
     DS = static_cast<uint16_t>(RFC4034::Type::DS),
     NSEC3 = static_cast<uint16_t>(RFC5155::Type::NSEC3),
     NSEC3PARAM = static_cast<uint16_t>(RFC5155::Type::NSEC3PARAM),
+    TLSA = static_cast<uint16_t>(RFC7671::Type::TLSA),
     OPT = static_cast<uint16_t>(RFC6891::Type::OPT),
     TLSKEY = static_cast<uint16_t>(aDNS::Types::Type::TLSKEY),
     ATTEST = static_cast<uint16_t>(aDNS::Types::Type::ATTEST),
@@ -62,6 +64,7 @@ namespace aDNS
     DS = static_cast<uint16_t>(RFC4034::Type::DS),
     NSEC3 = static_cast<uint16_t>(RFC5155::Type::NSEC3),
     NSEC3PARAM = static_cast<uint16_t>(RFC5155::Type::NSEC3PARAM),
+    TLSA = static_cast<uint16_t>(RFC7671::Type::TLSA),
     OPT = static_cast<uint16_t>(RFC6891::Type::OPT),
     TLSKEY = static_cast<uint16_t>(aDNS::Types::Type::TLSKEY),
     ATTEST = static_cast<uint16_t>(aDNS::Types::Type::ATTEST),

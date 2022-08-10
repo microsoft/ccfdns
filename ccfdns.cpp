@@ -25,7 +25,6 @@
 #include <nlohmann/json.hpp>
 #include <odata_error.h>
 #include <optional>
-#include <quote_info.h>
 #include <stdexcept>
 
 using namespace aDNS;

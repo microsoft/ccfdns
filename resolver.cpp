@@ -13,6 +13,7 @@
 #include "rfc4034.h"
 #include "rfc5155.h"
 #include "rfc6891.h"
+#include "rfc7671.h"
 #include "small_vector.h"
 
 #include <ccf/crypto/entropy.h>
@@ -58,6 +59,8 @@ namespace aDNS
     {static_cast<uint16_t>(RFC5155::Type::NSEC3), Type::NSEC3},
     {static_cast<uint16_t>(RFC5155::Type::NSEC3PARAM), Type::NSEC3PARAM},
 
+    {static_cast<uint16_t>(RFC7671::Type::TLSA), Type::TLSA},
+
     {static_cast<uint16_t>(aDNS::Types::Type::TLSKEY), Type::TLSKEY},
     {static_cast<uint16_t>(aDNS::Types::Type::ATTEST), Type::ATTEST},
   };
@@ -92,6 +95,7 @@ namespace aDNS
     TFSF(RFC4034);
     TFSF(RFC6891);
     TFSF(RFC5155);
+    TFSF(RFC7671);
     TFSF(aDNS::Types);
 
     throw std::runtime_error(
@@ -112,6 +116,7 @@ namespace aDNS
     SFTF(RFC4034);
     SFTF(RFC6891);
     SFTF(RFC5155);
+    SFTF(RFC7671);
     SFTF(aDNS::Types);
 
     // https://datatracker.ietf.org/doc/html/rfc3597#section-5
@@ -200,6 +205,8 @@ namespace aDNS
       case Type::NSEC3PARAM: return std::make_shared<RFC5155::NSEC3PARAM>(rdata); break;
 
       case Type::OPT: return std::make_shared<RFC6891::OPT>(rdata); break;
+
+      case Type::TLSA: return std::make_shared<RFC7671::TLSA>(rdata); break;
 
       case Type::TLSKEY: return std::make_shared<aDNS::Types::TLSKEY>(rdata); break;
       case Type::ATTEST: return std::make_shared<aDNS::Types::ATTEST>(rdata); break;
