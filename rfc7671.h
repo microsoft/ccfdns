@@ -23,7 +23,7 @@ namespace RFC7671
     PKIX_TA = 0,
     PKIX_EE = 1,
     DANE_TA = 2,
-    DANE__EE = 3,
+    DANE_EE = 3,
     PRIV_CERT = 255
   };
 
@@ -47,7 +47,18 @@ namespace RFC7671
     CertificateUsage certificate_usage;
     Selector selector;
     MatchingType matching_type;
-    std::vector<uint8_t> certificate_association_data;
+    small_vector<uint16_t> certificate_association_data;
+
+    TLSA(
+      CertificateUsage certificate_usage,
+      Selector selector,
+      MatchingType matching_type,
+      const small_vector<uint16_t>& certificate_association_data) :
+      certificate_usage(certificate_usage),
+      selector(selector),
+      matching_type(matching_type),
+      certificate_association_data(certificate_association_data)
+    {}
 
     TLSA(const std::string& data)
     {
@@ -65,9 +76,9 @@ namespace RFC7671
       if (t > 0xFF)
         throw std::runtime_error("invalid matching_type in TLSA rdata");
       matching_type = static_cast<MatchingType>(t);
-      std::string signature_b64;
-      s >> signature_b64;
-      certificate_association_data = crypto::raw_from_b64(signature_b64);
+      std::string cad_hex;
+      s >> cad_hex;
+      certificate_association_data = small_vector<uint16_t>::from_hex(cad_hex);
     }
 
     TLSA(const small_vector<uint16_t>& data)
@@ -80,7 +91,7 @@ namespace RFC7671
       selector = static_cast<Selector>(get<uint8_t>(data, pos));
       matching_type = static_cast<MatchingType>(get<uint8_t>(data, pos));
       certificate_association_data =
-        std::vector<uint8_t>(&data[pos], &data[pos] + data.size() - pos);
+        small_vector<uint16_t>(data.size() - pos, &data[pos]);
     }
 
     virtual ~TLSA() = default;

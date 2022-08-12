@@ -5,107 +5,56 @@
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
 
 #include "../ccfdns_rpc_types.h"
+#include "adns_acme_challenge_handler.h"
 
 #include <ccf/_private/http/http_builder.h>
 #include <ccf/_private/http/http_parser.h>
 #include <ccf/app_interface.h>
 #include <ccf/common_auth_policies.h>
 #include <ccf/crypto/base64.h>
-#include <ccf/crypto/sha256.h>
+#include <ccf/crypto/verifier.h>
 #include <ccf/ds/logger.h>
 #include <ccf/http_query.h>
 #include <ccf/http_status.h>
 #include <ccf/json_handler.h>
 #include <ccf/node/acme_subsystem_interface.h>
-#include <ccf/serdes.h>
-#include <ccf/service/acme_client_config.h>
+#include <ccf/node/node_configuration_interface.h>
 #include <stdexcept>
 #include <thread>
 
-namespace service
-{
-  class Handlers : public ccf::UserEndpointRegistry
-  {
-  protected:
-    std::string get_param(
-      const http::ParsedQuery& parsed_query, const std::string& name)
-    {
-      std::string r, error_reason;
-      if (!http::get_query_value(parsed_query, name, r, error_reason))
-      {
-        throw ccf::make_error(
-          HTTP_STATUS_BAD_REQUEST,
-          ccf::errors::InvalidQueryParameterValue,
-          fmt::format("Value '{}' missing.", name));
-      }
-      return r;
-    }
-
-  public:
-    Handlers(ccfapp::AbstractNodeContext& context) :
-      ccf::UserEndpointRegistry(context)
-    {
-      openapi_info.title = "Attested Test Service";
-      openapi_info.description =
-        "This application is a test service, attested via aDNS.";
-      openapi_info.document_version = "0.0.0";
-
-      auto poke = [this](auto& ctx, nlohmann::json&& params) {
-        try
-        {
-          return ccf::make_success();
-        }
-        catch (std::exception& ex)
-        {
-          return ccf::make_error(
-            HTTP_STATUS_BAD_REQUEST, ccf::errors::InternalError, ex.what());
-        }
-      };
-
-      make_endpoint(
-        "/poke", HTTP_POST, ccf::json_adapter(poke), ccf::no_auth_required)
-        .install();
-    }
-  };
-}
-
 namespace ccfapp
 {
-  static bool registered = false;
-
   struct Configuration
   {
     std::string interface_id = "endorsed_interface";
-    std::string acme_config_name = "my_acme_config";
     std::string adns_base_url = "https://adns.ccf.dev:8000/app";
     std::string origin = "adns.ccf.dev.";
     std::string service_name = "service43.adns.ccf.dev.";
     std::string ip = "51.143.161.224";
+    uint16_t default_port = 443;
   } configuration;
 
-  std::vector<std::string> ca_certs(ccfapp::AbstractNodeContext& context)
-  {
-    auto acmess = context.get_subsystem<ccf::ACMESubsystemInterface>();
-    const auto& acmecfg = acmess->config(configuration.acme_config_name);
-    if (acmecfg)
-    {
-      return (*acmecfg)->ca_certs;
-    }
-    return {};
-  }
+  std::vector<std::string> ca_certs;
 
-  void register_app(ccfapp::AbstractNodeContext& context)
+  void register_service(
+    ccfapp::AbstractNodeContext& context,
+    const std::string& protocol,
+    uint16_t port)
   {
     CCF_APP_DEBUG("DEMO: submitting app registration");
 
     auto acmess = context.get_subsystem<ccf::ACMESubsystemInterface>();
+    auto public_key_pem =
+      crypto::public_key_pem_from_cert(acmess->network_cert().raw());
 
     ccfdns::RegisterService::In regopts;
     regopts.origin = configuration.origin;
     regopts.name = configuration.service_name;
     regopts.address = configuration.ip;
+    regopts.protocol = protocol;
+    regopts.port = port;
     regopts.algorithm = RFC4034::Algorithm::ECDSAP384SHA384;
-    regopts.public_key = acmess->node_public_key();
+    regopts.public_key = public_key_pem;
     regopts.attestation = QVL::get_oe_attestation(
       crypto::make_public_key(regopts.public_key)->public_key_der());
 
@@ -138,228 +87,96 @@ namespace ccfapp
         CCF_APP_TRACE("DEMO: App registered (status={})", http_status);
         return true;
       },
-      ca_certs(context));
+      ca_certs);
   }
+}
 
-  class ADNSChallengeHandler : public ccf::ACMEChallengeHandler
+namespace service
+{
+  class Handlers : public ccf::UserEndpointRegistry
   {
   public:
-    ADNSChallengeHandler(ccfapp::AbstractNodeContext& context) :
-      ccf::ACMEChallengeHandler(),
-      context(context)
-    {}
-    virtual ~ADNSChallengeHandler() = default;
-
-    enum class ChallengeStatus
+    Handlers(ccfapp::AbstractNodeContext& context) :
+      ccf::UserEndpointRegistry(context)
     {
-      TXT_RR_REQUESTED = 0,
-      TXT_RR_ADDED
-    };
+      openapi_info.title = "Attested Test Service";
+      openapi_info.description =
+        "This application is a test service, attested via aDNS.";
+      openapi_info.document_version = "0.0.0";
 
-    ccfapp::AbstractNodeContext& context;
-    std::map<std::string, ChallengeStatus> challenges;
-    std::map<std::string, aDNS::ResourceRecord> challenge_rrs;
+      auto poke = [this](auto& ctx, nlohmann::json&& params) {
+        try
+        {
+          return ccf::make_success();
+        }
+        catch (std::exception& ex)
+        {
+          return ccf::make_error(
+            HTTP_STATUS_BAD_REQUEST, ccf::errors::InternalError, ex.what());
+        }
+      };
 
-    void add_challenge_response(const std::string& token)
-    {
-      if (!registered)
-      {
-        // Can't do this during make_user_endpoints as the node isn't
-        // initialized yet. ACME challenges happen early on, just after node
-        // initialization, so we use that as a trigger.
-        register_app(context);
-        registered = true;
-      }
-
-      auto rit = token_responses.find(token);
-      if (rit == token_responses.end())
-      {
-        throw std::runtime_error(
-          fmt::format("challenge response for token '{}' not found", token));
-      }
-      else
-      {
-        auto acmess = context.get_subsystem<ccf::ACMESubsystemInterface>();
-        const auto& response = rit->second;
-        auto challenge_name =
-          aDNS::Name("_acme-challenge." + configuration.service_name);
-
-        // First clear old records, just in case.
-        ccfdns::RemoveAll::In remopts;
-        remopts.origin = configuration.origin;
-        remopts.name = challenge_name;
-        remopts.class_ = static_cast<uint16_t>(aDNS::Class::IN);
-        remopts.type = static_cast<uint16_t>(aDNS::Type::TXT);
-
-        auto rembody =
-          serdes::pack(nlohmann::json(remopts), serdes::Pack::Text);
-
-        acmess->make_http_request(
-          "POST",
-          configuration.adns_base_url + "/remove_all",
-          {{"content-type", "application/json"}},
-          rembody,
-          [](
-            const enum http_status&,
-            const http::HeaderMap&,
-            const std::vector<uint8_t>&) { return true; });
-
-        CCF_APP_TRACE("ACME: response for token '{}' is '{}'", token, response);
-
-        auto key_authorization = token + "." + response;
-        auto digest = crypto::sha256(
-          (uint8_t*)key_authorization.data(), key_authorization.size());
-        auto digest_b64 = crypto::b64url_from_raw(
-          (uint8_t*)digest.data(), digest.size(), false);
-        CCF_APP_TRACE(
-          "ACME: b64_digest for token '{}' is '{}'", token, digest_b64);
-
-        ccfdns::AddRecord::In addopts;
-        addopts.origin = configuration.origin;
-        addopts.record = RFC1035::ResourceRecord(
-          challenge_name,
-          static_cast<uint16_t>(aDNS::Type::TXT),
-          static_cast<uint16_t>(aDNS::Class::IN),
-          0,
-          RFC1035::TXT(digest_b64));
-
-        auto body = serdes::pack(nlohmann::json(addopts), serdes::Pack::Text);
-        challenge_rrs[token] = addopts.record;
-
-        acmess->make_http_request(
-          "POST",
-          configuration.adns_base_url + "/add",
-          {{"content-type", "application/json"}},
-          body,
-          [this, token](
-            const enum http_status& http_status,
-            const http::HeaderMap& headers,
-            const std::vector<uint8_t>& reply_body) {
-            if (
-              http_status != HTTP_STATUS_OK &&
-              http_status != HTTP_STATUS_NO_CONTENT)
-            {
-              std::string tmp = {
-                reply_body.data(), reply_body.data() + reply_body.size()};
-              CCF_APP_DEBUG(
-                "ACME: TXT entry add request for '{}' failed with status={} "
-                "and body={}",
-                token,
-                http_status,
-                tmp);
-              return false;
-            }
-            CCF_APP_TRACE(
-              "ACME: TXT entry for '{}' added (status={})", token, http_status);
-            challenges[token] = ChallengeStatus::TXT_RR_ADDED;
-            return true;
-          },
-          ca_certs(context));
-
-        CCF_APP_DEBUG("ACME: Add request submitted for {}", token);
-      }
+      make_endpoint(
+        "/poke", HTTP_POST, ccf::json_adapter(poke), ccf::no_auth_required)
+        .install();
     }
 
-    virtual bool ready(const std::string& token) override
+    virtual void init_handlers() override
     {
-      auto cit = challenges.find(token);
-      if (cit == challenges.end())
-      {
-        auto rit = token_responses.find(token);
-        if (rit == token_responses.end())
-        {
-          throw std::runtime_error(
-            fmt::format("challenge response for token '{}' not found", token));
-        }
-        else
-        {
-          auto response = rit->second;
-          add_challenge_response(token);
-          challenges[token] = ChallengeStatus::TXT_RR_REQUESTED;
-        }
-      }
+      ccf::UserEndpointRegistry::init_handlers();
+
+      auto interface_id = ccfapp::configuration.interface_id;
+      auto nci = context.get_subsystem<ccf::NodeConfigurationInterface>();
+      auto ncs = nci->get();
+      auto iit = ncs.node_config.network.rpc_interfaces.find(interface_id);
+      if (iit == ncs.node_config.network.rpc_interfaces.end())
+        CCF_APP_FAIL(
+          "Interface '{}' not found; cannot register service", interface_id);
       else
       {
-        CCF_APP_DEBUG("ACME: status={}", cit->second);
-        switch (cit->second)
-        {
-          case ChallengeStatus::TXT_RR_REQUESTED:
-            break;
-          case ChallengeStatus::TXT_RR_ADDED:
-            return true;
-            break;
-          default:
-            throw std::runtime_error("unknown challenge status");
-        }
-      }
+        std::string acme_config_name;
+        auto endo = iit->second.endorsement;
+        if (endo->authority == ccf::Authority::ACME && endo->acme_configuration)
+          acme_config_name = *endo->acme_configuration;
+        if (acme_config_name.empty())
+          CCF_APP_FAIL("Empty ACME configuration; cannot register service");
 
-      return false;
-    }
-
-    virtual void remove(const std::string& token) override
-    {
-      auto rrit = challenge_rrs.find(token);
-      if (rrit != challenge_rrs.end())
-      {
         auto acmess = context.get_subsystem<ccf::ACMESubsystemInterface>();
+        const auto& acmecfg = acmess->config(acme_config_name);
+        if (acmecfg)
+          ccfapp::ca_certs = (*acmecfg)->ca_certs;
 
-        ccfdns::RemoveRecord::In remopts;
-        remopts.origin = configuration.origin;
-        remopts.record = rrit->second;
+        acmess->install_challenge_handler(
+          ccfapp::configuration.interface_id,
+          std::make_shared<ccfapp::ADNSChallengeHandler>(
+            context,
+            ccfapp::configuration.adns_base_url,
+            ccfapp::configuration.origin,
+            ccfapp::configuration.service_name,
+            ccfapp::ca_certs));
 
-        auto body = serdes::pack(nlohmann::json(remopts), serdes::Pack::Text);
-
-        acmess->make_http_request(
-          "POST",
-          configuration.adns_base_url + "/remove",
-          {{"content-type", "application/json"}},
-          body,
-          [this, token](
-            const enum http_status& http_status,
-            const http::HeaderMap& headers,
-            const std::vector<uint8_t>& reply_body) {
-            if (
-              http_status != HTTP_STATUS_OK &&
-              http_status != HTTP_STATUS_NO_CONTENT)
-            {
-              std::string tmp = {
-                reply_body.data(), reply_body.data() + reply_body.size()};
-              CCF_APP_DEBUG(
-                "ACME: TXT entry remove request for '{}' failed with status={} "
-                "and body={}",
-                token,
-                http_status,
-                tmp);
-              return false;
-            }
-            CCF_APP_TRACE(
-              "ACME: TXT entry for '{}' removed (status={})",
-              token,
-              http_status);
-            return true;
-          },
-          ca_certs(context));
+        auto protocol = iit->second.protocol;
+        if (protocol.empty())
+          protocol = "tcp";
+        uint16_t port = ccfapp::configuration.default_port;
+        const auto& address = iit->second.bind_address;
+        auto cpos = address.find(':');
+        if (cpos != std::string::npos)
+          port = atoi(&address[cpos + 1]);
+        ccfapp::register_service(context, protocol, port);
       }
-
-      token_responses.erase(token);
-      challenges.erase(token);
     }
   };
+}
 
+namespace ccfapp
+{
   std::unique_ptr<ccf::endpoints::EndpointRegistry> make_user_endpoints(
     ccfapp::AbstractNodeContext& context)
   {
     logger::config::level() = logger::TRACE;
 
     auto endpoint_registry = std::make_unique<service::Handlers>(context);
-
-    auto acme_subsystem = context.get_subsystem<ccf::ACMESubsystemInterface>();
-    if (acme_subsystem)
-    {
-      acme_subsystem->install_challenge_handler(
-        configuration.interface_id,
-        std::make_shared<ADNSChallengeHandler>(context));
-    }
 
     return endpoint_registry;
   }

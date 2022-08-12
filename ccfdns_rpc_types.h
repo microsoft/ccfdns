@@ -46,6 +46,8 @@ namespace ccfdns
       std::string origin;
       std::string name;
       std::string address;
+      uint16_t port;
+      std::string protocol;
 
       QVL::Attestation attestation;
 
@@ -80,6 +82,8 @@ namespace ccfdns
     origin,
     name,
     address,
+    port,
+    protocol,
     attestation,
     algorithm,
     public_key);

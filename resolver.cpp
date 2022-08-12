@@ -24,15 +24,19 @@
 #include <ccf/kv/map.h>
 #include <ccf/node/quote.h>
 #include <ccf/tx.h>
+#include <cctype>
 #include <chrono>
 #include <cstddef>
 #include <map>
 #include <memory>
 #include <openssl/ec.h>
 #include <openssl/ecdsa.h>
+#include <openssl/ossl_typ.h>
+#include <openssl/x509.h>
 #include <set>
 #include <sstream>
 #include <stdexcept>
+#include <string>
 #include <unordered_set>
 
 using namespace RFC1035;
@@ -1010,6 +1014,7 @@ namespace aDNS
       case Type::DNSKEY:
       case Type::ATTEST:
       case Type::TLSKEY:
+      case Type::TLSA:
         sign(origin);
         break;
       default:
@@ -1048,6 +1053,7 @@ namespace aDNS
       case Type::DNSKEY:
       case Type::ATTEST:
       case Type::TLSKEY:
+      case Type::TLSA:
         sign(origin);
         break;
       default:
@@ -1063,6 +1069,8 @@ namespace aDNS
     const Name& origin,
     const Name& name,
     const RFC1035::A& address,
+    uint16_t port,
+    const std::string& protocol,
     const QVL::Attestation& attestation,
     RFC4034::Algorithm algorithm,
     const crypto::Pem& public_key)
@@ -1079,16 +1087,6 @@ namespace aDNS
     if (!name.is_absolute())
       abs_name += origin;
 
-    // RFC4034::CanonicalRRSet records =
-    //   find_records(origin, abs_name, QType::TLSKEY, QClass::IN);
-
-    // if (!records.empty())
-    //   throw std::runtime_error(
-    //     fmt::format("name already exists in {}", origin));
-
-    remove(origin, name, Class::IN, Type::TLSKEY);
-    remove(origin, name, Class::IN, Type::ATTEST);
-
     // publish ATTEST, TLSKEY
     ResourceRecord att_rr(
       abs_name,
@@ -1096,13 +1094,15 @@ namespace aDNS
       static_cast<uint16_t>(Class::IN),
       config.default_ttl,
       aDNS::Types::ATTEST(attestation));
+    remove(origin, abs_name, Class::IN, Type::ATTEST);
     ignore_on_add = true;
     add(origin, att_rr);
 
     uint16_t flags = 0x0000;
-    auto pk = crypto::make_public_key(public_key);
+    auto pk_der = crypto::make_public_key(public_key)->public_key_der();
+    // pk_der is in SubjectPublicKeyInfo format (ASN.1)
 
-    small_vector<uint16_t> public_key_sv(public_key.size(), public_key.data());
+    small_vector<uint16_t> public_key_sv(pk_der.size(), pk_der.data());
 
     ResourceRecord tlskey_rr(
       abs_name,
@@ -1110,6 +1110,7 @@ namespace aDNS
       static_cast<uint16_t>(Class::IN),
       config.default_ttl,
       aDNS::Types::TLSKEY(flags, algorithm, public_key_sv));
+    remove(origin, abs_name, Class::IN, Type::TLSKEY);
     ignore_on_add = true;
     add(origin, tlskey_rr);
 
@@ -1119,8 +1120,30 @@ namespace aDNS
       static_cast<uint16_t>(Class::IN),
       config.default_ttl,
       address);
-    ignore_on_add = false; // will trigger zone signing
+    ignore_on_add = true;
     add(origin, address_rr);
+
+    // Add TLSA
+    using namespace RFC7671;
+    std::string prolow = protocol;
+    std::transform(prolow.begin(), prolow.end(), prolow.begin(), ::tolower);
+    auto tlsa_name = Name("_" + std::to_string(port)) +
+      Name(std::string("_") + prolow) + abs_name;
+
+    ResourceRecord tlsa_rr(
+      tlsa_name,
+      static_cast<uint16_t>(aDNS::Type::TLSA),
+      static_cast<uint16_t>(Class::IN),
+      config.default_ttl,
+      TLSA(
+        CertificateUsage::DANE_EE,
+        Selector::CERT,
+        MatchingType::Full,
+        public_key_sv));
+
+    remove(origin, tlsa_name, Class::IN, Type::TLSA);
+    ignore_on_add = false; // will trigger zone signing
+    add(origin, tlsa_rr);
   }
 
   void Resolver::install_acme_token(

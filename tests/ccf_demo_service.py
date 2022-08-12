@@ -56,6 +56,7 @@ def run(args):
                 authority=infra.interfaces.EndorsementAuthority.ACME,
                 acme_configuration="my_acme_config",
             ),
+            transport="tcp",
         )
         endorsed_interface.public_host = service_dns_name
         node.rpc_interfaces["endorsed_interface"] = endorsed_interface

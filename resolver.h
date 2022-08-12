@@ -182,6 +182,8 @@ namespace aDNS
       const Name& origin,
       const Name& name,
       const RFC1035::A& address,
+      uint16_t port,
+      const std::string& protocol,
       const QVL::Attestation& attestation,
       RFC4034::Algorithm algorithm,
       const crypto::Pem& public_key);

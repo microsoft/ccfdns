@@ -354,7 +354,10 @@ namespace ccfdns
         {
           const auto in = params.get<AddRecord::In>();
           ccfdns.set_endpoint_context(ctx);
+
+          // if policy checks pass...
           ccfdns.add(in.origin, in.record);
+
           return ccf::make_success();
         }
         catch (std::exception& ex)
@@ -374,7 +377,10 @@ namespace ccfdns
         {
           const auto in = params.get<RemoveRecord::In>();
           ccfdns.set_endpoint_context(ctx);
+
+          // if policy checks pass...
           ccfdns.remove(in.origin, in.record);
+
           return ccf::make_success();
         }
         catch (std::exception& ex)
@@ -394,10 +400,13 @@ namespace ccfdns
         {
           const auto in = params.get<RemoveAll::In>();
           ccfdns.set_endpoint_context(ctx);
+
+          // if policy checks pass...
           ccfdns.remove(
             in.origin,
             static_cast<aDNS::Class>(in.class_),
             static_cast<aDNS::Type>(in.type));
+
           return ccf::make_success();
         }
         catch (std::exception& ex)
@@ -483,10 +492,14 @@ namespace ccfdns
           const auto in = params.get<RegisterService::In>();
 
           ccfdns.set_endpoint_context(ctx);
+
+          // if policy checks pass...
           ccfdns.register_service(
             Name(in.origin),
             Name(in.name),
             RFC1035::A(in.address),
+            in.port,
+            in.protocol,
             in.attestation,
             in.algorithm,
             in.public_key);

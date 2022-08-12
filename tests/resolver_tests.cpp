@@ -556,6 +556,8 @@ TEST_CASE("Service registration")
     origin,
     service_name,
     address,
+    8000,
+    "tcp",
     attestation,
     RFC4034::Algorithm::ECDSAP384SHA384,
     service_key->public_key_pem());
