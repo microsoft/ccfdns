@@ -36,7 +36,8 @@ from dnsstamps import Option
 
 import pebble
 
-DEFAULT_NODES = ["local://127.0.0.1:8000"]
+service_port = 8080
+DEFAULT_NODES = ["local://127.0.0.1:" + str(service_port)]
 
 
 def add_record(client, origin, name, stype, rdata_obj):
@@ -196,6 +197,8 @@ def run(args):
     dns_address = "ns1.adns.ccf.dev:53"
     tls_port = 1026
 
+    # proxy with this: https://github.com/aarond10/https_dns_proxy/pull/144
+    # proxy needs: sudo setcap 'cap_net_bind_service=+ep' https_dns_proxy
     doh_proxy_binary = "/data/cwinter/https_dns_proxy/build/https_dns_proxy"
 
     acme_directory = "https://127.0.0.1:1024/dir"
@@ -240,15 +243,14 @@ def run(args):
 
             for node in args.nodes:
                 endoed_if = infra.interfaces.RPCInterface(
-                    host=infra.net.expand_localhost(),
+                    host=public_host,
+                    port=service_port,
                     endorsement=infra.interfaces.Endorsement(
                         authority=infra.interfaces.EndorsementAuthority.ACME,
                         acme_configuration=acme_config_name,
                     ),
                     public_host=service_dns_name,
                 )
-                primary_if = node.rpc_interfaces[infra.interfaces.PRIMARY_RPC_INTERFACE]
-                primary_if.port, endoed_if.port = endoed_if.port, primary_if.port
                 node.rpc_interfaces["acme_endorsed_interface"] = endoed_if
                 node.rpc_interfaces[
                     "acme_challenge_server_if"
@@ -303,7 +305,7 @@ def run(args):
 
                     # TODO: wait for ACME cert to become available, then restart the proxy with the endorsed interface.
 
-                    LOG.info("Waiting until network is torn down...")
+                    LOG.info("Waiting forever...")
                     while True:
                         time.sleep(1)
                 except Exception as ex:

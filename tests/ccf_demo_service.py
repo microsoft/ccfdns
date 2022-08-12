@@ -16,28 +16,27 @@ import infra.health_watcher
 
 from loguru import logger as LOG
 
+import pebble
+
 
 def run(args):
     service_dns_name = "service43.adns.ccf.dev"
-    adns_certs = [
-        open(
-            "workspace/adns.ccf.dev_common/service_cert.pem",
-            mode="r",
-            encoding="ascii",
-        ).read()
-    ]
+    pebble_mgmt_address = "127.0.0.1:1025"
 
     # Local pebble
     acme_directory = "https://127.0.0.1:1024/dir"
     ca_cert_file = "pebble-ca-cert.pem"
     ca_certs = [open(ca_cert_file, mode="r", encoding="ascii").read()]
+    ca_certs = ca_certs + pebble.get_pebble_ca_certs(pebble_mgmt_address)
+    acme_config_name = "pebble"
 
     # Let's Encrypt (staging)
     # acme_directory = "https://acme-staging-v02.api.letsencrypt.org/directory"
+    # acme_config_name = "letsencrypt"
 
     args.acme = {
         "configurations": {
-            "my_acme_config": {
+            acme_config_name: {
                 "ca_certs": adns_certs + ca_certs,
                 "directory_url": acme_directory,
                 "service_dns_name": service_dns_name,
@@ -54,7 +53,7 @@ def run(args):
             host=infra.net.expand_localhost(),
             endorsement=infra.interfaces.Endorsement(
                 authority=infra.interfaces.EndorsementAuthority.ACME,
-                acme_configuration="my_acme_config",
+                acme_configuration=acme_config_name,
             ),
             transport="tcp",
         )
@@ -67,7 +66,7 @@ def run(args):
 
         network.start_and_open(args)
 
-        print("Network open")
+        print("Network open, waiting forever...")
 
         while True:
             time.sleep(1)

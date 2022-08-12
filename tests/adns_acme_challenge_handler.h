@@ -80,7 +80,8 @@ namespace ccfapp
           [](
             const enum http_status&,
             const http::HeaderMap&,
-            const std::vector<uint8_t>&) { return true; });
+            const std::vector<uint8_t>&) { return true; },
+          ca_certs);
 
         CCF_APP_TRACE("ACME: response for token '{}' is '{}'", token, response);
 

@@ -27,7 +27,7 @@ namespace ccfapp
   struct Configuration
   {
     std::string interface_id = "endorsed_interface";
-    std::string adns_base_url = "https://adns.ccf.dev:8000/app";
+    std::string adns_base_url = "https://adns.ccf.dev:8080/app";
     std::string origin = "adns.ccf.dev.";
     std::string service_name = "service43.adns.ccf.dev.";
     std::string ip = "51.143.161.224";
@@ -70,7 +70,6 @@ namespace ccfapp
         const enum http_status& http_status,
         const http::HeaderMap& headers,
         const std::vector<uint8_t>& reply_body) {
-        CCF_APP_DEBUG("ACME: CALLBACK FROM REGISTER");
         if (
           http_status != HTTP_STATUS_OK &&
           http_status != HTTP_STATUS_NO_CONTENT)

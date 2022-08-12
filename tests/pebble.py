@@ -59,7 +59,7 @@ def get_pebble_ca_certs(mgmt_address):
     intermediate = get_without_cert_check(
         "https://" + mgmt_address + "/intermediates/0"
     )
-    return ca, intermediate
+    return [intermediate, ca]
 
 
 def generate_self_signed_cert(key, subject):
