@@ -37,7 +37,7 @@ def run(args):
     args.acme = {
         "configurations": {
             acme_config_name: {
-                "ca_certs": adns_certs + ca_certs,
+                "ca_certs": ca_certs,
                 "directory_url": acme_directory,
                 "service_dns_name": service_dns_name,
                 "contact": ["mailto:nobody@example.com"],
