@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation. All rights reserved.
 # Licensed under the Apache 2.0 License.
 
+import os
 import glob
 import http
 from sys import stdout
@@ -101,61 +102,87 @@ def populate_adns_ccf_dev(network, args):
         # b'\x04some\x04text'
 
 
-def start_dnscrypt_proxy(binary):
-    # service_cert = "workspace/adns.ccf.dev_common/service_cert.pem"
-    # hash = (
-    #     subprocess.Popen(
-    #         f"openssl asn1parse -in {service_cert} -out /dev/stdout -noout -strparse 4 | openssl dgst -sha256",
-    #         shell=True,
-    #         stdout=subprocess.PIPE,
-    #     )
-    #     .stdout.read()
-    #     .decode("ascii")
-    # )
-    # hash = hash[hash.find(" ") + 1 :]
+# def start_dnscrypt_proxy(binary):
+#     # service_cert = "workspace/adns.ccf.dev_common/service_cert.pem"
+#     # hash = (
+#     #     subprocess.Popen(
+#     #         f"openssl asn1parse -in {service_cert} -out /dev/stdout -noout -strparse 4 | openssl dgst -sha256",
+#     #         shell=True,
+#     #         stdout=subprocess.PIPE,
+#     #     )
+#     #     .stdout.read()
+#     #     .decode("ascii")
+#     # )
+#     # hash = hash[hash.find(" ") + 1 :]
 
-    # service_cert2 = "workspace/adns.ccf.dev_0/0.pem"
-    # hash2 = (
-    #     subprocess.Popen(
-    #         f"openssl asn1parse -in {service_cert2} -out /dev/stdout -noout -strparse 4 | openssl dgst -sha256",
-    #         shell=True,
-    #         stdout=subprocess.PIPE,
-    #     )
-    #     .stdout.read()
-    #     .decode("ascii")
-    # )
-    # hash2 = hash2[hash2.find(" ") + 1 :]
+#     # service_cert2 = "workspace/adns.ccf.dev_0/0.pem"
+#     # hash2 = (
+#     #     subprocess.Popen(
+#     #         f"openssl asn1parse -in {service_cert2} -out /dev/stdout -noout -strparse 4 | openssl dgst -sha256",
+#     #         shell=True,
+#     #         stdout=subprocess.PIPE,
+#     #     )
+#     #     .stdout.read()
+#     #     .decode("ascii")
+#     # )
+#     # hash2 = hash2[hash2.find(" ") + 1 :]
 
-    shutil.copy("../tests/dnscrypt-proxy.toml", "dnscrypt-proxy.toml")
+#     shutil.copy("../tests/dnscrypt-proxy.toml", "dnscrypt-proxy.toml")
 
-    stamp = dnsstamps.create_doh(
-        "10.1.0.4",
-        [],
-        "10.1.0.4:8000",
-        "/app/dns-query",
-        [],
-    )
+#     stamp = dnsstamps.create_doh(
+#         "10.1.0.4",
+#         [],
+#         "10.1.0.4:8000",
+#         "/app/dns-query",
+#         [],
+#     )
 
-    with open("dnscrypt-proxy.toml", "a", encoding="ascii") as f:
-        f.write(f"\n    stamp='{stamp}'\n")
+#     with open("dnscrypt-proxy.toml", "a", encoding="ascii") as f:
+#         f.write(f"\n    stamp='{stamp}'\n")
 
-    try:
-        p = subprocess.Popen(
-            [binary, "-config", "dnscrypt-proxy.toml"],
-        )
+#     try:
+#         p = subprocess.Popen(
+#             [binary, "-config", "dnscrypt-proxy.toml"],
+#         )
 
-        pebble.wait_for_port_to_listen("127.0.0.1", 53, 5)
-    except:
-        if p:
-            p.kill()
+#         pebble.wait_for_port_to_listen("127.0.0.1", 53, 5)
+#     except:
+#         if p:
+#             p.kill()
 
-    return p
+#     return p
+
+
+def start_dns_to_http_proxy(binary, host, port, query_url, network_cert):
+    args = [
+        binary,
+        "-a",
+        host,
+        "-p",
+        port,
+        "-r",
+        query_url,
+        "-v",
+        "debug",
+        "-x",
+        "-C",
+        network_cert,
+    ]
+    print(args)
+    return subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+
+
+def public_host_port(listen_addr):
+    prot_host_port = listen_addr.split("//")
+    host_port = prot_host_port[1].split(":")
+    public_host = host_port[0]
+    public_port = host_port[1] if len(host_port) > 1 else "53"
+    return public_host, public_port
 
 
 def run(args):
     """Start the network"""
 
-    dnscrypt_proxy_process = None
     service_dns_name = "adns.ccf.dev"
 
     pebble_filename = "/opt/pebble/pebble_linux-amd64"
@@ -169,11 +196,13 @@ def run(args):
     dns_address = "ns1.adns.ccf.dev:53"
     tls_port = 1026
 
+    doh_proxy_binary = "/data/cwinter/https_dns_proxy/build/https_dns_proxy"
+
     acme_directory = "https://127.0.0.1:1024/dir"
-    ca_cert_file = "pebble-ca-cert.pem"
-    ca_certs = [open(ca_cert_file, mode="r", encoding="ascii").read()]
+    ca_certs = [open(ca_cert_filename, mode="r", encoding="ascii").read()]
     email = "nobody@example.com"
-    http_port = 1027
+    http_port = 8000  # pick something that the firewall allows through
+    acme_config_name = "pebble"
 
     # acme_directory = "https://acme-staging-v02.api.letsencrypt.org/directory"
     # ca_certs = [
@@ -183,6 +212,19 @@ def run(args):
     # ]
     # email = "cwinter@microsoft.com"
     # http_port = 80
+    # acme_config_name = "letsencrypt"
+
+    public_host, public_port = public_host_port(args.node[0])
+
+    pebble.make_pebble_config(
+        config_filename,
+        listen_address,
+        mgmt_address,
+        ca_cert_filename,
+        ca_key_filename,
+        http_port,
+        tls_port,
+    )
 
     with open(output_filename, "w", encoding="ascii") as pebble_out:
         with open(error_filename, "w", encoding="ascii") as pebble_err:
@@ -196,59 +238,45 @@ def run(args):
                 pebble_err,
             )
 
-            if args.config_file is not None:
-                with open(args.config_file, encoding="utf-8") as f:
-                    hosts = [
-                        infra.interfaces.HostSpec.from_json(
-                            json.load(f)["network"]["rpc_interfaces"]
-                        )
-                    ]
-            else:
-                hosts = args.node or DEFAULT_NODES
-                hosts = [
-                    infra.interfaces.HostSpec.from_str(node, http2=args.http2)
-                    for node in hosts
-                ]
+            for node in args.nodes:
+                endoed_if = infra.interfaces.RPCInterface(
+                    host=infra.net.expand_localhost(),
+                    endorsement=infra.interfaces.Endorsement(
+                        authority=infra.interfaces.EndorsementAuthority.ACME,
+                        acme_configuration=acme_config_name,
+                    ),
+                    public_host=service_dns_name,
+                )
+                primary_if = node.rpc_interfaces[infra.interfaces.PRIMARY_RPC_INTERFACE]
+                primary_if.port, endoed_if.port = endoed_if.port, primary_if.port
+                node.rpc_interfaces["acme_endorsed_interface"] = endoed_if
+                node.rpc_interfaces[
+                    "acme_challenge_server_if"
+                ] = infra.interfaces.RPCInterface(
+                    host=public_host,
+                    port=http_port,
+                    endorsement=infra.interfaces.Endorsement(
+                        authority=infra.interfaces.EndorsementAuthority.Unsecured
+                    ),
+                    accepted_endpoints=["/.well-known/acme-challenge/.*"],
+                )
 
-            # for node in args.nodes:
-            #     node.rpc_interfaces[
-            #         "acme_endorsed_interface"
-            #     ] = infra.interfaces.RPCInterface(
-            #         host=infra.net.expand_localhost(),
-            #         endorsement=infra.interfaces.Endorsement(
-            #             authority=infra.interfaces.EndorsementAuthority.ACME,
-            #             acme_configuration="my_acme_config",
-            #         ),
-            #         public_host=service_dns_name,
-            #     )
-            #     node.rpc_interfaces[
-            #         "acme_challenge_server_if"
-            #     ] = infra.interfaces.RPCInterface(
-            #         host=node.get_primary_interface().host,
-            #         port=http_port,
-            #         endorsement=infra.interfaces.Endorsement(
-            #             authority=infra.interfaces.EndorsementAuthority.Unsecured
-            #         ),
-            #         accepted_endpoints=["/.well-known/acme-challenge/.*"],
-            #     )
-
-            # args.acme = {
-            #     "configurations": {
-            #         "my_acme_config": {
-            #             "ca_certs": ca_certs,
-            #             "directory_url": acme_directory,
-            #             "service_dns_name": service_dns_name,
-            #             "contact": ["mailto:" + email],
-            #             "terms_of_service_agreed": True,
-            #             "challenge_type": "http-01",
-            #             "challenge_server_interface": "acme_challenge_server_if",
-            #         }
-            #     }
-            # }
+            args.acme = {
+                "configurations": {
+                    acme_config_name: {
+                        "ca_certs": ca_certs,
+                        "directory_url": acme_directory,
+                        "service_dns_name": service_dns_name,
+                        "contact": ["mailto:" + email],
+                        "terms_of_service_agreed": True,
+                        "challenge_type": "http-01",
+                        "challenge_server_interface": "acme_challenge_server_if",
+                    }
+                }
+            }
 
             with infra.network.network(
-                # args.nodes,
-                hosts=hosts,
+                args.nodes,
                 binary_directory=args.binary_dir,
                 library_directory=args.library_dir,
                 dbg_nodes=args.debug_nodes,
@@ -256,18 +284,33 @@ def run(args):
                 network.start_and_open(args)
                 populate_adns_ccf_dev(network, args)
 
+                proxy_proc = None
                 try:
-                    # dnscrypt_proxy_process = start_dnscrypt_proxy(
-                    #     "/data/cwinter/dnscrypt-proxy/linux-x86_64/dnscrypt-proxy"
-                    # )
+                    node = network.find_random_node()
+                    primary_if = node.host.rpc_interfaces[
+                        infra.interfaces.PRIMARY_RPC_INTERFACE
+                    ]
+                    host, port = primary_if.host, primary_if.port
+                    net_cert_path = os.path.join(node.common_dir, "service_cert.pem")
+
+                    proxy_proc = start_dns_to_http_proxy(
+                        doh_proxy_binary,
+                        public_host,
+                        public_port,
+                        "https://" + host + ":" + str(port) + "/app/dns-query",
+                        net_cert_path,
+                    )
+
+                    # TODO: wait for ACME cert to become available, then restart the proxy with the endorsed interface.
 
                     LOG.info("Waiting until network is torn down...")
                     while True:
                         time.sleep(1)
                 except Exception as ex:
                     print(f"Exception: {ex}")
-                    if dnscrypt_proxy_process:
-                        dnscrypt_proxy_process.kill()
+                finally:
+                    if proxy_proc:
+                        proxy_proc.kill()
 
             pproc.kill()
 

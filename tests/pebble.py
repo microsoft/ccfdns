@@ -81,6 +81,32 @@ def generate_self_signed_cert(key, subject):
     )
 
 
+def make_pebble_config(
+    config_filename,
+    listen_address,
+    mgmt_address,
+    ca_cert_filename,
+    ca_key_filename,
+    http_port,
+    tls_port,
+):
+    pebble_config = {
+        "pebble": {
+            "listenAddress": listen_address,
+            "managementListenAddress": mgmt_address,
+            "certificate": ca_cert_filename,
+            "privateKey": ca_key_filename,
+            "httpPort": http_port,
+            "tlsPort": tls_port,
+            "ocspResponderURL": "",
+            "externalAccountBindingRequired": False,
+        }
+    }
+
+    with open(config_filename, "w", encoding="ascii") as f:
+        json.dump(pebble_config, f)
+
+
 def run_pebble(args):
     binary_filename = "/opt/pebble/pebble_linux-amd64"
     config_filename = "pebble.config.json"
@@ -97,20 +123,15 @@ def run_pebble(args):
     if not os.path.exists(binary_filename) or not os.path.exists(binary_filename):
         raise Exception("pebble not found; run playbooks to install it")
 
-    config = {
-        "pebble": {
-            "listenAddress": listen_address,
-            "managementListenAddress": mgmt_address,
-            "certificate": ca_cert_filename,
-            "privateKey": ca_key_filename,
-            "httpPort": http_port,
-            "tlsPort": tls_port,
-            "ocspResponderURL": "",
-            "externalAccountBindingRequired": False,
-        }
-    }
-    with open(config_filename, "w", encoding="ascii") as f:
-        json.dump(config, f)
+    make_pebble_config(
+        config_filename,
+        listen_address,
+        mgmt_address,
+        ca_cert_filename,
+        ca_key_filename,
+        http_port,
+        tls_port,
+    )
 
     ca_key = ec.generate_private_key(ec.SECP384R1(), default_backend())
 
