@@ -197,16 +197,17 @@ def run(args):
     dns_address = "ns1.adns.ccf.dev:53"
     tls_port = 1026
 
-    # proxy with this: https://github.com/aarond10/https_dns_proxy/pull/144
-    # proxy needs: sudo setcap 'cap_net_bind_service=+ep' https_dns_proxy
+    # Proxy is here: https://github.com/aarond10/https_dns_proxy
+    # Note: proxy needs: sudo setcap 'cap_net_bind_service=+ep' https_dns_proxy
     doh_proxy_binary = "/data/cwinter/https_dns_proxy/build/https_dns_proxy"
 
+    acme_config_name = "pebble"
     acme_directory = "https://127.0.0.1:1024/dir"
     ca_certs = [open(ca_cert_filename, mode="r", encoding="ascii").read()]
     email = "nobody@example.com"
     http_port = 8000  # pick something that the firewall allows through
-    acme_config_name = "pebble"
 
+    # acme_config_name = "letsencrypt"
     # acme_directory = "https://acme-staging-v02.api.letsencrypt.org/directory"
     # ca_certs = [
     #     "-----BEGIN CERTIFICATE-----\nMIIFFjCCAv6gAwIBAgIRAJErCErPDBinU/bWLiWnX1owDQYJKoZIhvcNAQELBQAw\nTzELMAkGA1UEBhMCVVMxKTAnBgNVBAoTIEludGVybmV0IFNlY3VyaXR5IFJlc2Vh\ncmNoIEdyb3VwMRUwEwYDVQQDEwxJU1JHIFJvb3QgWDEwHhcNMjAwOTA0MDAwMDAw\nWhcNMjUwOTE1MTYwMDAwWjAyMQswCQYDVQQGEwJVUzEWMBQGA1UEChMNTGV0J3Mg\nRW5jcnlwdDELMAkGA1UEAxMCUjMwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEK\nAoIBAQC7AhUozPaglNMPEuyNVZLD+ILxmaZ6QoinXSaqtSu5xUyxr45r+XXIo9cP\nR5QUVTVXjJ6oojkZ9YI8QqlObvU7wy7bjcCwXPNZOOftz2nwWgsbvsCUJCWH+jdx\nsxPnHKzhm+/b5DtFUkWWqcFTzjTIUu61ru2P3mBw4qVUq7ZtDpelQDRrK9O8Zutm\nNHz6a4uPVymZ+DAXXbpyb/uBxa3Shlg9F8fnCbvxK/eG3MHacV3URuPMrSXBiLxg\nZ3Vms/EY96Jc5lP/Ooi2R6X/ExjqmAl3P51T+c8B5fWmcBcUr2Ok/5mzk53cU6cG\n/kiFHaFpriV1uxPMUgP17VGhi9sVAgMBAAGjggEIMIIBBDAOBgNVHQ8BAf8EBAMC\nAYYwHQYDVR0lBBYwFAYIKwYBBQUHAwIGCCsGAQUFBwMBMBIGA1UdEwEB/wQIMAYB\nAf8CAQAwHQYDVR0OBBYEFBQusxe3WFbLrlAJQOYfr52LFMLGMB8GA1UdIwQYMBaA\nFHm0WeZ7tuXkAXOACIjIGlj26ZtuMDIGCCsGAQUFBwEBBCYwJDAiBggrBgEFBQcw\nAoYWaHR0cDovL3gxLmkubGVuY3Iub3JnLzAnBgNVHR8EIDAeMBygGqAYhhZodHRw\nOi8veDEuYy5sZW5jci5vcmcvMCIGA1UdIAQbMBkwCAYGZ4EMAQIBMA0GCysGAQQB\ngt8TAQEBMA0GCSqGSIb3DQEBCwUAA4ICAQCFyk5HPqP3hUSFvNVneLKYY611TR6W\nPTNlclQtgaDqw+34IL9fzLdwALduO/ZelN7kIJ+m74uyA+eitRY8kc607TkC53wl\nikfmZW4/RvTZ8M6UK+5UzhK8jCdLuMGYL6KvzXGRSgi3yLgjewQtCPkIVz6D2QQz\nCkcheAmCJ8MqyJu5zlzyZMjAvnnAT45tRAxekrsu94sQ4egdRCnbWSDtY7kh+BIm\nlJNXoB1lBMEKIq4QDUOXoRgffuDghje1WrG9ML+Hbisq/yFOGwXD9RiX8F6sw6W4\navAuvDszue5L3sz85K+EC4Y/wFVDNvZo4TYXao6Z0f+lQKc0t8DQYzk1OXVu8rp2\nyJMC6alLbBfODALZvYH7n7do1AZls4I9d1P4jnkDrQoxB3UqQ9hVl3LEKQ73xF1O\nyK5GhDDX8oVfGKF5u+decIsH4YaTw7mP3GFxJSqv3+0lUFJoi5Lc5da149p90Ids\nhCExroL1+7mryIkXPeFM5TgO9r0rvZaBFOvV2z0gp35Z0+L4WPlbuEjN/lxPFin+\nHlUjr8gRsI3qfJOQFy/9rKIJR0Y/8Omwt/8oTWgy1mdeHmmjk7j1nYsvC9JSQ6Zv\nMldlTTKB3zhThV1+XWYp6rjd5JW1zbVWEkLNxE7GJThEUG3szgBVGP7pSWTUTsqX\nnLRbwHOoq7hHwg==\n-----END CERTIFICATE-----\n",
@@ -215,31 +216,33 @@ def run(args):
     # ]
     # email = "cwinter@microsoft.com"
     # http_port = 80
-    # acme_config_name = "letsencrypt"
+    # Note: cchost needs: sudo setcap 'cap_net_bind_service=+ep' https_dns_proxy
 
     public_host, public_port = public_host_port(args.node[0])
 
-    pebble.make_pebble_config(
-        config_filename,
-        listen_address,
-        mgmt_address,
-        ca_cert_filename,
-        ca_key_filename,
-        http_port,
-        tls_port,
-    )
+    if acme_config_name == "pebble":
+        pebble.make_pebble_config(
+            config_filename,
+            listen_address,
+            mgmt_address,
+            ca_cert_filename,
+            ca_key_filename,
+            http_port,
+            tls_port,
+        )
 
     with open(output_filename, "w", encoding="ascii") as pebble_out:
         with open(error_filename, "w", encoding="ascii") as pebble_err:
 
-            pproc = pebble.run_proc(
-                pebble_filename,
-                config_filename,
-                dns_address,
-                listen_address,
-                pebble_out,
-                pebble_err,
-            )
+            if acme_config_name == "pebble":
+                pproc = pebble.run_proc(
+                    pebble_filename,
+                    config_filename,
+                    dns_address,
+                    listen_address,
+                    pebble_out,
+                    pebble_err,
+                )
 
             for node in args.nodes:
                 endoed_if = infra.interfaces.RPCInterface(
