@@ -207,6 +207,7 @@ def run(args):
     email = "nobody@example.com"
     http_port = 8000  # pick something that the firewall allows through
 
+    # Note: cchost needs: sudo setcap 'cap_net_bind_service=+ep' https_dns_proxy
     # acme_config_name = "letsencrypt"
     # acme_directory = "https://acme-staging-v02.api.letsencrypt.org/directory"
     # ca_certs = [
@@ -216,7 +217,6 @@ def run(args):
     # ]
     # email = "cwinter@microsoft.com"
     # http_port = 80
-    # Note: cchost needs: sudo setcap 'cap_net_bind_service=+ep' https_dns_proxy
 
     public_host, public_port = public_host_port(args.node[0])
 

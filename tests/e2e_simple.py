@@ -48,14 +48,16 @@ def add_record(client, origin, name, stype, rdata_obj):
     return r
 
 
-def submit_service_registration(client, origin, name, address, public_pem):
+def submit_service_registration(client, origin, name, address, port, protocol, public_pem):
     r = client.post(
         "/app/register",
         {
             "origin": str(origin),
             "name": str(name),
             "address": str(address),
-            "quote_info": {"format": "OE_SGX_v1", "quote": [], "endorsements": []},
+            "port": port,
+            "protocol": protocol,
+            "attestation": {"format": "SGX", "evidence": [], "endorsements": []},
             "algorithm": "ECDSAP384SHA384",
             "public_key": public_pem.decode("ascii"),
         },
@@ -195,7 +197,7 @@ def test_service_reg(network, args):
             format=serialization.PublicFormat.SubjectPublicKeyInfo,
         )
 
-        submit_service_registration(client, origin, service_name, "1.2.3.4", public_pem)
+        submit_service_registration(client, origin, service_name, "1.2.3.4", port, "tcp", public_pem)
 
         check_record(host, port, ca, service_name, "A", A("1.2.3.4"))
 

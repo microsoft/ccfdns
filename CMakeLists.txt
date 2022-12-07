@@ -10,9 +10,21 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 find_package(OpenEnclave REQUIRED HINTS ${OE})
 find_package(ccf REQUIRED HINTS ${CCF})
 
+find_library(RAVL ravl REQUIRED HINTS ${CMAKE_CURRENT_SOURCE_DIR}/../ravl/build)
+get_filename_component(RAVL_DIR ${RAVL} DIRECTORY)
+find_file(RAVL_INCLUDE include HINTS ${RAVL_DIR}/..)
+set(RAVL_SRC ${RAVL_DIR}/../src/attestation.cpp ${RAVL_DIR}/../src/ravl.cpp ${RAVL_DIR}/../src/request_tracker.cpp ${RAVL_DIR}/../src/http_client.cpp)
+set(RAVL_DEF RAVL_HAVE_OPENSSL)
+
 set(CCFDNS_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 
-add_ccf_app(ccfdns SRCS ccfdns.cpp resolver.cpp rfc4034.cpp rfc5155.cpp base32.cpp qvl.cpp)
+add_ccf_app(ccfdns 
+  SRCS ccfdns.cpp resolver.cpp rfc4034.cpp rfc5155.cpp base32.cpp ${RAVL_SRC}
+  INCLUDE_DIRS ${RAVL_INCLUDE}  
+  )
+
+target_compile_definitions(ccfdns.enclave PUBLIC RAVL_HAVE_OPENSSL)
+target_compile_definitions(ccfdns.virtual PUBLIC RAVL_HAVE_OPENSSL)
 
 if (VERBOSE_LOGGING)
   target_compile_definitions(ccfdns.enclave PRIVATE -DVERBOSE_LOGGING)
@@ -54,7 +66,9 @@ add_test(NAME e2e_simple_tests COMMAND python ../tests/e2e_simple.py -b "${ccf_D
 
 function(add_unit_test name)
   add_executable(${name} ${ARGN})
-  target_include_directories(${name} PRIVATE "." "${ccf_DIR}/../include" "${ccf_DIR}/../include/ccf/_private" "${ccf_DIR}/../include/3rdparty")
+  target_include_directories(${name} PRIVATE "." "${ccf_DIR}/../include" "${ccf_DIR}/../include/ccf/_private" "${ccf_DIR}/../include/3rdparty" ${RAVL_INCLUDE})
+  target_compile_definitions(${name} PRIVATE -DVERBOSE_LOGGING)
+  target_compile_definitions(${name} PRIVATE RAVL_HAVE_OPENSSL)
   target_link_libraries(
     ${name} PRIVATE ccfcrypto.host openenclave::oehost
   )
@@ -68,13 +82,15 @@ function(add_unit_test name)
   endif()
 endfunction()
 
-add_unit_test(resolver_tests ../tests/resolver_tests.cpp resolver.cpp rfc4034.cpp rfc5155.cpp base32.cpp)
+add_unit_test(resolver_tests ../tests/resolver_tests.cpp resolver.cpp rfc4034.cpp rfc5155.cpp base32.cpp ${RAVL_SRC})
 
 
 set(CCF_EXTRA_INCLUDES "${ccf_DIR}/../include/ccf/_private" "${ccf_DIR}/../include/3rdparty/nghttp2/includes")
-add_ccf_app(ccf_demo_service SRCS tests/ccf_demo_service.cpp qvl.cpp)
-target_include_directories(ccf_demo_service.enclave PRIVATE ${CCF_EXTRA_INCLUDES})
-target_include_directories(ccf_demo_service.virtual PRIVATE ${CCF_EXTRA_INCLUDES})
+add_ccf_app(ccf_demo_service SRCS tests/ccf_demo_service.cpp ${RAVL_SRC})
+target_include_directories(ccf_demo_service.enclave PRIVATE ${CCF_EXTRA_INCLUDES} ${RAVL_INCLUDE})
+target_include_directories(ccf_demo_service.virtual PRIVATE ${CCF_EXTRA_INCLUDES} ${RAVL_INCLUDE})
+target_compile_definitions(ccf_demo_service.enclave PRIVATE RAVL_HAVE_OPENSSL)
+target_compile_definitions(ccf_demo_service.virtual PRIVATE RAVL_HAVE_OPENSSL)
 if (VERBOSE_LOGGING)
   target_compile_definitions(ccf_demo_service.enclave PRIVATE -DVERBOSE_LOGGING)
   target_compile_definitions(ccf_demo_service.virtual PRIVATE -DVERBOSE_LOGGING)

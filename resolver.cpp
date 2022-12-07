@@ -7,7 +7,6 @@
 #include "base32.h"
 #include "ccf/crypto/sha256_hash.h"
 #include "formatting.h"
-#include "qvl.h"
 #include "rfc1035.h"
 #include "rfc3596.h"
 #include "rfc4034.h"
@@ -33,6 +32,10 @@
 #include <openssl/ecdsa.h>
 #include <openssl/ossl_typ.h>
 #include <openssl/x509.h>
+#include <ravl/attestation.h>
+#include <ravl/http_client.h>
+#include <ravl/ravl.h>
+#include <ravl/ravl_impl.h>
 #include <set>
 #include <sstream>
 #include <stdexcept>
@@ -40,6 +43,15 @@
 #include <unordered_set>
 
 using namespace RFC1035;
+
+namespace ravl
+{
+  HTTPResponse SynchronousHTTPClient::execute_synchronous(
+    const HTTPRequest&, size_t, size_t, bool)
+  {
+    throw std::runtime_error("fresh endorsement download not supported");
+  }
+}
 
 namespace aDNS
 {
@@ -1071,7 +1083,7 @@ namespace aDNS
     const RFC1035::A& address,
     uint16_t port,
     const std::string& protocol,
-    const QVL::Attestation& attestation,
+    const std::string& attestation,
     RFC4034::Algorithm algorithm,
     const crypto::Pem& public_key)
   {
@@ -1080,8 +1092,12 @@ namespace aDNS
     if (!name.is_absolute())
       throw std::runtime_error("service name must be absolute");
 
-    if (verify(attestation, public_key.str()) != QVL::Result::Verified)
+    std::shared_ptr<ravl::Attestation> att =
+      ravl::parse_attestation(attestation);
+    if (ravl::verify_synchronous(att) == nullptr)
       throw std::runtime_error("quote verification failed");
+
+    // if policy checks pass...
 
     Name abs_name = name;
     if (!name.is_absolute())

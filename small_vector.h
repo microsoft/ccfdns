@@ -237,6 +237,11 @@ public:
     return size_ < other.size_;
   }
 
+  const E* raw() const
+  {
+    return data;
+  }
+
 protected:
   T size_;
   E* data;

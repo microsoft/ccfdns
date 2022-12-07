@@ -19,8 +19,20 @@
 #include <ccf/json_handler.h>
 #include <ccf/node/acme_subsystem_interface.h>
 #include <ccf/node/node_configuration_interface.h>
+#include <ccf/pal/attestation.h>
+#include <ravl/oe.h>
+#include <ravl/ravl.h>
 #include <stdexcept>
 #include <thread>
+
+namespace ravl
+{
+  HTTPResponse SynchronousHTTPClient::execute_synchronous(
+    const HTTPRequest&, size_t, size_t, bool)
+  {
+    throw std::runtime_error("fresh endorsement download not supported");
+  }
+}
 
 namespace ccfapp
 {
@@ -55,8 +67,10 @@ namespace ccfapp
     regopts.port = port;
     regopts.algorithm = RFC4034::Algorithm::ECDSAP384SHA384;
     regopts.public_key = public_key_pem;
-    regopts.attestation = QVL::get_oe_attestation(
-      crypto::make_public_key(regopts.public_key)->public_key_der());
+
+    auto ccf_attestation = ccf::pal::generate_quote({0});
+    regopts.attestation = ravl::oe::Attestation(
+      ccf_attestation.quote, ccf_attestation.endorsements);
 
     nlohmann::json jbody = regopts;
     auto body = serdes::pack(jbody, serdes::Pack::Text);

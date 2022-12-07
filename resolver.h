@@ -3,7 +3,6 @@
 #pragma once
 
 #include "adns_types.h"
-#include "qvl.h"
 #include "rfc1035.h"
 #include "rfc3596.h"
 #include "rfc4034.h"
@@ -184,7 +183,7 @@ namespace aDNS
       const RFC1035::A& address,
       uint16_t port,
       const std::string& protocol,
-      const QVL::Attestation& attestation,
+      const std::string& attestation,
       RFC4034::Algorithm algorithm,
       const crypto::Pem& public_key);
 

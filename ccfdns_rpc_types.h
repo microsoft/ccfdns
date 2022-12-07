@@ -3,7 +3,6 @@
 #pragma once
 
 #include "ccfdns_json.h"
-#include "qvl.h"
 #include "resolver.h"
 #include "rfc1035.h"
 #include "rfc4034.h"
@@ -49,23 +48,13 @@ namespace ccfdns
       uint16_t port;
       std::string protocol;
 
-      QVL::Attestation attestation;
+      std::string attestation;
 
       RFC4034::Algorithm algorithm = RFC4034::Algorithm::ECDSAP384SHA384;
       crypto::Pem public_key;
     };
     using Out = void;
   };
-}
-
-namespace QVL
-{
-  DECLARE_JSON_ENUM(
-    Format,
-    {{Format::NONE, "NONE"}, {Format::SGX, "SGX"}, {Format::AMD, "AMD"}});
-
-  DECLARE_JSON_TYPE(Attestation);
-  DECLARE_JSON_REQUIRED_FIELDS(Attestation, format, evidence, endorsements);
 }
 
 namespace ccfdns

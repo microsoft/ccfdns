@@ -493,7 +493,6 @@ namespace ccfdns
 
           ccfdns.set_endpoint_context(ctx);
 
-          // if policy checks pass...
           ccfdns.register_service(
             Name(in.origin),
             Name(in.name),
@@ -505,7 +504,7 @@ namespace ccfdns
             in.public_key);
 
           ctx.rpc_ctx->set_response_status(HTTP_STATUS_OK);
-          return ccf::make_success(true);
+          return ccf::make_success();
         }
         catch (std::exception& ex)
         {
@@ -519,7 +518,7 @@ namespace ccfdns
         HTTP_POST,
         ccf::json_adapter(register_service),
         ccf::no_auth_required)
-        .set_auto_schema<void, bool>()
+        .set_auto_schema<RegisterService::In, RegisterService::Out>()
         .install();
     }
   };
