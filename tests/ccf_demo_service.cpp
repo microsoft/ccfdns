@@ -68,9 +68,15 @@ namespace ccfapp
     regopts.algorithm = RFC4034::Algorithm::ECDSAP384SHA384;
     regopts.public_key = public_key_pem;
 
-    auto ccf_attestation = ccf::pal::generate_quote({0});
-    regopts.attestation = ravl::oe::Attestation(
-      ccf_attestation.quote, ccf_attestation.endorsements);
+    ccf::pal::attestation_report_data ard = {0};
+    ccf::pal::generate_quote(
+      ard,
+      [&regopts](
+        const ccf::QuoteInfo& quote_info,
+        const ccf::pal::snp::EndorsementEndpointsConfiguration&) {
+        regopts.attestation =
+          ravl::oe::Attestation(quote_info.quote, quote_info.endorsements);
+      });
 
     nlohmann::json jbody = regopts;
     auto body = serdes::pack(jbody, serdes::Pack::Text);

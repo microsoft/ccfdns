@@ -14,13 +14,13 @@
 #include <ccf/crypto/base64.h>
 #include <ccf/crypto/key_pair.h>
 #include <ccf/ds/hex.h>
+#include <ccf/ds/json.h>
 #include <ccf/ds/logger.h>
 #include <ccf/http_query.h>
 #include <ccf/http_status.h>
 #include <ccf/json_handler.h>
 #include <ccf/version.h>
 #include <charconv>
-#include <ds/json.h>
 #include <endpoint_context.h>
 #include <nlohmann/json.hpp>
 #include <odata_error.h>

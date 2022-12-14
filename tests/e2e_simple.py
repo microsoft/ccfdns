@@ -57,7 +57,7 @@ def submit_service_registration(client, origin, name, address, port, protocol, p
             "address": str(address),
             "port": port,
             "protocol": protocol,
-            "attestation": {"format": "SGX", "evidence": [], "endorsements": []},
+            "attestation": {"format": "SGX", "evidence": "none", "endorsements": "none"},
             "algorithm": "ECDSAP384SHA384",
             "public_key": public_pem.decode("ascii"),
         },

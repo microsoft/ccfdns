@@ -2,12 +2,12 @@
 // Licensed under the Apache 2.0 License.
 
 #include "base32.h"
-#include "ccf/crypto/key_pair.h"
 #include "formatting.h"
 #include "resolver.h"
 #include "rfc1035.h"
 #include "rfc4034.h"
 
+#include <ccf/crypto/key_pair.h>
 #include <ccf/ds/logger.h>
 #include <ravl/options.h>
 #include <ravl/ravl.h>
@@ -20,6 +20,9 @@ using namespace aDNS;
 using namespace RFC1035;
 
 static uint32_t default_ttl = 86400;
+
+std::string dummy_attestation =
+  R"({"source": "OE", "evidence": "none", "endorsements": "none"})";
 
 auto type2str = [](const auto& x) {
   return aDNS::string_from_type(static_cast<aDNS::Type>(x));
@@ -539,7 +542,6 @@ TEST_CASE("Service registration")
 
   Name service_name("service42.example.com.");
   auto service_key = crypto::make_key_pair(crypto::CurveID::SECP384R1);
-  std::string attestation;
 
   RFC1035::A address("192.168.0.1");
 
@@ -549,7 +551,7 @@ TEST_CASE("Service registration")
     address,
     8000,
     "tcp",
-    attestation,
+    dummy_attestation,
     RFC4034::Algorithm::ECDSAP384SHA384,
     service_key->public_key_pem());
 

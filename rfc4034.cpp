@@ -13,10 +13,7 @@
 #include <ccf/crypto/hash_provider.h>
 #include <ccf/crypto/key_pair.h>
 #include <ccf/ds/logger.h>
-#include <openssl/ec.h>
-#include <openssl/ecdsa.h>
-#include <openssl/objects.h>
-#include <openssl/x509.h>
+#include <ravl/openssl.hpp>
 #include <set>
 #include <stdexcept>
 #include <tuple>
@@ -348,19 +345,35 @@ namespace RFC4034
     return der_from_coord(x, y, csz);
   };
 
-  static void convert_signature_to_asn1(std::vector<uint8_t>& sig)
+  inline std::vector<uint8_t> convert_signature_to_der(
+    const std::span<const uint8_t>& r,
+    const std::span<const uint8_t>& s,
+    bool little_endian)
   {
-    auto csz = sig.size() / 2;
-    BIGNUM* r = BN_new();
-    BIGNUM* s = BN_new();
-    BN_bin2bn(sig.data(), csz, r);
-    BN_bin2bn(sig.data() + csz, csz, s);
-    ECDSA_SIG* ecdsa_sig = ECDSA_SIG_new();
-    ECDSA_SIG_set0(ecdsa_sig, r, s);
-    auto outsz = i2d_ECDSA_SIG(ecdsa_sig, NULL);
-    sig.resize(outsz, 0);
-    unsigned char* outp = sig.data();
-    i2d_ECDSA_SIG(ecdsa_sig, &outp);
+    using namespace OpenSSL;
+
+    if (r.size() != s.size())
+      throw std::runtime_error("incompatible signature coordinates");
+
+    UqECDSA_SIG sig(UqBIGNUM(r, little_endian), UqBIGNUM(s, little_endian));
+    int der_size = i2d_ECDSA_SIG(sig, NULL);
+    CHECK0(der_size);
+    if (der_size < 0)
+      throw std::runtime_error("not an ECDSA signature");
+    std::vector<uint8_t> res(der_size);
+    auto der_sig_buf = res.data();
+    CHECK0(i2d_ECDSA_SIG(sig, &der_sig_buf));
+    return res;
+  }
+
+  inline std::vector<uint8_t> convert_signature_to_der(
+    const std::span<const uint8_t>& signature, bool little_endian = false)
+  {
+    auto half_size = signature.size() / 2;
+    return convert_signature_to_der(
+      {signature.data(), half_size},
+      {signature.data() + half_size, half_size},
+      little_endian);
   }
 
   bool verify_rrsigs(
@@ -425,7 +438,7 @@ namespace RFC4034
       CCF_APP_DEBUG("ADNS: VERIFY: data={}", ds::to_hex(data_to_sign));
       auto sig = rrsig_rdata.signature;
       CCF_APP_DEBUG("ADNS: VERIFY: r/s sig={}", ds::to_hex(sig));
-      convert_signature_to_asn1(sig);
+      sig = convert_signature_to_der(sig);
       CCF_APP_DEBUG("ADNS: VERIFY: sig={}", ds::to_hex(sig));
 
       CCF_APP_DEBUG(

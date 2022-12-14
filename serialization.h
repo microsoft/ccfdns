@@ -3,6 +3,7 @@
 #pragma once
 
 #include <cstdint>
+#include <stdexcept>
 #include <vector>
 
 template <typename T, typename V = std::vector<uint8_t>>

@@ -37,3 +37,6 @@ run.sh
 tests.sh
 .cache
 __pycache__
+build
+build_*
+vbuild*

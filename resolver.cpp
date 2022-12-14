@@ -5,7 +5,6 @@
 
 #include "adns_types.h"
 #include "base32.h"
-#include "ccf/crypto/sha256_hash.h"
 #include "formatting.h"
 #include "rfc1035.h"
 #include "rfc3596.h"
@@ -19,6 +18,7 @@
 #include <ccf/crypto/hash_bytes.h>
 #include <ccf/crypto/key_pair.h>
 #include <ccf/crypto/md_type.h>
+#include <ccf/crypto/sha256_hash.h>
 #include <ccf/ds/logger.h>
 #include <ccf/kv/map.h>
 #include <ccf/node/quote.h>
@@ -33,9 +33,6 @@
 #include <openssl/ossl_typ.h>
 #include <openssl/x509.h>
 #include <ravl/attestation.h>
-#include <ravl/http_client.h>
-#include <ravl/ravl.h>
-#include <ravl/ravl_impl.h>
 #include <set>
 #include <sstream>
 #include <stdexcept>
@@ -1094,8 +1091,18 @@ namespace aDNS
 
     std::shared_ptr<ravl::Attestation> att =
       ravl::parse_attestation(attestation);
-    if (ravl::verify_synchronous(att) == nullptr)
-      throw std::runtime_error("quote verification failed");
+
+#ifdef QUOTE_VERIFICATION_FAILURE_OK
+    try
+#endif
+    {
+      if (ravl::verify_synchronous(att) == nullptr)
+        throw std::runtime_error("no attestation claims");
+    }
+#ifdef QUOTE_VERIFICATION_FAILURE_OK
+    catch (...)
+    {}
+#endif
 
     // if policy checks pass...
 
