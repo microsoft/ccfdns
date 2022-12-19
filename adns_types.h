@@ -8,8 +8,7 @@
 #include "small_vector.h"
 
 #include <ccf/crypto/base64.h>
-#include <ccf/ds/hex.h>
-#include <ravl/ravl.h>
+#include <ravl/attestation.h>
 
 namespace aDNS::Types
 {

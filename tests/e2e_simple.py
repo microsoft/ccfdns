@@ -57,7 +57,7 @@ def submit_service_registration(client, origin, name, address, port, protocol, p
             "address": str(address),
             "port": port,
             "protocol": protocol,
-            "attestation": {"format": "SGX", "evidence": "none", "endorsements": "none"},
+            "attestation": '{"source": "SGX", "evidence": "none", "endorsements": "none"}',
             "algorithm": "ECDSAP384SHA384",
             "public_key": public_pem.decode("ascii"),
         },
@@ -101,9 +101,7 @@ def check_record(host, port, ca, name, stype, expected_data=None):
 def validate_rrsigs(response: dns.message.Message, qtype, keys):
     name = response.question[0].name
     rrs = response.find_rrset(dns.message.ANSWER, name, rdc.IN, qtype)
-    rrsigs = response.find_rrset(dns.message.ANSWER, name, rdc.IN, rdt.RRSIG, qtype)
-    print(rrs)
-    print(rrsigs)
+    rrsigs = response.find_rrset(dns.message.ANSWER, name, rdc.IN, rdt.RRSIG, qtype)    
     if keys is not None:
         dns.dnssec.validate(rrs, rrsigs, keys)
 

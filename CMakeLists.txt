@@ -31,7 +31,7 @@ get_filename_component(RAVL_DIR ${RAVL} DIRECTORY)
 set(RAVL_SRC ${RAVL_DIR}/../src)
 
 add_library(ravl INTERFACE)
-target_compile_definitions(ravl INTERFACE RAVL_HAVE_OPENSSL)
+target_compile_definitions(ravl INTERFACE RAVL_HAVE_OPENSSL RAVL_LIBRARY_BUILD)
 target_include_directories(ravl INTERFACE ${RAVL_DIR}/../include)
 target_sources(ravl INTERFACE ${RAVL_SRC}/attestation.cpp ${RAVL_SRC}/ravl.cpp ${RAVL_SRC}/request_tracker.cpp ${RAVL_SRC}/http_client.cpp)
 
@@ -44,16 +44,23 @@ add_ccf_app(ccfdns
   LINK_LIBS_ENCLAVE ravl
 )
 
+if (NOT VIRTUAL)
+sign_app_library(
+  ${ENCLAVE_TARGET} ${CMAKE_CURRENT_SOURCE_DIR}/oe_sign.conf
+  ${CMAKE_CURRENT_BINARY_DIR}/signing_key.pem
+)
+endif()
+
 if (VERBOSE_LOGGING)
   target_compile_definitions(${ENCLAVE_TARGET} PRIVATE -DVERBOSE_LOGGING)
 endif()
 
-if (VIRTUAL)
-  target_compile_definitions(${ENCLAVE_TARGET} PRIVATE RAVL_LIBRARY_BUILD)
+if (VIRTUAL)  
   if (CMAKE_BUILD_TYPE MATCHES Debug)
     target_compile_definitions(${ENCLAVE_TARGET} PRIVATE QUOTE_VERIFICATION_FAILURE_OK)
     target_compile_options(${ENCLAVE_TARGET} PRIVATE -fstandalone-debug)
-    target_compile_options(${ENCLAVE_TARGET} PUBLIC -O1 -g -fsanitize=address -fno-omit-frame-pointer)
+    set(ASAN_BLACKLIST -fsanitize-blacklist=${CMAKE_CURRENT_SOURCE_DIR}/asan_blacklist.txt)
+    target_compile_options(${ENCLAVE_TARGET} PUBLIC -O1 -g -fsanitize=address ${ASAN_BLACKLIST} -fno-omit-frame-pointer)
     target_link_options(${ENCLAVE_TARGET} PUBLIC -g -fsanitize=address)
   endif()
 endif()
@@ -68,13 +75,6 @@ add_custom_target(
   ccfdns_signing_key ALL DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/signing_key.pem
 )
 
-if (!VIRTUAL)
-sign_app_library(
-  ${ENCLAVE_TARGET} ${CMAKE_CURRENT_SOURCE_DIR}/oe_sign.conf
-  ${CMAKE_CURRENT_BINARY_DIR}/signing_key.pem
-)
-endif()
-
 set(CCFDNS_TEST_UTILITIES tests.sh)
 foreach(UTILITY ${CCFDNS_TEST_UTILITIES})
   configure_file(
@@ -82,8 +82,14 @@ foreach(UTILITY ${CCFDNS_TEST_UTILITIES})
   )
 endforeach()
 
+
 enable_testing()
-add_test(NAME e2e_simple_tests COMMAND python ../tests/e2e_simple.py -b "${CCF_PKG_DIR}/../bin")
+
+if (VIRTUAL)
+  set(TEST_PLATFORM_ARGS -e virtual -t virtual)
+endif()
+
+add_test(NAME e2e_simple_tests COMMAND python ../tests/e2e_simple.py -b "${CCF_PKG_DIR}/../bin" ${TEST_PLATFORM_ARGS})
 
 function(add_unit_test name)
   add_executable(${name} ${ARGN})
@@ -104,8 +110,7 @@ endfunction()
 
 if (VIRTUAL)
   add_unit_test(resolver_tests ../tests/resolver_tests.cpp resolver.cpp rfc4034.cpp rfc5155.cpp base32.cpp)
-  target_compile_definitions(resolver_tests PRIVATE QUOTE_VERIFICATION_FAILURE_OK)
-  target_compile_definitions(resolver_tests PRIVATE RAVL_LIBRARY_BUILD)
+  target_compile_definitions(resolver_tests PRIVATE QUOTE_VERIFICATION_FAILURE_OK)  
 endif()
 
 add_ccf_app(ccf_demo_service
@@ -121,11 +126,11 @@ if (CMAKE_BUILD_TYPE MATCHES Debug)
   target_compile_options(${DEMO_ENCLAVE_TARGET} PRIVATE -fstandalone-debug)
 endif()
 
-if (!VIRTUAL)
+if (NOT VIRTUAL)
 sign_app_library(
   ${DEMO_ENCLAVE_TARGET} ${CMAKE_CURRENT_SOURCE_DIR}/oe_sign.conf
   ${CMAKE_CURRENT_BINARY_DIR}/signing_key.pem
 )
 endif()
 
-add_test(NAME ccf_demo_service COMMAND python ../tests/ccf_demo_service_test.py -b "${CCF_PKG_DIR}/../bin")
+add_test(NAME ccf_demo_service COMMAND python ../tests/ccf_demo_service_test.py -b "${CCF_PKG_DIR}/../bin" ${TEST_PLATFORM_ARGS})

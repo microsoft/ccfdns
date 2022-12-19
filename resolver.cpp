@@ -32,7 +32,7 @@
 #include <openssl/ecdsa.h>
 #include <openssl/ossl_typ.h>
 #include <openssl/x509.h>
-#include <ravl/attestation.h>
+#include <ravl/ravl.h>
 #include <set>
 #include <sstream>
 #include <stdexcept>
