@@ -190,6 +190,13 @@ namespace aDNS
     virtual void install_acme_token(
       const Name& origin, const Name& name, const RFC1035::TXT& txt);
 
+    virtual std::string registration_policy() const = 0;
+
+    virtual void set_registration_policy(const std::string& new_policy) = 0;
+
+    virtual bool evaluate_registration_policy(
+      const std::string& data) const = 0;
+
   protected:
     Configuration config;
     bool ignore_on_add = false;

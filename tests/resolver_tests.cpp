@@ -45,6 +45,8 @@ public:
   std::map<Name, crypto::Pem, RFC4034::CanonicalNameOrdering> key_signing_keys;
   std::map<Name, crypto::Pem, RFC4034::CanonicalNameOrdering> zone_signing_keys;
 
+  std::string registration_policy_str;
+
   virtual void add(const Name& origin, const ResourceRecord& rr) override
   {
     ResourceRecord rs(rr);
@@ -154,6 +156,22 @@ public:
     }
     else
       CCF_APP_DEBUG("<empty>");
+  }
+
+  virtual std::string registration_policy() const override
+  {
+    return registration_policy_str;
+  }
+
+  virtual void set_registration_policy(const std::string& new_policy) override
+  {
+    registration_policy_str = new_policy;
+  }
+
+  virtual bool evaluate_registration_policy(
+    const std::string& data) const override
+  {
+    return true;
   }
 };
 

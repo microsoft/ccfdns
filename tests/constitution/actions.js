@@ -23,6 +23,20 @@ function parseUrl(url) {
   };
 }
 
+function hexStrToBuf(hexStr) {
+  const result = [];
+
+  for (let i = 0; i < hexStr.length; i += 2) {
+    const octet = hexStr.slice(i, i + 2);
+    if (octet.length != 2 || octet.match(/[G-Z\s]/i)) {
+      throw new Error("Hex string invalid");
+    }
+    result.push(parseInt(octet, 16));
+  }
+
+  return new Uint8Array(result).buffer;
+}
+
 function checkType(value, type, field) {
   const optional = type.endsWith("?");
   if (optional) {
@@ -130,7 +144,7 @@ function checkJwks(value, field) {
 }
 
 function checkX509CertBundle(value, field) {
-  if (!ccf.isValidX509CertBundle(value)) {
+  if (!ccf.crypto.isValidX509CertBundle(value)) {
     throw new Error(
       `${field} must be a valid X509 certificate (bundle) in PEM format`
     );
@@ -318,6 +332,13 @@ function updateServiceConfig(new_config) {
   }
 }
 
+function setRegistrationPolicy(new_policy) {
+  ccf.kv["public:ccf.gov.ccfdns.registration_policy"].set(
+    getSingletonKvKey(),
+    ccf.jsonCompatibleToBuf(new_policy)
+  );
+}
+
 const actions = new Map([
   [
     "set_constitution",
@@ -489,9 +510,11 @@ const actions = new Map([
         );
 
         if (args.user_data !== null && args.user_data !== undefined) {
+          let userInfo = {};
+          userInfo.user_data = args.user_data;
           ccf.kv["public:ccf.gov.users.info"].set(
             rawUserId,
-            ccf.jsonCompatibleToBuf(args.user_data)
+            ccf.jsonCompatibleToBuf(userInfo)
           );
         } else {
           ccf.kv["public:ccf.gov.users.info"].delete(rawUserId);
@@ -747,6 +770,24 @@ const actions = new Map([
     ),
   ],
   [
+    "set_js_runtime_options",
+    new Action(
+      function (args) {
+        checkType(args.max_heap_bytes, "integer", "max_heap_bytes");
+        checkType(args.max_stack_bytes, "integer", "max_stack_bytes");
+        checkType(
+          args.max_execution_time_ms,
+          "integer",
+          "max_execution_time_ms"
+        );
+      },
+      function (args) {
+        const js_engine_map = ccf.kv["public:ccf.gov.js_runtime_options"];
+        js_engine_map.set(getSingletonKvKey(), ccf.jsonCompatibleToBuf(args));
+      }
+    ),
+  ],
+  [
     "refresh_js_app_bytecode_cache",
     new Action(
       function (args) {},
@@ -890,9 +931,10 @@ const actions = new Map([
       },
       function (args) {
         const issuerBuf = ccf.strToBuf(args.issuer);
-        if (!ccf.kv["public:ccf.gov.jwt.issuers"].delete(issuerBuf)) {
+        if (!ccf.kv["public:ccf.gov.jwt.issuers"].has(issuerBuf)) {
           return;
         }
+        ccf.kv["public:ccf.gov.jwt.issuers"].delete(issuerBuf);
         ccf.removeJwtPublicSigningKeys(args.issuer);
       }
     ),
@@ -910,6 +952,96 @@ const actions = new Map([
 
         // Adding a new allowed code ID changes the semantics of any other open proposals, so invalidate them to avoid confusion or malicious vote modification
         invalidateOtherOpenProposals(proposalId);
+      }
+    ),
+  ],
+  [
+    "add_snp_measurement",
+    new Action(
+      function (args) {
+        checkType(args.measurement, "string", "measurement");
+      },
+      function (args, proposalId) {
+        const measurement = ccf.strToBuf(args.measurement);
+        const ALLOWED = ccf.jsonCompatibleToBuf("AllowedToJoin");
+        ccf.kv["public:ccf.gov.nodes.snp.measurements"].set(
+          measurement,
+          ALLOWED
+        );
+
+        // Adding a new allowed measurement changes the semantics of any other open proposals, so invalidate them to avoid confusion or malicious vote modification
+        invalidateOtherOpenProposals(proposalId);
+      }
+    ),
+  ],
+  [
+    "add_executor_node_code",
+    new Action(
+      function (args) {
+        checkType(args.executor_code_id, "string", "executor_code_id");
+      },
+      function (args) {
+        const codeId = ccf.strToBuf(args.executor_code_id);
+        const ALLOWED = ccf.jsonCompatibleToBuf("AllowedToExecute");
+        ccf.kv["public:ccf.gov.nodes.executor_code_ids"].set(codeId, ALLOWED);
+      }
+    ),
+  ],
+  [
+    "add_snp_host_data",
+    new Action(
+      function (args) {
+        checkType(args.security_policy, "string", "security_policy");
+        checkType(args.host_data, "string", "host_data");
+      },
+      function (args, proposalId) {
+        const host_data = ccf.strToBuf(args.host_data);
+        const security_policy = ccf.jsonCompatibleToBuf(args.security_policy);
+
+        if (args.security_policy != "") {
+          const security_policy_digest = ccf.bufToStr(
+            ccf.digest("SHA-256", ccf.strToBuf(args.security_policy))
+          );
+          const quoted_host_data = ccf.bufToStr(hexStrToBuf(args.host_data));
+
+          if (security_policy_digest != quoted_host_data) {
+            throw new Error(
+              `The hash of raw policy ${security_policy_digest} does not match digest ${quoted_host_data}`
+            );
+          }
+        }
+
+        ccf.kv["public:ccf.gov.nodes.snp.host_data"].set(
+          host_data,
+          security_policy
+        );
+
+        // Adding a new allowed host data changes the semantics of any other open proposals, so invalidate them to avoid confusion or malicious vote modification
+        invalidateOtherOpenProposals(proposalId);
+      }
+    ),
+  ],
+  [
+    "remove_snp_host_data",
+    new Action(
+      function (args) {
+        checkType(args.host_data, "string", "host_data");
+      },
+      function (args) {
+        const host_data = ccf.strToBuf(args.host_data);
+        ccf.kv["public:ccf.gov.nodes.snp.host_data"].delete(host_data);
+      }
+    ),
+  ],
+  [
+    "remove_snp_measurement",
+    new Action(
+      function (args) {
+        checkType(args.measurement, "string", "measurement");
+      },
+      function (args) {
+        const measurement = ccf.strToBuf(args.measurement);
+        ccf.kv["public:ccf.gov.nodes.snp.measurements"].delete(measurement);
       }
     ),
   ],
@@ -1021,6 +1153,18 @@ const actions = new Map([
       function (args) {
         const codeId = ccf.strToBuf(args.code_id);
         ccf.kv["public:ccf.gov.nodes.code_ids"].delete(codeId);
+      }
+    ),
+  ],
+  [
+    "remove_executor_node_code",
+    new Action(
+      function (args) {
+        checkType(args.executor_code_id, "string", "executor_code_id");
+      },
+      function (args) {
+        const codeId = ccf.strToBuf(args.executor_code_id);
+        ccf.kv["public:ccf.gov.nodes.executor_code_ids"].delete(codeId);
       }
     ),
   ],
@@ -1200,6 +1344,50 @@ const actions = new Map([
       function (args) {},
       function (args, proposalId) {
         ccf.node.triggerSnapshot();
+      }
+    ),
+  ],
+  [
+    "trigger_acme_refresh",
+    new Action(
+      function (args) {
+        checkType(
+          args.interfaces,
+          "array?",
+          "interfaces to refresh the certificates for"
+        );
+      },
+      function (args, proposalId) {
+        ccf.node.triggerACMERefresh(args.interfaces);
+      }
+    ),
+  ],
+  [
+    "assert_service_identity",
+    new Action(
+      function (args) {
+        checkX509CertBundle(args.service_identity, "service_identity");
+        const service_info = "public:ccf.gov.service.info";
+        const rawService = ccf.kv[service_info].get(getSingletonKvKey());
+        if (rawService === undefined) {
+          throw new Error("Service information could not be found");
+        }
+        const service = ccf.bufToJsonCompatible(rawService);
+        if (service.cert !== args.service_identity) {
+          throw new Error("Service identity certificate mismatch");
+        }
+      },
+      function (args) {}
+    ),
+  ],
+  [
+    "set_registration_policy",
+    new Action(
+      function (args) {
+        checkType(args.new_policy, "string", "new_policy");
+      },
+      function (args) {
+        setRegistrationPolicy(args.new_policy);
       }
     ),
   ],

@@ -25,6 +25,8 @@
 #include <nlohmann/json.hpp>
 #include <odata_error.h>
 #include <optional>
+#include <quickjs/quickjs-exports.h>
+#include <quickjs/quickjs.h>
 #include <stdexcept>
 
 using namespace aDNS;
@@ -74,7 +76,11 @@ namespace ccfdns
 
     using Records = ccf::ServiceSet<ResourceRecord>;
     using Origins = ccf::ServiceSet<RFC1035::Name>;
-    std::string origins_table_name = "public:origins";
+    std::string origins_table_name = "public:ccfdns.origins";
+
+    using RegistrationPolicy = ccf::ServiceValue<std::string>;
+    std::string registration_policy_table_name =
+      "public:ccf.gov.ccfdns.registration_policy";
 
     void set_endpoint_context(ccf::endpoints::EndpointContext& ctx)
     {
@@ -314,6 +320,116 @@ namespace ccfdns
         kit->second.push_back(pem);
       table->put(origin_lowered, *value);
     }
+
+    virtual std::string registration_policy() const override
+    {
+      auto policy_table =
+        ctx->tx.ro<RegistrationPolicy>(registration_policy_table_name);
+      const std::optional<std::string> policy = policy_table->get();
+      if (!policy)
+        throw std::runtime_error("no registration policy");
+      return *policy;
+    }
+
+    virtual void set_registration_policy(const std::string& new_policy) override
+    {
+      auto policy =
+        ctx->tx.rw<RegistrationPolicy>(registration_policy_table_name)->get();
+      policy = new_policy;
+    }
+
+    static constexpr const size_t default_stack_size = 1024 * 1024;
+    static constexpr const size_t default_heap_size = 100 * 1024 * 1024;
+
+    class RPJSRuntime
+    {
+    public:
+      RPJSRuntime()
+      {
+        rt = JS_NewRuntime();
+        if (!rt)
+          throw std::runtime_error("JS runtime creation failed");
+        JS_SetMaxStackSize(rt, default_stack_size);
+        JS_SetMemoryLimit(rt, default_heap_size);
+        ctx = JS_NewContext(rt);
+        if (!ctx)
+          throw std::runtime_error("JS context creation failed");
+      }
+
+      virtual ~RPJSRuntime()
+      {
+        JS_FreeContext(ctx);
+        JS_FreeRuntime(rt);
+      }
+
+      bool eval(const std::string& program)
+      {
+        static const JSValue jnull = {JSValueUnion{0}, JS_TAG_NULL};
+
+        CCF_APP_DEBUG("Policy evaluation program:\n{}", program);
+
+        JSValue val = JS_Eval(
+          ctx,
+          program.c_str(),
+          program.size(),
+          "program.js",
+          JS_EVAL_TYPE_GLOBAL | JS_EVAL_FLAG_STRICT);
+
+        if (!JS_IsBool(val))
+        {
+          const char* cstr = "";
+          if (JS_IsException(val))
+          {
+            auto exval = JS_GetException(ctx);
+            bool is_error = JS_IsError(ctx, exval);
+            if (!is_error && JS_IsObject(exval))
+              exval = JS_JSONStringify(ctx, exval, jnull, jnull);
+            cstr = JS_ToCString(ctx, exval);
+            JS_FreeValue(ctx, exval);
+          }
+          else
+          {
+            auto jval = JS_JSONStringify(ctx, val, jnull, jnull);
+            cstr = JS_ToCString(ctx, jval);
+            JS_FreeValue(ctx, jval);
+          }
+          if (!cstr)
+            throw std::runtime_error(
+              "JS policy evaluation produced non-Boolean, non-convertible "
+              "result");
+          std::string r(cstr);
+          JS_FreeCString(ctx, cstr);
+          JS_FreeValue(ctx, val);
+          throw std::runtime_error(
+            "JS policy evaluation produced non-Boolean result: " + r);
+        }
+
+        {
+          auto jval = JS_JSONStringify(ctx, val, jnull, jnull);
+          const char* cstr = JS_ToCString(ctx, jval);
+          CCF_APP_DEBUG("Policy evaluation result: {}", cstr);
+          JS_FreeCString(ctx, cstr);
+          JS_FreeValue(ctx, jval);
+        }
+
+        bool r = JS_VALUE_GET_BOOL(val);
+        JS_FreeValue(ctx, val);
+        return r;
+      }
+
+      JSRuntime* rt = nullptr;
+      JSContext* ctx = nullptr;
+    };
+
+    virtual bool evaluate_registration_policy(
+      const std::string& data) const override
+    {
+      RPJSRuntime rt;
+      std::string program = data + "\n\n" + registration_policy();
+      return rt.eval(program);
+    }
+
+    using Resolver::register_service;
 
   protected:
     ccf::endpoints::EndpointContext* ctx;

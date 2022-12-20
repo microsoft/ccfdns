@@ -32,6 +32,7 @@
 #include <openssl/ecdsa.h>
 #include <openssl/ossl_typ.h>
 #include <openssl/x509.h>
+#include <ravl/oe.h>
 #include <ravl/ravl.h>
 #include <set>
 #include <sstream>
@@ -1092,19 +1093,27 @@ namespace aDNS
     std::shared_ptr<ravl::Attestation> att =
       ravl::parse_attestation(attestation);
 
+    std::shared_ptr<ravl::Claims> claims = nullptr;
+
 #ifdef QUOTE_VERIFICATION_FAILURE_OK
     try
 #endif
     {
-      if (ravl::verify_synchronous(att) == nullptr)
-        throw std::runtime_error("no attestation claims");
+      if (!(claims = ravl::verify_synchronous(att)))
+        throw std::runtime_error("attestation verification failed: no claims");
     }
 #ifdef QUOTE_VERIFICATION_FAILURE_OK
     catch (...)
-    {}
+    {
+      claims = std::make_shared<ravl::oe::Claims>();
+    }
 #endif
 
-    // if policy checks pass...
+    std::string policy_data =
+      "var data = { claims: " + claims->to_json() + " };";
+    bool policy_ok = evaluate_registration_policy(policy_data);
+    if (!policy_ok)
+      throw std::runtime_error("registration policy evaluation failed");
 
     Name abs_name = name;
     if (!name.is_absolute())
