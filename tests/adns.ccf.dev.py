@@ -181,6 +181,29 @@ def public_host_port(listen_addr):
     return public_host, public_port
 
 
+def set_registration_policy(network, args):
+    new_policy = """
+    data.claims.sgx_claims.report_body.mr_enclave.length == 32 &&
+    JSON.stringify(data.claims.custom_claims.sgx_report_data) == JSON.stringify([ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    """
+
+    primary, _ = network.find_primary()
+
+    proposal_body, careful_vote = network.consortium.make_proposal(
+        "set_registration_policy", new_policy=new_policy
+    )
+
+    proposal = network.consortium.get_any_active_member().propose(
+        primary, proposal_body
+    )
+
+    network.consortium.vote_using_majority(
+        primary,
+        proposal,
+        careful_vote,
+    )
+
+
 def run(args):
     """Start the network"""
 
@@ -207,7 +230,7 @@ def run(args):
     email = "nobody@example.com"
     http_port = 8000  # pick something that the firewall allows through
 
-    # Note: cchost needs: sudo setcap 'cap_net_bind_service=+ep' https_dns_proxy
+    # Note: cchost needs: sudo setcap 'cap_net_bind_service=+ep' cchost
     # acme_config_name = "letsencrypt"
     # acme_directory = "https://acme-staging-v02.api.letsencrypt.org/directory"
     # ca_certs = [
@@ -287,6 +310,7 @@ def run(args):
                 dbg_nodes=args.debug_nodes,
             ) as network:
                 network.start_and_open(args)
+                set_registration_policy(network, args)
                 populate_adns_ccf_dev(network, args)
 
                 proxy_proc = None
