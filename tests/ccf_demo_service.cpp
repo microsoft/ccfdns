@@ -138,6 +138,27 @@ namespace service
       make_endpoint(
         "/poke", HTTP_POST, ccf::json_adapter(poke), ccf::no_auth_required)
         .install();
+
+      auto index = [this](auto& ctx) {
+        try
+        {
+          std::stringstream response;
+          response << "<html>";
+          response << "This is <a href=\"https://"
+                   << ccfapp::configuration.service_name << "\">"
+                   << ccfapp::configuration.service_name << "</a>";
+          response << "</html>";
+          ctx.rpc_ctx->set_response_status(HTTP_STATUS_OK);
+          ctx.rpc_ctx->set_response_body(response.str());
+        }
+        catch (std::exception& ex)
+        {
+          ctx.rpc_ctx->set_response_status(HTTP_STATUS_INTERNAL_SERVER_ERROR);
+          ctx.rpc_ctx->set_response_body(ex.what());
+        }
+      };
+
+      make_endpoint("/", HTTP_GET, index, ccf::no_auth_required).install();
     }
 
     virtual void init_handlers() override
