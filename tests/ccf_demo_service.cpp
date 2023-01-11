@@ -164,14 +164,15 @@ namespace service
     virtual void init_handlers() override
     {
       ccf::UserEndpointRegistry::init_handlers();
+      std::string protocol = "tcp";
+      auto port = ccfapp::configuration.default_port;
 
       auto interface_id = ccfapp::configuration.interface_id;
       auto nci = context.get_subsystem<ccf::NodeConfigurationInterface>();
       auto ncs = nci->get();
       auto iit = ncs.node_config.network.rpc_interfaces.find(interface_id);
       if (iit == ncs.node_config.network.rpc_interfaces.end())
-        CCF_APP_FAIL(
-          "Interface '{}' not found; cannot register service", interface_id);
+        CCF_APP_FAIL("Interface '{}' not found", interface_id);
       else
       {
         std::string acme_config_name;
@@ -179,7 +180,7 @@ namespace service
         if (endo->authority == ccf::Authority::ACME && endo->acme_configuration)
           acme_config_name = *endo->acme_configuration;
         if (acme_config_name.empty())
-          CCF_APP_FAIL("Empty ACME configuration; cannot register service");
+          CCF_APP_FAIL("Empty ACME configuration");
 
         auto acmess = context.get_subsystem<ccf::ACMESubsystemInterface>();
         const auto& acmecfg = acmess->config(acme_config_name);
@@ -195,16 +196,16 @@ namespace service
             ccfapp::configuration.service_name,
             ccfapp::ca_certs));
 
-        auto protocol = iit->second.protocol;
+        protocol = iit->second.protocol;
         if (protocol.empty())
           protocol = "tcp";
-        uint16_t port = ccfapp::configuration.default_port;
         const auto& address = iit->second.bind_address;
         auto cpos = address.find(':');
         if (cpos != std::string::npos)
           port = atoi(&address[cpos + 1]);
-        ccfapp::register_service(context, protocol, port);
       }
+
+      ccfapp::register_service(context, protocol, port);
     }
   };
 }

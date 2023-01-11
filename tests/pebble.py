@@ -55,6 +55,7 @@ def get_without_cert_check(url):
 
 
 def get_pebble_ca_certs(mgmt_address):
+    """Get the pebble CA certificate(s)"""
     ca = get_without_cert_check("https://" + mgmt_address + "/roots/0")
     intermediate = get_without_cert_check(
         "https://" + mgmt_address + "/intermediates/0"
@@ -63,6 +64,7 @@ def get_pebble_ca_certs(mgmt_address):
 
 
 def generate_self_signed_cert(key, subject):
+    """Generate a self-signed certificate"""
     subject = issuer = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, subject)])
 
     return (
@@ -90,6 +92,7 @@ def make_pebble_config(
     http_port,
     tls_port,
 ):
+    """Create a pebble config file"""
     pebble_config = {
         "pebble": {
             "listenAddress": listen_address,
@@ -107,35 +110,78 @@ def make_pebble_config(
         json.dump(pebble_config, f)
 
 
-def run_pebble(args):
-    binary_filename = "/opt/pebble/pebble_linux-amd64"
-    config_filename = "pebble.config.json"
-    ca_key_filename = "pebble-key.pem"
-    ca_cert_filename = "pebble-ca-cert.pem"
-    output_filename = "pebble.out"
-    error_filename = "pebble.err"
-    listen_address = "127.0.0.1:1024"
-    mgmt_address = "127.0.0.1:1025"
-    dns_address = "ns1.adns.ccf.dev:53"
-    tls_port = 1026
-    http_port = 1027
+class Options:
+    def __init__(self):
+        self.binary_filename = "/opt/pebble/pebble_linux-amd64"
+        self.config_filename = "pebble.config.json"
+        self.ca_key_filename = "pebble-key.pem"
+        self.ca_cert_filename = "pebble-ca-cert.pem"
+        self.output_filename = "pebble.out"
+        self.error_filename = "pebble.err"
+        self.listen_address = "127.0.0.1:1024"
+        self.mgmt_address = "127.0.0.1:1025"
+        self.dns_address = None
+        self.tls_port = 1026
+        self.http_port = 1027
+        self.wait_forever = False
 
-    if not os.path.exists(binary_filename) or not os.path.exists(binary_filename):
+
+def default_args(args):
+    """Fill in default args"""
+
+    r = Options()
+
+    if hasattr(args, "binary_filename"):
+        r.binary_filename = args.binary_filename
+    if hasattr(args, "config_filename"):
+        r.config_filename = args.config_filename
+    if hasattr(args, "ca_key_filename"):
+        r.ca_key_filename = args.ca_key_filename
+    if hasattr(args, "ca_cert_filename"):
+        r.ca_cert_filename = args.ca_cert_filename
+    if hasattr(args, "output_filename"):
+        r.output_filename = args.output_filename
+    if hasattr(args, "error_filename"):
+        r.error_filename = args.error_filename
+    if hasattr(args, "listen_address"):
+        r.listen_address = args.listen_address
+    if hasattr(args, "mgmt_address"):
+        r.mgmt_address = args.mgmt_address
+    if hasattr(args, "dns_address"):
+        r.dns_address = args.dns_address
+    if hasattr(args, "tls_port"):
+        r.tls_port = args.tls_port
+    if hasattr(args, "http_port"):
+        r.http_port = args.http_port
+    if hasattr(args, "wait_forever"):
+        r.wait_forever = args.wait_forever
+
+    return r
+
+
+def run_pebble(pargs):
+    """Run pebble"""
+
+    args = default_args(pargs)
+
+    if not os.path.exists(args.binary_filename) or not os.path.exists(
+        args.binary_filename
+    ):
         raise Exception("pebble not found; run playbooks to install it")
 
     make_pebble_config(
-        config_filename,
-        listen_address,
-        mgmt_address,
-        ca_cert_filename,
-        ca_key_filename,
-        http_port,
-        tls_port,
+        args.config_filename,
+        args.listen_address,
+        args.mgmt_address,
+        args.ca_cert_filename,
+        args.ca_key_filename,
+        args.http_port,
+        args.tls_port,
     )
 
     ca_key = ec.generate_private_key(ec.SECP384R1(), default_backend())
 
-    with open(ca_key_filename, "w", encoding="ascii") as f:
+    with open(args.ca_key_filename, "w", encoding="ascii") as f:
         f.write(
             ca_key.private_bytes(
                 encoding=serialization.Encoding.PEM,
@@ -145,23 +191,28 @@ def run_pebble(args):
         )
 
     ca_cert = generate_self_signed_cert(ca_key, "Pebble Test CA")
-    with open(ca_cert_filename, "w", encoding="ascii") as f:
+    with open(args.ca_cert_filename, "w", encoding="ascii") as f:
         f.write(
             ca_cert.public_bytes(encoding=serialization.Encoding.PEM).decode("ascii")
         )
 
-    wait_forever(
-        output_filename,
-        error_filename,
-        binary_filename,
-        config_filename,
-        dns_address,
-        listen_address,
-        mgmt_address,
-    )
+    if args.wait_forever:
+        wait_forever(
+            args.output_filename,
+            args.error_filename,
+            args.binary_filename,
+            args.config_filename,
+            args.dns_address,
+            args.listen_address,
+            args.mgmt_address,
+        )
+        return None, None, None
+    else:
+        return run_pebble_proc(args)
 
 
 def run_proc(binary_filename, config_filename, dns_address, listen_address, out, err):
+    """Start the pebble process"""
     return start_pebble_process(
         binary_filename,
         config_filename,
@@ -173,6 +224,23 @@ def run_proc(binary_filename, config_filename, dns_address, listen_address, out,
     )
 
 
+def run_pebble_proc(args):
+    """Start background pebble proc"""
+
+    out = open(args.output_filename, "w", encoding="ascii")
+    err = open(args.error_filename, "w", encoding="ascii")
+    proc = run_proc(
+        args.binary_filename,
+        args.config_filename,
+        args.dns_address,
+        args.listen_address,
+        out,
+        err,
+    )
+
+    return proc, out, err
+
+
 def wait_forever(
     output_filename,
     error_filename,
@@ -182,6 +250,7 @@ def wait_forever(
     listen_address,
     mgmt_address,
 ):
+    """Start and keep pebble running forever"""
     exception_seen = None
     pebble_proc = None
 
@@ -197,9 +266,9 @@ def wait_forever(
                     err,
                 )
 
-                a_certs = get_pebble_ca_certs(mgmt_address)
+                ca_certs = get_pebble_ca_certs(mgmt_address)
 
-                LOG.info("Pebble running.")
+                LOG.success("Pebble running.")
 
                 while True:
                     time.sleep(0.1)

@@ -83,7 +83,8 @@ namespace ccfapp
             const std::vector<uint8_t>&) { return true; },
           ca_certs);
 
-        CCF_APP_TRACE("ACME: response for token '{}' is '{}'", token, response);
+        CCF_APP_TRACE(
+          "ACME-DNS: response for token '{}' is '{}'", token, response);
 
         auto key_authorization = token + "." + response;
         auto digest = crypto::sha256(
@@ -91,7 +92,7 @@ namespace ccfapp
         auto digest_b64 = crypto::b64url_from_raw(
           (uint8_t*)digest.data(), digest.size(), false);
         CCF_APP_TRACE(
-          "ACME: b64_digest for token '{}' is '{}'", token, digest_b64);
+          "ACME-DNS: b64_digest for token '{}' is '{}'", token, digest_b64);
 
         ccfdns::AddRecord::In addopts;
         addopts.origin = origin;
@@ -121,21 +122,23 @@ namespace ccfapp
               std::string tmp = {
                 reply_body.data(), reply_body.data() + reply_body.size()};
               CCF_APP_DEBUG(
-                "ACME: TXT entry add request for '{}' failed with status={} "
-                "and body={}",
+                "ACME-DNS: TXT entry add request for '{}' failed with "
+                "status={} and body={}",
                 token,
                 http_status,
                 tmp);
               return false;
             }
             CCF_APP_TRACE(
-              "ACME: TXT entry for '{}' added (status={})", token, http_status);
+              "ACME-DNS: TXT entry for '{}' added (status={})",
+              token,
+              http_status);
             challenges[token] = ChallengeStatus::TXT_RR_ADDED;
             return true;
           },
           ca_certs);
 
-        CCF_APP_DEBUG("ACME: Add request submitted for {}", token);
+        CCF_APP_DEBUG("ACME-DNS: Add request submitted for {}", token);
       }
     }
 
@@ -159,7 +162,7 @@ namespace ccfapp
       }
       else
       {
-        CCF_APP_DEBUG("ACME: status={}", cit->second);
+        CCF_APP_DEBUG("ACME-DNS: status={}", cit->second);
         switch (cit->second)
         {
           case ChallengeStatus::TXT_RR_REQUESTED:
@@ -204,15 +207,15 @@ namespace ccfapp
               std::string tmp = {
                 reply_body.data(), reply_body.data() + reply_body.size()};
               CCF_APP_DEBUG(
-                "ACME: TXT entry remove request for '{}' failed with status={} "
-                "and body={}",
+                "ACME-DNS: TXT entry remove request for '{}' failed with "
+                "status={} and body={}",
                 token,
                 http_status,
                 tmp);
               return false;
             }
             CCF_APP_TRACE(
-              "ACME: TXT entry for '{}' removed (status={})",
+              "ACME-DNS: TXT entry for '{}' removed (status={})",
               token,
               http_status);
             return true;
