@@ -799,10 +799,10 @@ namespace aDNS
         while (next != crecords.end() && next->name == name &&
                next->type == type && next->class_ == class_)
         {
-          next++;
           if (next->ttl != ttl)
             CCF_APP_INFO(
               "ADNS: warning: TTL mismatch in record set for {}", name);
+          next++;
         }
 
         // https://datatracker.ietf.org/doc/html/rfc4035#section-2.2
