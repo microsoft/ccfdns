@@ -586,8 +586,8 @@ TEST_CASE("Service registration")
   r = s.resolve(service_name, aDNS::QType::A, aDNS::QClass::IN);
   REQUIRE(RFC4034::verify_rrsigs(r.answers, dnskey_rrs, type2str));
 
+  s.install_acme_response(origin, service_name, RFC1035::TXT("sometoken"));
   auto challenge_name = Name("_acme-challenge") + service_name;
-  s.install_acme_token(origin, challenge_name, RFC1035::TXT("sometoken"));
   r = s.resolve(challenge_name, aDNS::QType::TXT, aDNS::QClass::IN);
   REQUIRE(RFC4034::verify_rrsigs(r.answers, dnskey_rrs, type2str));
 }

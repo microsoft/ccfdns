@@ -220,7 +220,7 @@ def run(args):
         pargs.http_port = args.acme_http_port
         pebble_proc, _, _ = pebble.run_pebble(pargs)
         while not os.path.exists(pargs.ca_cert_filename):
-            time.sleep(1)
+            time.sleep(0.25)
         acme_directory = "https://127.0.0.1:1024/dir"
         ca_certs = [open(pargs.ca_cert_filename, mode="r", encoding="ascii").read()]
         email = "nobody@example.com"
@@ -285,7 +285,7 @@ def run(args):
         )
         network.start_and_open(args)
         set_registration_policy(network, args)
-        populate_adns_ccf_dev(network, args)
+        # populate_adns_ccf_dev(network, args)
 
         node = network.find_random_node()
         primary_if = node.host.rpc_interfaces[infra.interfaces.PRIMARY_RPC_INTERFACE]
@@ -313,13 +313,12 @@ def run(args):
 
     except Exception as ex:
         LOG.error(f"Exception: {ex}")
-    finally:
         if pebble_proc:
             pebble_proc.kill()
         if proxy_proc:
             proxy_proc.kill()
 
-    return None, None
+    return None, []
 
 
 if __name__ == "__main__":

@@ -187,8 +187,10 @@ namespace aDNS
       RFC4034::Algorithm algorithm,
       const crypto::Pem& public_key);
 
-    virtual void install_acme_token(
-      const Name& origin, const Name& name, const RFC1035::TXT& txt);
+    virtual void install_acme_response(
+      const Name& origin, const Name& name, const std::string& key_authorization);
+
+    virtual void remove_acme_response(const Name& origin, const Name& name);
 
     virtual std::string registration_policy() const = 0;
 

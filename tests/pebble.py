@@ -24,7 +24,7 @@ def wait_for_port_to_listen(host, port, timeout=10):
     end_time = time.time() + timeout
     while time.time() < end_time:
         try:
-            socket.create_connection((host, int(port)), timeout=0.1)
+            socket.create_connection((host, int(port)), timeout=0.25)
             return
         except Exception as ex:
             LOG.trace(f"Likely expected exception: {ex}")

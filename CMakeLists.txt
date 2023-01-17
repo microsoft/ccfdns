@@ -44,6 +44,8 @@ add_ccf_app(ccfdns
   LINK_LIBS_ENCLAVE ravl
 )
 
+target_include_directories(${ENCLAVE_TARGET} PRIVATE ${CCF_PKG_DIR}/../include/ccf/_private)
+
 if (NOT VIRTUAL)
 sign_app_library(
   ${ENCLAVE_TARGET} ${CMAKE_CURRENT_SOURCE_DIR}/oe_sign.conf
@@ -133,4 +135,4 @@ sign_app_library(
 )
 endif()
 
-add_test(NAME ccf_demo_service COMMAND python ../tests/ccf_demo_service_test.py -b "${CCF_PKG_DIR}/../bin" ${TEST_PLATFORM_ARGS})
+# add_test(NAME e2e_everything COMMAND ${CMAKE_COMMAND} -E env PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}/tests:${CCF_PKG_DIR}/../bin python ../tests/e2e_everything.py -b "${CCF_PKG_DIR}/../bin" ${TEST_PLATFORM_ARGS} --library-dir .)

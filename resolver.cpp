@@ -1095,23 +1095,25 @@ namespace aDNS
 
     std::shared_ptr<ravl::Claims> claims = nullptr;
 
+    bool policy_ok = false;
 #ifdef QUOTE_VERIFICATION_FAILURE_OK
     try
 #endif
     {
       if (!(claims = ravl::verify_synchronous(att)))
         throw std::runtime_error("attestation verification failed: no claims");
+      std::string policy_data =
+        "var data = { claims: " + claims->to_json() + " };";
+      policy_ok = evaluate_registration_policy(policy_data);
     }
 #ifdef QUOTE_VERIFICATION_FAILURE_OK
     catch (...)
     {
       claims = std::make_shared<ravl::oe::Claims>();
+      policy_ok = true;
     }
 #endif
 
-    std::string policy_data =
-      "var data = { claims: " + claims->to_json() + " };";
-    bool policy_ok = evaluate_registration_policy(policy_data);
     if (!policy_ok)
       throw std::runtime_error("registration policy evaluation failed");
 
@@ -1136,6 +1138,7 @@ namespace aDNS
 
     small_vector<uint16_t> public_key_sv(pk_der.size(), pk_der.data());
 
+    // TLSKEY: Use TLSA instead; possibly with slight changes.
     ResourceRecord tlskey_rr(
       abs_name,
       static_cast<uint16_t>(aDNS::Types::Type::TLSKEY),
@@ -1178,8 +1181,8 @@ namespace aDNS
     add(origin, tlsa_rr);
   }
 
-  void Resolver::install_acme_token(
-    const Name& origin, const Name& name, const RFC1035::TXT& txt)
+  void Resolver::install_acme_response(
+    const Name& origin, const Name& name, const std::string &key_authorization)
   {
     // Note: does not necessarily have to be installed on the same DNS server;
     // we can delegate the challenge to someone else, e.g. a non-DNSSEC
@@ -1190,10 +1193,15 @@ namespace aDNS
     add(
       origin,
       ResourceRecord(
-        name,
+        Name("_acme-challenge") + name,
         static_cast<uint16_t>(Type::TXT),
         static_cast<uint16_t>(Class::IN),
         config.default_ttl,
-        txt));
+        TXT(key_authorization)));
+  }
+
+  void Resolver::remove_acme_response(const Name& origin, const Name& name)
+  {
+    remove(origin, Name("_acme-challenge") + name, Class::IN, Type::TXT);
   }
 }

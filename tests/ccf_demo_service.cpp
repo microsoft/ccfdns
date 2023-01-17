@@ -1,14 +1,18 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the Apache 2.0 License.
 
+#include "ravl/sgx.h"
+
 #include <cstdint>
+#include <ds/json.h>
+#include <service/consensus_config.h>
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
 
 #include "../ccfdns_rpc_types.h"
-#include "adns_acme_challenge_handler.h"
 
 #include <ccf/_private/http/http_builder.h>
 #include <ccf/_private/http/http_parser.h>
+#include <ccf/_private/node/rpc/network_identity_subsystem.h>
 #include <ccf/app_interface.h>
 #include <ccf/common_auth_policies.h>
 #include <ccf/crypto/base64.h>
@@ -38,82 +42,51 @@ namespace ccfapp
 {
   struct Configuration
   {
-    std::string interface_id = "endorsed_interface";
-    std::string adns_base_url = "https://adns.ccf.dev:8080/app";
-    std::string origin = "adns.ccf.dev.";
-    std::string service_name = "service43.adns.ccf.dev.";
+    std::string name = "service43.adns.ccf.dev.";
     std::string ip = "51.143.161.224";
-    uint16_t default_port = 443;
-  } configuration;
+    uint16_t port = 443;
+    std::string protocol = "tcp";
 
-  std::vector<std::string> ca_certs;
+    std::optional<std::string> adns_base_url;
+    std::optional<std::vector<std::string>> ca_certs;
+  };
 
-  void register_service(
-    ccfapp::AbstractNodeContext& context,
-    const std::string& protocol,
-    uint16_t port)
+  DECLARE_JSON_TYPE_WITH_OPTIONAL_FIELDS(Configuration);
+  DECLARE_JSON_REQUIRED_FIELDS(Configuration, name, ip, port, protocol);
+  DECLARE_JSON_OPTIONAL_FIELDS(Configuration, adns_base_url, ca_certs);
+
+  struct RegistrationInfo
   {
-    CCF_APP_DEBUG("DEMO: submitting app registration");
+    // auto algorithm = RFC4034::Algorithm::ECDSAP384SHA384;
+    std::string public_key;
+    std::string attestation;
+    std::vector<uint8_t> csr;
+  };
 
-    auto acmess = context.get_subsystem<ccf::ACMESubsystemInterface>();
-    auto public_key_pem =
-      crypto::public_key_pem_from_cert(acmess->network_cert().raw());
-
-    ccfdns::RegisterService::In regopts;
-    regopts.origin = configuration.origin;
-    regopts.name = configuration.service_name;
-    regopts.address = configuration.ip;
-    regopts.protocol = protocol;
-    regopts.port = port;
-    regopts.algorithm = RFC4034::Algorithm::ECDSAP384SHA384;
-    regopts.public_key = public_key_pem;
-
-    ccf::pal::attestation_report_data ard = {0};
-    ccf::pal::generate_quote(
-      ard,
-      [&regopts](
-        const ccf::QuoteInfo& quote_info,
-        const ccf::pal::snp::EndorsementEndpointsConfiguration&) {
-        regopts.attestation =
-          ravl::oe::Attestation(quote_info.quote, quote_info.endorsements);
-      });
-
-    nlohmann::json jbody = regopts;
-    auto body = serdes::pack(jbody, serdes::Pack::Text);
-
-    acmess->make_http_request(
-      "POST",
-      configuration.adns_base_url + "/register",
-      {{"content-type", "application/json"}},
-      body,
-      [](
-        const enum http_status& http_status,
-        const http::HeaderMap& headers,
-        const std::vector<uint8_t>& reply_body) {
-        if (
-          http_status != HTTP_STATUS_OK &&
-          http_status != HTTP_STATUS_NO_CONTENT)
-        {
-          std::string tmp = {
-            reply_body.data(), reply_body.data() + reply_body.size()};
-          CCF_APP_DEBUG(
-            "DEMO: app registration failed with status={} and "
-            "body={}",
-            http_status,
-            tmp);
-          return false;
-        }
-        CCF_APP_TRACE("DEMO: App registered (status={})", http_status);
-        return true;
-      },
-      ca_certs);
-  }
+  DECLARE_JSON_TYPE(RegistrationInfo);
+  DECLARE_JSON_REQUIRED_FIELDS(RegistrationInfo, public_key, attestation);
 }
+
+using namespace ccfapp;
 
 namespace service
 {
+
+  using TConfigurationTable = ccf::ServiceValue<Configuration>;
+  std::string configuration_table_name = "public:service_config";
+
+  struct ConfigurationRPC
+  {
+    using In = Configuration;
+    using Out = RegistrationInfo;
+  };
+
   class Handlers : public ccf::UserEndpointRegistry
   {
+  protected:
+    std::shared_ptr<ccf::ACMESubsystemInterface> acmess;
+    std::shared_ptr<ccf::NetworkIdentitySubsystemInterface> niss;
+
   public:
     Handlers(ccfapp::AbstractNodeContext& context) :
       ccf::UserEndpointRegistry(context)
@@ -142,11 +115,18 @@ namespace service
       auto index = [this](auto& ctx) {
         try
         {
+          auto t =
+            ctx.tx.template ro<TConfigurationTable>(configuration_table_name);
+          auto opt_cfg = t->get();
+
           std::stringstream response;
           response << "<html>";
-          response << "This is <a href=\"https://"
-                   << ccfapp::configuration.service_name << "\">"
-                   << ccfapp::configuration.service_name << "</a>";
+          if (!opt_cfg)
+            response << "No service config.";
+          else
+            response << "This is <a href=\"https://" << opt_cfg->name << "\">"
+                     << opt_cfg->name << "</a>";
+
           response << "</html>";
           ctx.rpc_ctx->set_response_status(HTTP_STATUS_OK);
           ctx.rpc_ctx->set_response_body(response.str());
@@ -159,53 +139,68 @@ namespace service
       };
 
       make_endpoint("/", HTTP_GET, index, ccf::no_auth_required).install();
+
+      auto configure = [this](auto& ctx, nlohmann::json&& params) {
+        try
+        {
+          const auto in = params.get<ConfigurationRPC::In>();
+
+          auto t =
+            ctx.tx.template rw<TConfigurationTable>(configuration_table_name);
+          t->put(in);
+
+          ConfigurationRPC::Out out;
+
+          auto public_key =
+            crypto::public_key_pem_from_cert(acmess->network_cert().raw());
+
+          out.public_key = public_key.str();
+
+          ccf::pal::attestation_report_data ard = {0};
+          ccf::pal::generate_quote(
+            ard,
+            [&out](
+              const ccf::QuoteInfo& quote_info,
+              const ccf::pal::snp::EndorsementEndpointsConfiguration&) {
+              out.attestation = ravl::oe::Attestation(
+                quote_info.quote, quote_info.endorsements);
+            });
+
+          if (!niss)
+            throw std::runtime_error("No network identity subsystem");
+
+          const auto& ni = niss->get();
+          auto kp = make_key_pair(ni->priv_key);
+
+          if (!kp)
+            throw std::runtime_error("Invalid network key");
+
+          out.csr =
+            kp->create_csr_der("CN=" + in.name, {{in.name, false}}, public_key);
+
+          return ccf::make_success(out);
+        }
+        catch (std::exception& ex)
+        {
+          return ccf::make_error(
+            HTTP_STATUS_BAD_REQUEST, ccf::errors::InternalError, ex.what());
+        }
+      };
+
+      make_endpoint(
+        "/configure",
+        HTTP_POST,
+        ccf::json_adapter(configure),
+        ccf::no_auth_required)
+        .set_auto_schema<ConfigurationRPC::In, ConfigurationRPC::Out>()
+        .install();
     }
 
     virtual void init_handlers() override
     {
       ccf::UserEndpointRegistry::init_handlers();
-      std::string protocol = "tcp";
-      auto port = ccfapp::configuration.default_port;
-
-      auto interface_id = ccfapp::configuration.interface_id;
-      auto nci = context.get_subsystem<ccf::NodeConfigurationInterface>();
-      auto ncs = nci->get();
-      auto iit = ncs.node_config.network.rpc_interfaces.find(interface_id);
-      if (iit == ncs.node_config.network.rpc_interfaces.end())
-        CCF_APP_FAIL("Interface '{}' not found", interface_id);
-      else
-      {
-        std::string acme_config_name;
-        auto endo = iit->second.endorsement;
-        if (endo->authority == ccf::Authority::ACME && endo->acme_configuration)
-          acme_config_name = *endo->acme_configuration;
-        if (acme_config_name.empty())
-          CCF_APP_FAIL("Empty ACME configuration");
-
-        auto acmess = context.get_subsystem<ccf::ACMESubsystemInterface>();
-        const auto& acmecfg = acmess->config(acme_config_name);
-        if (acmecfg)
-          ccfapp::ca_certs = (*acmecfg)->ca_certs;
-
-        acmess->install_challenge_handler(
-          ccfapp::configuration.interface_id,
-          std::make_shared<ccfapp::ADNSChallengeHandler>(
-            context,
-            ccfapp::configuration.adns_base_url,
-            ccfapp::configuration.origin,
-            ccfapp::configuration.service_name,
-            ccfapp::ca_certs));
-
-        protocol = iit->second.protocol;
-        if (protocol.empty())
-          protocol = "tcp";
-        const auto& address = iit->second.bind_address;
-        auto cpos = address.find(':');
-        if (cpos != std::string::npos)
-          port = atoi(&address[cpos + 1]);
-      }
-
-      ccfapp::register_service(context, protocol, port);
+      acmess = context.get_subsystem<ccf::ACMESubsystemInterface>();
+      niss = context.get_subsystem<ccf::NetworkIdentitySubsystemInterface>();
     }
   };
 }

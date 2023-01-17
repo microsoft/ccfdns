@@ -26,6 +26,26 @@ namespace ccfdns
 
   typedef AddRecord RemoveRecord;
 
+  struct InstallACMEToken
+  {
+    struct In
+    {
+      aDNS::Name origin;
+      aDNS::Name name;
+      std::string key_authorization;
+    };
+    using Out = void;
+  };
+  
+  struct RemoveACMEToken
+  {
+    struct In {
+      aDNS::Name origin; 
+      aDNS::Name name;
+    };
+    using Out = void;
+  };
+
   struct RemoveAll
   {
     struct In
@@ -48,10 +68,10 @@ namespace ccfdns
       uint16_t port;
       std::string protocol;
 
-      std::string attestation;
-
       RFC4034::Algorithm algorithm = RFC4034::Algorithm::ECDSAP384SHA384;
       crypto::Pem public_key;
+      std::string attestation;
+      std::vector<uint8_t> csr;
     };
     using Out = void;
   };
@@ -64,6 +84,12 @@ namespace ccfdns
 
   DECLARE_JSON_TYPE(RemoveAll::In);
   DECLARE_JSON_REQUIRED_FIELDS(RemoveAll::In, origin, name, class_, type);
+
+  DECLARE_JSON_TYPE(InstallACMEToken::In);
+  DECLARE_JSON_REQUIRED_FIELDS(InstallACMEToken::In, origin, name, key_authorization);
+
+  DECLARE_JSON_TYPE(RemoveACMEToken::In);
+  DECLARE_JSON_REQUIRED_FIELDS(RemoveACMEToken::In, origin, name);
 
   DECLARE_JSON_TYPE(RegisterService::In);
   DECLARE_JSON_REQUIRED_FIELDS(

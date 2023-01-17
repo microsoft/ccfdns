@@ -4,10 +4,6 @@
 import glob
 import time
 
-from cryptography.hazmat.backends import default_backend
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric import ec
-
 import infra.e2e_args
 import infra.network
 import infra.node
@@ -18,10 +14,11 @@ from loguru import logger as LOG
 
 import pebble
 
-DEFAULT_NODES = ["local://127.0.0.1:9443"]
+DEFAULT_NODES = ["local://127.0.0.1:8081"]
 
 
 def public_host_port(listen_addr):
+    """Extract public host/port"""
     prot_host_port = listen_addr.split("//")
     host_port = prot_host_port[1].split(":")
     public_host = host_port[0]
@@ -30,6 +27,8 @@ def public_host_port(listen_addr):
 
 
 def run(args):
+    """Run the demo service"""
+
     if len(args.node) == 0:
         args.node = DEFAULT_NODES
 
@@ -38,14 +37,12 @@ def run(args):
 
     if args.acme_config_name:
         if args.acme_config_name == "pebble":
-            # todo: grep these from pebble.config.json
+            # TODO: grab these from pebble.config.json
             pebble_mgmt_address = "127.0.0.1:1025"
             acme_directory = "https://127.0.0.1:1024/dir"
             ca_cert_file = "pebble-ca-cert.pem"
-            ca_certs = [
-                open(ca_cert_file, mode="r", encoding="ascii").read(),
-                pebble.get_pebble_ca_certs(pebble_mgmt_address),
-            ]
+            ca_certs = [open(ca_cert_file, mode="r", encoding="ascii").read()]
+            ca_certs = ca_certs + pebble.get_pebble_ca_certs(pebble_mgmt_address)
             email = "nobody@example.com"
         elif args.acme_config_name == "letsencrypt":
             acme_directory = "https://acme-staging-v02.api.letsencrypt.org/directory"
@@ -73,7 +70,7 @@ def run(args):
         for node in args.nodes:
             endorsed_interface = infra.interfaces.RPCInterface(
                 host=public_host,
-                port=int(public_port),
+                port=args.service_port,
                 endorsement=infra.interfaces.Endorsement(
                     authority=infra.interfaces.EndorsementAuthority.ACME,
                     acme_configuration=args.acme_config_name,
@@ -92,7 +89,7 @@ def run(args):
     LOG.success("Server/network for service43.adns.ccf.dev running.")
 
     if args.wait_forever:
-        print("Network open, waiting forever...")
+        LOG.info("Network open, waiting forever...")
         while True:
             time.sleep(1)
     else:
@@ -110,7 +107,15 @@ if __name__ == "__main__":
             "--node",
             help=f"List of (local://|ssh://)hostname:port[,pub_hostnames:pub_port]. Default is {DEFAULT_NODES}",
             action="append",
-            default=DEFAULT_NODES,
+            default=[],
+        )
+
+        parser.add_argument(
+            "--service-port",
+            help="Port for service interface",
+            action="store",
+            dest="service_port",
+            default=9443,
         )
 
         parser.add_argument(
@@ -118,14 +123,14 @@ if __name__ == "__main__":
             help="ACME configuration name",
             action="store",
             dest="acme_config_name",
-            default="pebble",
+            default=None,
         )
 
         parser.add_argument("--wait-forever", help="Wait forever", action="store_true")
 
-    args = infra.e2e_args.cli_args(cliparser)
-    args.nodes = infra.e2e_args.min_nodes(args, f=0)
-    args.constitution = glob.glob("../tests/constitution/*")
-    args.package = "libccf_demo_service"
+    gargs = infra.e2e_args.cli_args(cliparser)
+    gargs.nodes = infra.e2e_args.min_nodes(gargs, f=0)
+    gargs.constitution = glob.glob("../tests/constitution/*")
+    gargs.package = "libccf_demo_service"
 
-    run(args)
+    run(gargs)
