@@ -51,7 +51,7 @@ def configure_service(network, service_info, adns_base_url, ca_certs):
     return json.loads(str(r.body))
 
 
-def register_service(network, service_info, attestation, public_key):
+def register_service(network, service_info, reginfo):
     """Register the service ="""
     primary, _ = network.find_primary()
     r = None
@@ -64,9 +64,10 @@ def register_service(network, service_info, attestation, public_key):
                 "address": service_info["ip"],
                 "port": service_info["port"],
                 "protocol": service_info["protocol"],
-                "attestation": attestation,
                 "algorithm": "ECDSAP384SHA384",
-                "public_key": public_key,
+                "attestation": reginfo["attestation"],
+                "public_key": reginfo["public_key"],
+                "csr": reginfo["csr"],
             },
         )
     assert (
@@ -84,12 +85,39 @@ def run(adns_args, service_args):
     adns_nw = service_nw = None
     procs = []
 
+    adns_args.regpol = """
+        data.claims.sgx_claims.report_body.mr_enclave.length == 32 &&
+        JSON.stringify(data.claims.custom_claims.sgx_report_data) == JSON.stringify([ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    """
+
     try:
         # Start ADNS server for adns.ccf.dev, including a pebble CA and the DOH proxy
         adns_nw, procs = adns_ccf_dev.run(adns_args)
 
         if not adns_nw:
             raise Exception("Failed to start aDNS network")
+
+        # Configure aDNS
+        adns_config = {
+            "configuration": {
+                "name": "ns1.adns.ccf.dev.",
+                "ip": "51.143.161.224",
+                "origin": "adns.ccf.dev.",
+                "default_ttl": 86400,
+                "signing_algorithm": "ECDSAP384SHA384",
+                "digest_type": "SHA384",
+                "use_key_signing_key": True,
+                "use_nsec3": True,
+                "nsec3_hash_algorithm": "SHA1",
+                "nsec3_hash_iterations": 3,
+                "ca_certs": [
+                    cert_to_pem(adns_nw.cert),
+                    open(adns_args.ca_cert_filename, "r", encoding="ascii").read(),
+                ],
+            }
+        }
+
+        adns_ccf_dev.configure(adns_nw, adns_config)
 
         input("Press Enter to continue...")
 
@@ -122,12 +150,7 @@ def run(adns_args, service_args):
         input("Press Enter to continue...")
 
         # Register the service with aDNS
-        register_service(
-            adns_nw,
-            service_info,
-            reginfo["attestation"],
-            reginfo["public_key"],
-        )
+        register_service(adns_nw, service_info, reginfo)
 
         LOG.info("Waiting forever...")
         while True:
@@ -162,7 +185,7 @@ def main():
     adns_args.wait_forever = False
     adns_args.acme_http_port = 8080
     adns_args.service_port = 8443
-    # adns_args.environment += "UBSAN_OPTIONS=print_stacktrace=1"
+    adns_args.populate = False
 
     service_args = infra.e2e_args.cli_args(cliparser)
     service_args.node = ["local://10.1.0.4:443"]  # < 1024 requires root or setcap

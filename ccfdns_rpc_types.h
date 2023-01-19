@@ -13,6 +13,14 @@
 
 namespace ccfdns
 {
+  struct Configure
+  {
+    struct In
+    {
+      aDNS::Resolver::Configuration configuration;
+    };
+    using Out = void;
+  };
 
   struct AddRecord
   {
@@ -36,11 +44,12 @@ namespace ccfdns
     };
     using Out = void;
   };
-  
+
   struct RemoveACMEToken
   {
-    struct In {
-      aDNS::Name origin; 
+    struct In
+    {
+      aDNS::Name origin;
       aDNS::Name name;
     };
     using Out = void;
@@ -79,6 +88,9 @@ namespace ccfdns
 
 namespace ccfdns
 {
+  DECLARE_JSON_TYPE(Configure::In);
+  DECLARE_JSON_REQUIRED_FIELDS(Configure::In, configuration);
+
   DECLARE_JSON_TYPE(AddRecord::In);
   DECLARE_JSON_REQUIRED_FIELDS(AddRecord::In, origin, record);
 
@@ -86,7 +98,8 @@ namespace ccfdns
   DECLARE_JSON_REQUIRED_FIELDS(RemoveAll::In, origin, name, class_, type);
 
   DECLARE_JSON_TYPE(InstallACMEToken::In);
-  DECLARE_JSON_REQUIRED_FIELDS(InstallACMEToken::In, origin, name, key_authorization);
+  DECLARE_JSON_REQUIRED_FIELDS(
+    InstallACMEToken::In, origin, name, key_authorization);
 
   DECLARE_JSON_TYPE(RemoveACMEToken::In);
   DECLARE_JSON_REQUIRED_FIELDS(RemoveACMEToken::In, origin, name);
@@ -99,7 +112,8 @@ namespace ccfdns
     address,
     port,
     protocol,
-    attestation,
     algorithm,
-    public_key);
+    public_key,
+    attestation,
+    csr);
 }

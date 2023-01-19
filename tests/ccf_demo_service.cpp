@@ -64,7 +64,7 @@ namespace ccfapp
   };
 
   DECLARE_JSON_TYPE(RegistrationInfo);
-  DECLARE_JSON_REQUIRED_FIELDS(RegistrationInfo, public_key, attestation);
+  DECLARE_JSON_REQUIRED_FIELDS(RegistrationInfo, public_key, attestation, csr);
 }
 
 using namespace ccfapp;
@@ -175,8 +175,11 @@ namespace service
           if (!kp)
             throw std::runtime_error("Invalid network key");
 
-          out.csr =
-            kp->create_csr_der("CN=" + in.name, {{in.name, false}}, public_key);
+          auto n = in.name;
+          while (n.back() == '.')
+            n.pop_back();
+
+          out.csr = kp->create_csr_der("CN=" + n, {{n, false}}, public_key);
 
           return ccf::make_success(out);
         }

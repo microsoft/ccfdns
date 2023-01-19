@@ -110,6 +110,10 @@ namespace aDNS
   public:
     struct Configuration
     {
+      std::string name;
+      std::string ip;
+      std::string origin;
+
       uint32_t default_ttl = 86400;
       RFC4034::Algorithm signing_algorithm =
         RFC4034::Algorithm::ECDSAP384SHA384;
@@ -120,6 +124,8 @@ namespace aDNS
       RFC5155::HashAlgorithm nsec3_hash_algorithm =
         RFC5155::HashAlgorithm::SHA1;
       uint16_t nsec3_hash_iterations = 3;
+
+      std::vector<std::string> ca_certs = {};
     };
 
     struct Resolution
@@ -131,6 +137,11 @@ namespace aDNS
 
     Resolver();
     virtual ~Resolver();
+
+    virtual void configure(const Configuration& cfg)
+    {
+      configuration = cfg;
+    }
 
     virtual Message reply(const Message& msg);
 
@@ -188,7 +199,9 @@ namespace aDNS
       const crypto::Pem& public_key);
 
     virtual void install_acme_response(
-      const Name& origin, const Name& name, const std::string& key_authorization);
+      const Name& origin,
+      const Name& name,
+      const std::string& key_authorization);
 
     virtual void remove_acme_response(const Name& origin, const Name& name);
 
@@ -199,8 +212,13 @@ namespace aDNS
     virtual bool evaluate_registration_policy(
       const std::string& data) const = 0;
 
+    virtual const Configuration& get_configuration()
+    {
+      return configuration;
+    }
+
   protected:
-    Configuration config;
+    Configuration configuration;
     bool ignore_on_add = false;
     bool ignore_on_remove = false;
     small_vector<uint8_t> nsec3_salt;

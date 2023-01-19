@@ -127,7 +127,7 @@ public:
     const small_vector<uint16_t>& public_key,
     bool key_signing) override
   {
-    if (config.use_key_signing_key && key_signing)
+    if (configuration.use_key_signing_key && key_signing)
       return key_signing_keys[origin];
     else
       return zone_signing_keys[origin];
@@ -139,7 +139,7 @@ public:
     const crypto::Pem& pem,
     bool key_signing) override
   {
-    if (config.use_key_signing_key && key_signing)
+    if (configuration.use_key_signing_key && key_signing)
       key_signing_keys[origin] = pem;
     else
       zone_signing_keys[origin] = pem;

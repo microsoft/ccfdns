@@ -8,8 +8,10 @@
 #include "rfc1035.h"
 #include "rfc4034.h"
 
+#include <_private/node/rpc/network_identity_interface.h>
 #include <ccf/_private/http/http_parser.h>
 #include <ccf/_private/node/acme_client.h>
+#include <ccf/_private/node/rpc/network_identity_subsystem.h>
 #include <ccf/app_interface.h>
 #include <ccf/base_endpoint_registry.h>
 #include <ccf/common_auth_policies.h>
@@ -75,187 +77,14 @@ namespace kv::serialisers
 
 namespace ccfdns
 {
-  class ADNSChallengeHandler : public ccf::ACMEChallengeHandler
+  template <typename T>
+  std::vector<uint8_t> to_json_bytes(const T& x)
   {
-  public:
-    ADNSChallengeHandler(
-      const std::string& origin,
-      const std::string& service_name,
-      const std::vector<std::string>& ca_certs) :
-      ccf::ACMEChallengeHandler(),
-      origin(origin),
-      service_name(service_name),
-      ca_certs(ca_certs)
-    {}
-    virtual ~ADNSChallengeHandler() = default;
-
-    enum class ChallengeStatus
-    {
-      TXT_RR_REQUESTED = 0,
-      TXT_RR_ADDED
-    };
-
-    std::string origin;
-    std::string service_name;
-    std::vector<std::string> ca_certs;
-    std::map<std::string, ChallengeStatus> challenges;
-    std::map<std::string, aDNS::ResourceRecord> challenge_rrs;
-
-    void add_challenge_response(const std::string& token)
-    {
-      CCF_APP_DEBUG("ACME DNS: add token={}", token);
-
-      // auto rit = token_responses.find(token);
-      // if (rit == token_responses.end())
-      // {
-      //   throw std::runtime_error(
-      //     fmt::format("challenge response for token '{}' not found", token));
-      // }
-      // else
-      // {
-      //   auto acmess = context.get_subsystem<ccf::ACMESubsystemInterface>();
-      //   const auto& response = rit->second;
-      //   auto challenge_name = aDNS::Name("_acme-challenge." + service_name);
-
-      //   // First clear old records, just in case.
-      //   ccfdns::RemoveAll::In remopts;
-      //   remopts.origin = origin;
-      //   remopts.name = challenge_name;
-      //   remopts.class_ = static_cast<uint16_t>(aDNS::Class::IN);
-      //   remopts.type = static_cast<uint16_t>(aDNS::Type::TXT);
-
-      //   auto rembody =
-      //     serdes::pack(nlohmann::json(remopts), serdes::Pack::Text);
-
-      //   acmess->make_http_request(
-      //     "POST",
-      //     base_url + "/remove_all",
-      //     {{"content-type", "application/json"}},
-      //     rembody,
-      //     [](
-      //       const enum http_status&,
-      //       const http::HeaderMap&,
-      //       const std::vector<uint8_t>&) { return true; },
-      //     ca_certs);
-
-      //   CCF_APP_TRACE(
-      //     "ACME DNS: response for token '{}' is '{}'", token, response);
-
-      //   auto key_authorization = token + "." + response;
-      //   auto digest = crypto::sha256(
-      //     (uint8_t*)key_authorization.data(), key_authorization.size());
-      //   auto digest_b64 = crypto::b64url_from_raw(
-      //     (uint8_t*)digest.data(), digest.size(), false);
-      //   CCF_APP_TRACE(
-      //     "ACME DNS: b64_digest for token '{}' is '{}'", token, digest_b64);
-
-      //   ccfdns::AddRecord::In addopts;
-      //   addopts.origin = origin;
-      //   addopts.record = RFC1035::ResourceRecord(
-      //     challenge_name,
-      //     static_cast<uint16_t>(aDNS::Type::TXT),
-      //     static_cast<uint16_t>(aDNS::Class::IN),
-      //     0,
-      //     RFC1035::TXT(digest_b64));
-
-      //   auto body = serdes::pack(nlohmann::json(addopts),
-      //   serdes::Pack::Text); challenge_rrs[token] = addopts.record;
-
-      //   acmess->make_http_request(
-      //     "POST",
-      //     base_url + "/add",
-      //     {{"content-type", "application/json"}},
-      //     body,
-      //     [this, token](
-      //       const enum http_status& http_status,
-      //       const http::HeaderMap& headers,
-      //       const std::vector<uint8_t>& reply_body) {
-      //       if (
-      //         http_status != HTTP_STATUS_OK &&
-      //         http_status != HTTP_STATUS_NO_CONTENT)
-      //       {
-      //         std::string tmp = {
-      //           reply_body.data(), reply_body.data() + reply_body.size()};
-      //         CCF_APP_DEBUG(
-      //           "ACME DNS: TXT entry add request for '{}' failed with "
-      //           "status={} and body={}",
-      //           token,
-      //           http_status,
-      //           tmp);
-      //         return false;
-      //       }
-      //       CCF_APP_TRACE(
-      //         "ACME DNS: TXT entry for '{}' added (status={})",
-      //         token,
-      //         http_status);
-      //       challenges[token] = ChallengeStatus::TXT_RR_ADDED;
-      //       return true;
-      //     },
-      //     ca_certs);
-
-      //   CCF_APP_DEBUG("ACME DNS: Add request submitted for {}", token);
-      // }
-    }
-
-    virtual bool ready(const std::string& token) override
-    {
-      CCF_APP_DEBUG("ACME DNS: ready? token={}", token);
-
-      // auto cit = challenges.find(token);
-      // if (cit == challenges.end())
-      // {
-      //   auto rit = token_responses.find(token);
-      //   if (rit == token_responses.end())
-      //   {
-      //     throw std::runtime_error(
-      //       fmt::format("challenge response for token '{}' not found",
-      //       token));
-      //   }
-      //   else
-      //   {
-      //     auto response = rit->second;
-      //     add_challenge_response(token);
-      //     challenges[token] = ChallengeStatus::TXT_RR_REQUESTED;
-      //   }
-      // }
-      // else
-      // {
-
-      //   switch (cit->second)
-      //   {
-      //     case ChallengeStatus::TXT_RR_REQUESTED:
-      //       break;
-      //     case ChallengeStatus::TXT_RR_ADDED:
-      //       return true;
-      //       break;
-      //     default:
-      //       throw std::runtime_error("unknown challenge status");
-      //   }
-      // }
-
-      return false;
-    }
-
-    virtual void remove(const std::string& token) override
-    {
-      // auto rrit = challenge_rrs.find(token);
-      // if (rrit != challenge_rrs.end())
-      // {
-      //   auto acmess = context.get_subsystem<ccf::ACMESubsystemInterface>();
-
-      //   ccfdns::RemoveRecord::In remopts;
-      //   remopts.origin = origin;
-      //   remopts.record = rrit->second;
-
-      //   auto body = serdes::pack(nlohmann::json(remopts),
-      //   serdes::Pack::Text);
-
-      //  // remove token
-
-      // token_responses.erase(token);
-      // challenges.erase(token);
-    }
-  };
+    nlohmann::json jin;
+    to_json(jin, x);
+    std::string s = jin.dump();
+    return std::vector<uint8_t>(s.data(), s.data() + s.size());
+  }
 
   class ACMEClient : public ACME::Client
   {
@@ -286,49 +115,60 @@ namespace ccfdns
       auto key_authorization = token + "." + response;
       auto digest = crypto::sha256(
         (uint8_t*)key_authorization.data(), key_authorization.size());
-      auto digest_b64 = crypto::b64url_from_raw(
-        (uint8_t*)digest.data(), digest.size(), false);
-      CCF_APP_TRACE(
-        "ADNS ACME: b64_digest for token '{}' is '{}'", token, digest_b64);           
+      auto digest_b64 =
+        crypto::b64url_from_raw((uint8_t*)digest.data(), digest.size(), false);
 
-      InstallACMEToken::In in = { origin, config.service_dns_name, digest_b64 };
+      InstallACMEToken::In in = {
+        origin, config.service_dns_name + ".", digest_b64};
       std::string url =
         "https://" + node_address + "/app/internal/install_acme_response";
+
+      for (const auto& c : config.ca_certs)
+        CCF_APP_DEBUG("CA certificate: {}", c);
+
       subsys->make_http_request(
         "POST",
         url,
         {},
-        {},
-        [](
+        to_json_bytes(in),
+        [this, token](
           const http_status& http_status,
-          const http::HeaderMap&,
-          const std::vector<uint8_t>&) { return true; },
-        {});
+          const http::HeaderMap& headers,
+          const std::vector<uint8_t>& body) {
+          if (
+            http_status == HTTP_STATUS_OK ||
+            http_status == HTTP_STATUS_NO_CONTENT)
+            start_challenge(token);
+          else
+            CCF_APP_FAIL("ADNS ACME: error http_status={}", http_status);
+          return true;
+        },
+        config.ca_certs);
     }
 
     virtual void on_challenge_finished(const std::string& token) override
     {
       CCF_APP_DEBUG("ADNS ACME: on_challenge_finished");
 
-      RemoveACMEToken::In in = { origin, config.service_dns_name };
+      RemoveACMEToken::In in = {origin, config.service_dns_name + "."};
       std::string url =
         "https://" + node_address + "/app/internal/remove_acme_response";
       subsys->make_http_request(
         "POST",
         url,
         {},
-        {},
+        to_json_bytes(in),
         [](
           const http_status& http_status,
           const http::HeaderMap&,
           const std::vector<uint8_t>&) { return true; },
-        {});
+        config.ca_certs);
     }
 
     virtual void on_certificate(const std::string& certificate) override
     {
       CCF_APP_DEBUG("ADNS ACME: on_certificate");
-      // resolver.remove_acme_token(origin, config.service_dns_name);
+      // TODO: forward cert to service node
     }
 
     virtual std::vector<uint8_t> get_service_csr() override
@@ -385,17 +225,50 @@ namespace ccfdns
 
     virtual ~CCFDNS() {}
 
+    using TConfigurationTable =
+      ccf::ServiceValue<aDNS::Resolver::Configuration>;
+    const std::string configuration_table_name = "public:adns_configuration";
+
     using Records = ccf::ServiceSet<ResourceRecord>;
     using Origins = ccf::ServiceSet<RFC1035::Name>;
-    std::string origins_table_name = "public:ccfdns.origins";
+    const std::string origins_table_name = "public:ccfdns.origins";
 
     using RegistrationPolicy = ccf::ServiceValue<std::string>;
-    std::string registration_policy_table_name =
+    const std::string registration_policy_table_name =
       "public:ccf.gov.ccfdns.registration_policy";
 
     void set_endpoint_context(ccf::endpoints::EndpointContext& ctx)
     {
       this->ctx = &ctx;
+    }
+
+    virtual void configure(const Configuration& cfg) override
+    {
+      Resolver::configure(cfg);
+
+      // TODO: Add table hook to re-configure upon changes.
+
+      auto t = ctx->tx.template rw<CCFDNS::TConfigurationTable>(
+        configuration_table_name);
+      t->put(cfg);
+
+      add(
+        cfg.origin,
+        ResourceRecord(
+          cfg.name,
+          static_cast<uint16_t>(aDNS::Type::NS),
+          static_cast<uint16_t>(aDNS::Class::IN),
+          cfg.default_ttl,
+          NS(cfg.name)));
+
+      add(
+        cfg.origin,
+        ResourceRecord(
+          cfg.name,
+          static_cast<uint16_t>(aDNS::Type::A),
+          static_cast<uint16_t>(aDNS::Class::IN),
+          cfg.default_ttl,
+          A(cfg.ip)));
     }
 
     virtual void add(const Name& origin, const ResourceRecord& rr) override
@@ -771,7 +644,9 @@ namespace ccfdns
     ccf::ACMEClientConfig acme_config;
     crypto::KeyPairPtr acme_account_key_pair;
     std::map<std::string, std::shared_ptr<ccfdns::ACMEClient>> acme_clients;
-    std::string node_address;
+    std::string internal_node_address = "127.0.0.1";
+    std::string node_address = "127.0.0.1";
+    std::string node_port = "443";
 
   public:
     Handlers(ccfapp::AbstractNodeContext& context) :
@@ -784,12 +659,36 @@ namespace ccfdns
 
       acme_account_key_pair = crypto::make_key_pair(crypto::CurveID::SECP384R1);
 
+      auto configure = [this](auto& ctx, nlohmann::json&& params) {
+        try
+        {
+          const auto in = params.get<Configure::In>();
+          ccfdns.set_endpoint_context(ctx);
+          ccfdns.configure(in.configuration);
+          return ccf::make_success();
+        }
+        catch (std::exception& ex)
+        {
+          return ccf::make_error(
+            HTTP_STATUS_BAD_REQUEST, ccf::errors::InternalError, ex.what());
+        }
+      };
+
+      make_endpoint(
+        "/configure",
+        HTTP_POST,
+        ccf::json_adapter(configure),
+        ccf::no_auth_required)
+        .set_auto_schema<Configure::In, Configure::Out>()
+        .install();
+
       auto install_acme_response = [this](auto& ctx, nlohmann::json&& params) {
         try
         {
           const auto in = params.get<InstallACMEToken::In>();
-          ccfdns.set_endpoint_context(ctx);                              
-          ccfdns.install_acme_response(in.origin, in.name, in.key_authorization);
+          ccfdns.set_endpoint_context(ctx);
+          ccfdns.install_acme_response(
+            in.origin, in.name, in.key_authorization);
           return ccf::make_success();
         }
         catch (std::exception& ex)
@@ -811,7 +710,7 @@ namespace ccfdns
         try
         {
           const auto in = params.get<RemoveACMEToken::In>();
-          ccfdns.set_endpoint_context(ctx);                              
+          ccfdns.set_endpoint_context(ctx);
           ccfdns.remove_acme_response(in.origin, in.name);
           return ccf::make_success();
         }
@@ -857,7 +756,7 @@ namespace ccfdns
         try
         {
           const auto in = params.get<RemoveRecord::In>();
-          ccfdns.set_endpoint_context(ctx);          
+          ccfdns.set_endpoint_context(ctx);
           ccfdns.remove(in.origin, in.record);
           return ccf::make_success();
         }
@@ -869,7 +768,10 @@ namespace ccfdns
       };
 
       make_endpoint(
-        "/internal/remove", HTTP_POST, ccf::json_adapter(remove), ccf::no_auth_required)
+        "/internal/remove",
+        HTTP_POST,
+        ccf::json_adapter(remove),
+        ccf::no_auth_required)
         .set_auto_schema<RemoveRecord::In, RemoveRecord::Out>()
         .install();
 
@@ -967,7 +869,8 @@ namespace ccfdns
           const auto in = params.get<RegisterService::In>();
           ccfdns.set_endpoint_context(ctx);
 
-          // TODO: add signature check to make sure the request came from in.public_key?
+          // TODO: add signature check to make sure the request came from
+          // in.public_key?
 
           ccfdns.register_service(
             Name(in.origin),
@@ -980,9 +883,9 @@ namespace ccfdns
             in.public_key);
 
           if (acme_clients.find(in.name) != acme_clients.end())
-            throw std::runtime_error("registration in process");    
+            throw std::runtime_error("registration in process");
 
-          CCF_APP_DEBUG("Set up ACME client");
+          CCF_APP_DEBUG("Set up ACME client for {}", in.name);
           std::string dns_name = in.name;
           if (dns_name.back() == '.')
             dns_name.pop_back();
@@ -994,20 +897,33 @@ namespace ccfdns
             .terms_of_service_agreed = true,
             .challenge_type = "dns-01"};
 
+          // for (const auto& c : ccfdns.get_configuration().ca_certs)
+          //   acme_client_config.ca_certs.push_back(c);
+
+          auto nwidss =
+            this->context.get_subsystem<ccf::NetworkIdentitySubsystem>();
+          CCF_APP_DEBUG("NETWORK CERT: {}", nwidss->get()->cert.str());
+          acme_client_config.ca_certs.push_back(nwidss->get()->cert.str());
+
+          auto nci =
+            this->context.get_subsystem<ccf::NodeConfigurationInterface>();
+          auto ncs = nci->get();
+          for (const auto& i : ncs.node_config.network.rpc_interfaces)
+            if (i.second.endorsement)
+              CCF_APP_DEBUG(
+                "INTERFACE {}: {}",
+                i.first,
+                (int)i.second.endorsement->authority);
+
           CCF_APP_DEBUG("std::make_shared<ccfdns::ACMEClient>()");
           auto acme_client = std::make_shared<ccfdns::ACMEClient>(
             ccfdns,
             in.origin,
             acme_client_config,
             in.csr,
-            node_address,
+            internal_node_address,
             acme_ss,
             acme_account_key_pair);
-
-          acme_ss->install_challenge_handler(
-            "interface",
-            std::make_shared<ADNSChallengeHandler>(
-              in.origin, in.name, acme_config.ca_certs));
 
           CCF_APP_DEBUG("acme_client->get_certificate");
           acme_client->get_certificate(acme_account_key_pair);
@@ -1039,22 +955,37 @@ namespace ccfdns
 
       acme_ss = context.get_subsystem<ccf::ACMESubsystemInterface>();
 
-      auto interface_id = "acme_endorsed_interface";
-      auto nci = context.get_subsystem<ccf::NodeConfigurationInterface>();
-      auto ncs = nci->get();
-      auto iit = ncs.node_config.network.rpc_interfaces.find(interface_id);
-      if (iit == ncs.node_config.network.rpc_interfaces.end())
-        CCF_APP_FAIL("Interface '{}' not found", interface_id);
-      else
+      // Get ACME config
       {
-        std::string acme_config_name;
-        auto endo = iit->second.endorsement;
-        if (endo->authority == ccf::Authority::ACME && endo->acme_configuration)
-          acme_config_name = *endo->acme_configuration;
-        if (acme_config_name.empty())
-          CCF_APP_FAIL("Empty ACME configuration");
-        acme_config = **acme_ss->config(acme_config_name);
-        node_address = iit->second.published_address;
+        auto interface_id = "acme_endorsed_interface";
+        auto nci = context.get_subsystem<ccf::NodeConfigurationInterface>();
+        auto ncs = nci->get();
+        auto iit = ncs.node_config.network.rpc_interfaces.find(interface_id);
+        if (iit == ncs.node_config.network.rpc_interfaces.end())
+          CCF_APP_FAIL("Interface '{}' not found", interface_id);
+        else
+        {
+          std::string acme_config_name;
+          auto endo = iit->second.endorsement;
+          if (
+            endo->authority == ccf::Authority::ACME && endo->acme_configuration)
+            acme_config_name = *endo->acme_configuration;
+          if (acme_config_name.empty())
+            CCF_APP_FAIL("Empty ACME configuration");
+          acme_config = **acme_ss->config(acme_config_name);
+        }
+      }
+
+      {
+        // For internal RPC calls
+        auto interface_id = "primary_rpc_interface";
+        auto nci = context.get_subsystem<ccf::NodeConfigurationInterface>();
+        auto ncs = nci->get();
+        auto iit = ncs.node_config.network.rpc_interfaces.find(interface_id);
+        if (iit == ncs.node_config.network.rpc_interfaces.end())
+          CCF_APP_FAIL("Interface '{}' not found", interface_id);
+        else
+          internal_node_address = iit->second.published_address;
       }
     }
   };

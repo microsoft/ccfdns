@@ -120,6 +120,39 @@ namespace RFC4034
       {Algorithm::PRIVATE_OID, "PRIVATE_OID"},
       {Algorithm::RESERVED4, "RESERVED4"},
     });
+
+  DECLARE_JSON_ENUM(
+    DigestType,
+    {{DigestType::RESERVED, "RESERVED"},
+     {DigestType::SHA1, "SHA1"},
+     {DigestType::SHA256, "SHA256"},
+     {DigestType::GOST_R, "GOST_R"},
+     {DigestType::SHA384, "SHA384"}});
+}
+
+namespace RFC5155
+{
+  DECLARE_JSON_ENUM(
+    HashAlgorithm,
+    {{HashAlgorithm::RESERVED, "RESERVED"}, {HashAlgorithm::SHA1, "SHA1"}});
+}
+
+namespace aDNS
+{
+  DECLARE_JSON_TYPE(Resolver::Configuration);
+  DECLARE_JSON_REQUIRED_FIELDS(
+    Resolver::Configuration,
+    name,
+    ip,
+    origin,
+    default_ttl,
+    signing_algorithm,
+    digest_type,
+    use_key_signing_key,
+    use_nsec3,
+    nsec3_hash_algorithm,
+    nsec3_hash_iterations,
+    ca_certs);
 }
 
 namespace ccfdns

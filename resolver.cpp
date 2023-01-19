@@ -494,10 +494,10 @@ namespace aDNS
 
       if (result_set.empty())
       {
-        if (config.use_nsec3)
+        if (configuration.use_nsec3)
         {
           auto name_hash = RFC5155::NSEC3::hash(
-            origin, qname, config.nsec3_hash_iterations, nsec3_salt);
+            origin, qname, configuration.nsec3_hash_iterations, nsec3_salt);
           std::string nameb32 =
             base32hex_encode(&name_hash[0], name_hash.size());
           assert(nameb32.size() <= 63);
@@ -523,7 +523,7 @@ namespace aDNS
           qname,
           QType::RRSIG,
           qclass,
-          [&cfg = config, &qtype](const auto& rr) {
+          [&cfg = configuration, &qtype](const auto& rr) {
             RFC4034::RRSIG rd(rr.rdata, type2str);
             return (!cfg.use_nsec3 &&
                     rd.type_covered == static_cast<uint16_t>(Type::NSEC)) ||
@@ -600,14 +600,14 @@ namespace aDNS
 
     if (
       origin_exists(origin.parent()) &&
-      (!config.use_key_signing_key || key_signing))
+      (!configuration.use_key_signing_key || key_signing))
       add_ds(origin, class_, new_zsk, new_zsk_tag, dnskey_rr.rdata);
 
     on_new_signing_key(
       origin,
       new_zsk_tag,
       new_zsk->private_key_pem(),
-      config.use_key_signing_key && key_signing);
+      configuration.use_key_signing_key && key_signing);
 
     return std::make_pair(new_zsk, new_zsk_tag);
   }
@@ -615,7 +615,7 @@ namespace aDNS
   Resolver::KeyAndTag Resolver::get_signing_key(
     const Name& origin, Class class_, bool key_signing)
   {
-    bool find_ksk = config.use_key_signing_key && key_signing;
+    bool find_ksk = configuration.use_key_signing_key && key_signing;
     RFC4034::CanonicalRRSet suitable_keys = find_records(
       origin,
       origin,
@@ -648,18 +648,18 @@ namespace aDNS
   {
     uint16_t flags = 0x0000;
 
-    if (!config.use_key_signing_key || !key_signing)
+    if (!configuration.use_key_signing_key || !key_signing)
       flags |= 0x0100;
 
-    if (config.use_key_signing_key && key_signing)
+    if (configuration.use_key_signing_key && key_signing)
       flags |= 0x0101;
 
     RFC4034::DNSKEYRR rr(
       origin,
       static_cast<RFC1035::Class>(class_),
-      config.default_ttl,
+      configuration.default_ttl,
       flags,
-      config.signing_algorithm,
+      configuration.signing_algorithm,
       public_key);
 
     ignore_on_add = true;
@@ -690,10 +690,10 @@ namespace aDNS
       RFC4034::DSRR(
         origin,
         static_cast<RFC1035::Class>(class_),
-        config.default_ttl,
+        configuration.default_ttl,
         tag,
-        config.signing_algorithm,
-        config.digest_type,
+        configuration.signing_algorithm,
+        configuration.digest_type,
         dnskey_rdata));
   }
 
@@ -718,9 +718,9 @@ namespace aDNS
     small_vector<uint8_t> salt;
 
     RFC5155::NSEC3 rdata(
-      config.nsec3_hash_algorithm,
+      configuration.nsec3_hash_algorithm,
       flags,
-      config.nsec3_hash_iterations,
+      configuration.nsec3_hash_iterations,
       salt,
       next_hashed_owner_name,
       type2str);
@@ -829,7 +829,7 @@ namespace aDNS
           RFC4034::RRSIGRR(
             make_signing_function(key),
             key_tag,
-            config.signing_algorithm,
+            configuration.signing_algorithm,
             origin,
             crrs,
             type2str));
@@ -837,14 +837,14 @@ namespace aDNS
         it = next;
       }
 
-      uint32_t ttl = config.default_ttl;
+      uint32_t ttl = configuration.default_ttl;
       if (is_authoritative)
       {
         SOA soa_rdata(soa_records.begin()->rdata);
         ttl = soa_rdata.minimum;
       }
 
-      if (config.use_nsec3)
+      if (configuration.use_nsec3)
       {
         // https://datatracker.ietf.org/doc/html/rfc5155#section-3.1.7
 
@@ -854,7 +854,10 @@ namespace aDNS
           for (auto it = crecords.begin(); it != crecords.end();)
           {
             auto hashed_owner = RFC5155::NSEC3::hash(
-              origin, it->name, config.nsec3_hash_iterations, nsec3_salt);
+              origin,
+              it->name,
+              configuration.nsec3_hash_iterations,
+              nsec3_salt);
 
             if (hashed_names_map.find(hashed_owner) != hashed_names_map.end())
             {
@@ -919,7 +922,7 @@ namespace aDNS
             RFC4034::RRSIGRR(
               make_signing_function(key),
               key_tag,
-              config.signing_algorithm,
+              configuration.signing_algorithm,
               origin,
               crrs,
               type2str));
@@ -934,9 +937,9 @@ namespace aDNS
               origin,
               static_cast<RFC1035::Class>(c),
               ttl,
-              config.nsec3_hash_algorithm,
+              configuration.nsec3_hash_algorithm,
               0x00,
-              config.nsec3_hash_iterations,
+              configuration.nsec3_hash_iterations,
               nsec3_salt));
         }
       }
@@ -986,7 +989,7 @@ namespace aDNS
             RFC4034::RRSIGRR(
               make_signing_function(key),
               key_tag,
-              config.signing_algorithm,
+              configuration.signing_algorithm,
               origin,
               crrs,
               type2str));
@@ -1087,6 +1090,9 @@ namespace aDNS
   {
     CCF_APP_DEBUG("ADNS: Register {} in {}", name, origin);
 
+    if (!origin_exists(origin))
+      throw std::runtime_error("invalid origin");
+
     if (!name.is_absolute())
       throw std::runtime_error("service name must be absolute");
 
@@ -1126,7 +1132,7 @@ namespace aDNS
       abs_name,
       static_cast<uint16_t>(aDNS::Types::Type::ATTEST),
       static_cast<uint16_t>(Class::IN),
-      config.default_ttl,
+      configuration.default_ttl,
       aDNS::Types::ATTEST(attestation));
     remove(origin, abs_name, Class::IN, Type::ATTEST);
     ignore_on_add = true;
@@ -1143,7 +1149,7 @@ namespace aDNS
       abs_name,
       static_cast<uint16_t>(aDNS::Types::Type::TLSKEY),
       static_cast<uint16_t>(Class::IN),
-      config.default_ttl,
+      configuration.default_ttl,
       aDNS::Types::TLSKEY(flags, algorithm, public_key_sv));
     remove(origin, abs_name, Class::IN, Type::TLSKEY);
     ignore_on_add = true;
@@ -1153,7 +1159,7 @@ namespace aDNS
       abs_name,
       static_cast<uint16_t>(RFC1035::Type::A),
       static_cast<uint16_t>(Class::IN),
-      config.default_ttl,
+      configuration.default_ttl,
       address);
     ignore_on_add = true;
     add(origin, address_rr);
@@ -1169,7 +1175,7 @@ namespace aDNS
       tlsa_name,
       static_cast<uint16_t>(aDNS::Type::TLSA),
       static_cast<uint16_t>(Class::IN),
-      config.default_ttl,
+      configuration.default_ttl,
       TLSA(
         CertificateUsage::DANE_EE,
         Selector::CERT,
@@ -1182,7 +1188,7 @@ namespace aDNS
   }
 
   void Resolver::install_acme_response(
-    const Name& origin, const Name& name, const std::string &key_authorization)
+    const Name& origin, const Name& name, const std::string& key_authorization)
   {
     // Note: does not necessarily have to be installed on the same DNS server;
     // we can delegate the challenge to someone else, e.g. a non-DNSSEC
@@ -1196,7 +1202,7 @@ namespace aDNS
         Name("_acme-challenge") + name,
         static_cast<uint16_t>(Type::TXT),
         static_cast<uint16_t>(Class::IN),
-        config.default_ttl,
+        configuration.default_ttl,
         TXT(key_authorization)));
   }
 

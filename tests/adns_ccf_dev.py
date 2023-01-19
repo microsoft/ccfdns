@@ -7,7 +7,7 @@ import http
 import time
 import base64
 import subprocess
-import threading
+import json
 import copy
 
 import infra.e2e_args
@@ -25,9 +25,6 @@ import dns.rdataclass as rdc
 
 from loguru import logger as LOG
 
-import dnsstamps
-from dnsstamps import Option
-
 import pebble
 
 DEFAULT_NODES = ["local://127.0.0.1:8080"]
@@ -35,7 +32,7 @@ DEFAULT_NODES = ["local://127.0.0.1:8080"]
 
 def add_record(client, origin, name, stype, rdata_obj):
     r = client.post(
-        "/app/add",
+        "/app/internal/add",
         {
             "origin": origin,
             "record": {
@@ -49,6 +46,19 @@ def add_record(client, origin, name, stype, rdata_obj):
     )
     assert r.status_code == http.HTTPStatus.NO_CONTENT
     return r
+
+
+def configure(network, adns_config):
+    """Configure the service"""
+
+    primary, _ = network.find_primary()
+    r = None
+    with primary.client() as client:
+        r = client.post("/app/configure", adns_config)
+    assert (
+        r.status_code == http.HTTPStatus.OK
+        or r.status_code == http.HTTPStatus.NO_CONTENT
+    )
 
 
 def populate_adns_ccf_dev(network, args):
@@ -173,15 +183,10 @@ def public_host_port(listen_addr):
 
 
 def set_registration_policy(network, args):
-    new_policy = """
-    data.claims.sgx_claims.report_body.mr_enclave.length == 32 &&
-    JSON.stringify(data.claims.custom_claims.sgx_report_data) == JSON.stringify([ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
-    """
-
     primary, _ = network.find_primary()
 
     proposal_body, careful_vote = network.consortium.make_proposal(
-        "set_registration_policy", new_policy=new_policy
+        "set_registration_policy", new_policy=args.regpol
     )
 
     proposal = network.consortium.get_any_active_member().propose(
@@ -284,8 +289,10 @@ def run(args):
             library_dir=args.library_dir,
         )
         network.start_and_open(args)
-        set_registration_policy(network, args)
-        # populate_adns_ccf_dev(network, args)
+        if args.regpol:
+            set_registration_policy(network, args)
+        if args.populate:
+            populate_adns_ccf_dev(network, args)
 
         node = network.find_random_node()
         primary_if = node.host.rpc_interfaces[infra.interfaces.PRIMARY_RPC_INTERFACE]
@@ -367,4 +374,9 @@ if __name__ == "__main__":
     gargs.constitution = glob.glob("../tests/constitution/*")
     gargs.package = "libccfdns"
 
+    gargs.populate = True
+    gargs.regpol = """
+        data.claims.sgx_claims.report_body.mr_enclave.length == 32 &&
+        JSON.stringify(data.claims.custom_claims.sgx_report_data) == JSON.stringify([ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+        """
     run(gargs)
