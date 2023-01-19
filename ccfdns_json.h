@@ -139,7 +139,7 @@ namespace RFC5155
 
 namespace aDNS
 {
-  DECLARE_JSON_TYPE(Resolver::Configuration);
+  DECLARE_JSON_TYPE_WITH_OPTIONAL_FIELDS(Resolver::Configuration);
   DECLARE_JSON_REQUIRED_FIELDS(
     Resolver::Configuration,
     name,
@@ -153,6 +153,7 @@ namespace aDNS
     nsec3_hash_algorithm,
     nsec3_hash_iterations,
     ca_certs);
+  DECLARE_JSON_OPTIONAL_FIELDS(Resolver::Configuration, fixed_zsk);
 }
 
 namespace ccfdns

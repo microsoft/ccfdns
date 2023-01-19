@@ -126,6 +126,7 @@ namespace aDNS
       uint16_t nsec3_hash_iterations = 3;
 
       std::vector<std::string> ca_certs = {};
+      std::optional<std::string> fixed_zsk; // TODO: Debug-only?
     };
 
     struct Resolution

@@ -587,14 +587,21 @@ namespace aDNS
   Resolver::KeyAndTag Resolver::add_new_signing_key(
     const Name& origin, Class class_, bool key_signing)
   {
-    auto new_zsk = crypto::make_key_pair();
+    std::shared_ptr<crypto::KeyPair> new_zsk;
+
+    if (configuration.fixed_zsk)
+      new_zsk = crypto::make_key_pair(*configuration.fixed_zsk);
+    else
+      new_zsk = crypto::make_key_pair();
+
     small_vector<uint16_t> new_zsk_pk = encode_public_key(new_zsk);
 
     RFC4034::DNSKEYRR dnskey_rr =
       add_dnskey(origin, class_, new_zsk_pk, key_signing);
     auto new_zsk_tag = get_key_tag(dnskey_rr.rdata);
 
-    CCF_APP_DEBUG("ADNS: NEW KEY for {}, tag={}:", origin, new_zsk_tag);
+    CCF_APP_DEBUG(
+      "ADNS: NEW KEY for {}, class={}, tag={}:", origin, class_, new_zsk_tag);
     CCF_APP_DEBUG("ADNS: - {}", string_from_resource_record(dnskey_rr));
     CCF_APP_DEBUG("ADNS:  - xy={}", ds::to_hex(new_zsk_pk));
 
@@ -616,6 +623,7 @@ namespace aDNS
     const Name& origin, Class class_, bool key_signing)
   {
     bool find_ksk = configuration.use_key_signing_key && key_signing;
+
     RFC4034::CanonicalRRSet suitable_keys = find_records(
       origin,
       origin,
