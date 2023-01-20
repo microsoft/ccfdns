@@ -112,8 +112,8 @@ namespace aDNS
     {
       std::string name;
       std::string ip;
-      std::string origin;
 
+      std::string origin;
       uint32_t default_ttl = 86400;
       RFC4034::Algorithm signing_algorithm =
         RFC4034::Algorithm::ECDSAP384SHA384;
@@ -196,7 +196,6 @@ namespace aDNS
       uint16_t port,
       const std::string& protocol,
       const std::string& attestation,
-      RFC4034::Algorithm algorithm,
       const crypto::Pem& public_key);
 
     virtual void install_acme_response(
@@ -217,6 +216,13 @@ namespace aDNS
     {
       return configuration;
     }
+
+    virtual void set_service_certificate(
+      const std::string& service_dns_name,
+      const std::string& certificate_pem) = 0;
+
+    virtual std::string get_service_certificate(
+      const std::string& service_dns_name) = 0;
 
   protected:
     Configuration configuration;

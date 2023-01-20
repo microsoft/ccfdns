@@ -8,9 +8,9 @@
 #include "rfc1035.h"
 #include "rfc4034.h"
 
-#include <_private/node/rpc/network_identity_interface.h>
 #include <ccf/_private/http/http_parser.h>
 #include <ccf/_private/node/acme_client.h>
+#include <ccf/_private/node/rpc/network_identity_interface.h>
 #include <ccf/_private/node/rpc/network_identity_subsystem.h>
 #include <ccf/app_interface.h>
 #include <ccf/base_endpoint_registry.h>
@@ -35,6 +35,7 @@
 #include <optional>
 #include <quickjs/quickjs-exports.h>
 #include <quickjs/quickjs.h>
+#include <ravl/openssl.hpp>
 #include <service/acme_client_config.h>
 #include <stdexcept>
 
@@ -168,7 +169,20 @@ namespace ccfdns
     virtual void on_certificate(const std::string& certificate) override
     {
       CCF_APP_DEBUG("ADNS ACME: on_certificate");
-      // TODO: forward cert to service node
+
+      SetCertificate::In in = {config.service_dns_name, certificate};
+      std::string url =
+        "https://" + node_address + "/app/internal/set-certificate";
+      subsys->make_http_request(
+        "POST",
+        url,
+        {},
+        to_json_bytes(in),
+        [](
+          const http_status& http_status,
+          const http::HeaderMap&,
+          const std::vector<uint8_t>&) { return true; },
+        config.ca_certs);
     }
 
     virtual std::vector<uint8_t> get_service_csr() override
@@ -236,6 +250,10 @@ namespace ccfdns
     using RegistrationPolicy = ccf::ServiceValue<std::string>;
     const std::string registration_policy_table_name =
       "public:ccf.gov.ccfdns.registration_policy";
+
+    using ServiceCertificates = ccf::ServiceMap<std::string, std::string>;
+    const std::string service_certifificates_table_name =
+      "public:service_certificates";
 
     void set_endpoint_context(ccf::endpoints::EndpointContext& ctx)
     {
@@ -615,8 +633,47 @@ namespace ccfdns
 
     using Resolver::register_service;
 
+    virtual void set_service_certificate(
+      const std::string& service_dns_name,
+      const std::string& certificate_pem) override
+    {
+      auto tbl =
+        ctx->tx.rw<ServiceCertificates>(service_certifificates_table_name);
+      tbl->put(service_dns_name, certificate_pem);
+
+      acme_clients.erase(service_dns_name);
+    }
+
+    virtual std::string get_service_certificate(
+      const std::string& service_dns_name) override
+    {
+      auto tbl =
+        ctx->tx.ro<ServiceCertificates>(service_certifificates_table_name);
+      auto r = tbl->get(service_dns_name);
+      if (!r)
+        throw std::runtime_error("no such certificate");
+      return *r;
+    }
+
+    bool have_acme_client(const std::string& name) const
+    {
+      return acme_clients.find(name) != acme_clients.end();
+    }
+
+    void add_acme_client(
+      const std::string& name, std::shared_ptr<ccfdns::ACMEClient> client)
+    {
+      acme_clients[name] = client;
+    }
+
+    void remove_acme_client(const std::string& name)
+    {
+      acme_clients.erase(name);
+    }
+
   protected:
     ccf::endpoints::EndpointContext* ctx = nullptr;
+    std::map<std::string, std::shared_ptr<ccfdns::ACMEClient>> acme_clients;
 
     std::string table_name(
       const Name& origin, aDNS::Class class_, aDNS::Type type) const
@@ -643,10 +700,7 @@ namespace ccfdns
     std::shared_ptr<ccf::ACMESubsystemInterface> acme_ss;
     ccf::ACMEClientConfig acme_config;
     crypto::KeyPairPtr acme_account_key_pair;
-    std::map<std::string, std::shared_ptr<ccfdns::ACMEClient>> acme_clients;
     std::string internal_node_address = "127.0.0.1";
-    std::string node_address = "127.0.0.1";
-    std::string node_port = "443";
 
   public:
     Handlers(ccfapp::AbstractNodeContext& context) :
@@ -869,53 +923,45 @@ namespace ccfdns
           const auto in = params.get<RegisterService::In>();
           ccfdns.set_endpoint_context(ctx);
 
-          // TODO: add signature check to make sure the request came from
-          // in.public_key?
+          // TODO: Save entire request including `in` in a special audit table.
+
+          OpenSSL::UqX509_REQ req(in.csr, false);
+          auto public_key = req.get_pubkey();
+          auto public_key_pem = public_key.pem_pubkey();
+
+          if (!req.verify(public_key))
+            throw std::runtime_error("CSR signature validation failed");
+
+          auto subject_name = req.get_subject_name().get_common_name();
+          Name absolute_name(subject_name, std::vector<Label>{Label()});
 
           ccfdns.register_service(
             Name(in.origin),
-            Name(in.name),
+            absolute_name,
             RFC1035::A(in.address),
             in.port,
             in.protocol,
             in.attestation,
-            in.algorithm,
-            in.public_key);
+            public_key_pem);
 
-          if (acme_clients.find(in.name) != acme_clients.end())
+          if (ccfdns.have_acme_client(absolute_name))
             throw std::runtime_error("registration in process");
 
-          CCF_APP_DEBUG("Set up ACME client for {}", in.name);
-          std::string dns_name = in.name;
-          if (dns_name.back() == '.')
-            dns_name.pop_back();
+          CCF_APP_DEBUG("Set up ACME client for {}", subject_name);
           ACME::ClientConfig acme_client_config = {
             .ca_certs = acme_config.ca_certs,
             .directory_url = acme_config.directory_url,
-            .service_dns_name = dns_name,
+            .service_dns_name =
+              subject_name, // TODO: could be multiple names, including service
+                            // name, get from CSR
             .contact = {},
             .terms_of_service_agreed = true,
             .challenge_type = "dns-01"};
 
-          // for (const auto& c : ccfdns.get_configuration().ca_certs)
-          //   acme_client_config.ca_certs.push_back(c);
-
           auto nwidss =
             this->context.get_subsystem<ccf::NetworkIdentitySubsystem>();
-          CCF_APP_DEBUG("NETWORK CERT: {}", nwidss->get()->cert.str());
           acme_client_config.ca_certs.push_back(nwidss->get()->cert.str());
 
-          auto nci =
-            this->context.get_subsystem<ccf::NodeConfigurationInterface>();
-          auto ncs = nci->get();
-          for (const auto& i : ncs.node_config.network.rpc_interfaces)
-            if (i.second.endorsement)
-              CCF_APP_DEBUG(
-                "INTERFACE {}: {}",
-                i.first,
-                (int)i.second.endorsement->authority);
-
-          CCF_APP_DEBUG("std::make_shared<ccfdns::ACMEClient>()");
           auto acme_client = std::make_shared<ccfdns::ACMEClient>(
             ccfdns,
             in.origin,
@@ -925,10 +971,9 @@ namespace ccfdns
             acme_ss,
             acme_account_key_pair);
 
-          CCF_APP_DEBUG("acme_client->get_certificate");
           acme_client->get_certificate(acme_account_key_pair);
 
-          acme_clients[in.name] = acme_client;
+          ccfdns.add_acme_client(absolute_name, acme_client);
 
           ctx.rpc_ctx->set_response_status(HTTP_STATUS_OK);
           return ccf::make_success();
@@ -946,6 +991,53 @@ namespace ccfdns
         ccf::json_adapter(register_service),
         ccf::no_auth_required)
         .set_auto_schema<RegisterService::In, RegisterService::Out>()
+        .install();
+
+      auto set_certificate = [this](auto& ctx, nlohmann::json&& params) {
+        try
+        {
+          const auto in = params.get<SetCertificate::In>();
+          ccfdns.set_endpoint_context(ctx);
+          ccfdns.set_service_certificate(in.service_dns_name, in.certificate);
+          return ccf::make_success();
+        }
+        catch (std::exception& ex)
+        {
+          return ccf::make_error(
+            HTTP_STATUS_BAD_REQUEST, ccf::errors::InternalError, ex.what());
+        }
+      };
+
+      make_endpoint(
+        "/internal/set-certificate",
+        HTTP_POST,
+        ccf::json_adapter(set_certificate),
+        ccf::no_auth_required)
+        .set_auto_schema<SetCertificate::In, SetCertificate::Out>()
+        .install();
+
+      auto get_certificate = [this](auto& ctx, nlohmann::json&& params) {
+        try
+        {
+          const auto in = params.get<GetCertificate::In>();
+          ccfdns.set_endpoint_context(ctx);
+          GetCertificate::Out out;
+          out.certificate = ccfdns.get_service_certificate(in.service_dns_name);
+          return ccf::make_success(out);
+        }
+        catch (std::exception& ex)
+        {
+          return ccf::make_error(
+            HTTP_STATUS_BAD_REQUEST, ccf::errors::InternalError, ex.what());
+        }
+      };
+
+      make_endpoint(
+        "/get-certificate",
+        HTTP_POST,
+        ccf::json_adapter(get_certificate),
+        ccf::no_auth_required)
+        .set_auto_schema<GetCertificate::In, GetCertificate::Out>()
         .install();
     }
 

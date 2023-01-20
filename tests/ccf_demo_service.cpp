@@ -42,29 +42,29 @@ namespace ccfapp
 {
   struct Configuration
   {
-    std::string name = "service43.adns.ccf.dev.";
-    std::string ip = "51.143.161.224";
-    uint16_t port = 443;
-    std::string protocol = "tcp";
+    std::string name;
+    std::string ip;
+    uint16_t port;
 
     std::optional<std::string> adns_base_url;
     std::optional<std::vector<std::string>> ca_certs;
   };
 
   DECLARE_JSON_TYPE_WITH_OPTIONAL_FIELDS(Configuration);
-  DECLARE_JSON_REQUIRED_FIELDS(Configuration, name, ip, port, protocol);
+  DECLARE_JSON_REQUIRED_FIELDS(Configuration, name, ip, port);
   DECLARE_JSON_OPTIONAL_FIELDS(Configuration, adns_base_url, ca_certs);
 
   struct RegistrationInfo
   {
-    // auto algorithm = RFC4034::Algorithm::ECDSAP384SHA384;
+    std::string protocol;
     std::string public_key;
     std::string attestation;
     std::vector<uint8_t> csr;
   };
 
   DECLARE_JSON_TYPE(RegistrationInfo);
-  DECLARE_JSON_REQUIRED_FIELDS(RegistrationInfo, public_key, attestation, csr);
+  DECLARE_JSON_REQUIRED_FIELDS(
+    RegistrationInfo, protocol, public_key, attestation, csr);
 }
 
 using namespace ccfapp;
@@ -86,6 +86,7 @@ namespace service
   protected:
     std::shared_ptr<ccf::ACMESubsystemInterface> acmess;
     std::shared_ptr<ccf::NetworkIdentitySubsystemInterface> niss;
+    Configuration configuration;
 
   public:
     Handlers(ccfapp::AbstractNodeContext& context) :
@@ -149,7 +150,15 @@ namespace service
             ctx.tx.template rw<TConfigurationTable>(configuration_table_name);
           t->put(in);
 
+          configuration.name = in.name;
+          configuration.ip = in.ip;
+          configuration.port = in.port;
+          configuration.adns_base_url = in.adns_base_url;
+          configuration.ca_certs = in.ca_certs;
+
           ConfigurationRPC::Out out;
+
+          out.protocol = "tcp";
 
           auto public_key =
             crypto::public_key_pem_from_cert(acmess->network_cert().raw());
@@ -175,11 +184,11 @@ namespace service
           if (!kp)
             throw std::runtime_error("Invalid network key");
 
-          auto n = in.name;
-          while (n.back() == '.')
-            n.pop_back();
+          auto sn = in.name;
+          while (sn.back() == '.')
+            sn.pop_back();
 
-          out.csr = kp->create_csr_der("CN=" + n, {{n, false}}, public_key);
+          out.csr = kp->create_csr_der("CN=" + sn, {{sn, false}}, public_key);
 
           return ccf::make_success(out);
         }

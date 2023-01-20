@@ -41,9 +41,6 @@ def configure_service(network, service_info, adns_base_url, ca_certs):
                 "name": service_info["name"],
                 "ip": service_info["ip"],
                 "port": service_info["port"],
-                "protocol": service_info["protocol"],
-                "adns_base_url": adns_base_url,
-                "ca_certs": ca_certs,
             },
         )
 
@@ -59,14 +56,11 @@ def register_service(network, service_info, reginfo):
         r = client.post(
             "/app/register",
             {
-                "origin": "adns.ccf.dev.",
-                "name": service_info["name"],
+                "origin": "adns.ccf.dev.",  # Chose origin to be registered in (no origin creation)
                 "address": service_info["ip"],
                 "port": service_info["port"],
-                "protocol": service_info["protocol"],
-                "algorithm": "ECDSAP384SHA384",
+                "protocol": reginfo["protocol"],
                 "attestation": reginfo["attestation"],
-                "public_key": reginfo["public_key"],
                 "csr": reginfo["csr"],
             },
         )
@@ -133,7 +127,6 @@ def run(adns_args, service_args):
             "name": "service43.adns.ccf.dev.",
             "ip": "51.143.161.224",
             "port": 9443,
-            "protocol": "tcp",
         }
 
         # Configure the service & get registration info

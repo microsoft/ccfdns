@@ -173,6 +173,17 @@ public:
   {
     return true;
   }
+
+  virtual void set_service_certificate(
+    const std::string& service_dns_name,
+    const std::string& certificate_pem) override
+  {}
+
+  virtual std::string get_service_certificate(
+    const std::string& service_dns_name) override
+  {
+    return "";
+  }
 };
 
 RFC1035::Message mk_question(const std::string& name, aDNS::QType type)
@@ -570,7 +581,6 @@ TEST_CASE("Service registration")
     8000,
     "tcp",
     dummy_attestation,
-    RFC4034::Algorithm::ECDSAP384SHA384,
     service_key->public_key_pem());
 
   auto dnskey_rrs =

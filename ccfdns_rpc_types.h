@@ -72,17 +72,36 @@ namespace ccfdns
     struct In
     {
       std::string origin;
-      std::string name;
       std::string address;
       uint16_t port;
-      std::string protocol;
 
-      RFC4034::Algorithm algorithm = RFC4034::Algorithm::ECDSAP384SHA384;
-      crypto::Pem public_key;
+      std::string protocol;
       std::string attestation;
       std::vector<uint8_t> csr;
     };
     using Out = void;
+  };
+
+  struct SetCertificate
+  {
+    struct In
+    {
+      std::string service_dns_name;
+      std::string certificate;
+    };
+    using Out = void;
+  };
+
+  struct GetCertificate
+  {
+    struct In
+    {
+      std::string service_dns_name;
+    };
+    struct Out
+    {
+      std::string certificate;
+    };
   };
 }
 
@@ -106,14 +125,14 @@ namespace ccfdns
 
   DECLARE_JSON_TYPE(RegisterService::In);
   DECLARE_JSON_REQUIRED_FIELDS(
-    RegisterService::In,
-    origin,
-    name,
-    address,
-    port,
-    protocol,
-    algorithm,
-    public_key,
-    attestation,
-    csr);
+    RegisterService::In, origin, address, port, protocol, attestation, csr);
+
+  DECLARE_JSON_TYPE(SetCertificate::In);
+  DECLARE_JSON_REQUIRED_FIELDS(
+    SetCertificate::In, service_dns_name, certificate);
+
+  DECLARE_JSON_TYPE(GetCertificate::In);
+  DECLARE_JSON_REQUIRED_FIELDS(GetCertificate::In, service_dns_name);
+  DECLARE_JSON_TYPE(GetCertificate::Out);
+  DECLARE_JSON_REQUIRED_FIELDS(GetCertificate::Out, certificate);
 }

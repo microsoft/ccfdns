@@ -1093,7 +1093,6 @@ namespace aDNS
     uint16_t port,
     const std::string& protocol,
     const std::string& attestation,
-    RFC4034::Algorithm algorithm,
     const crypto::Pem& public_key)
   {
     CCF_APP_DEBUG("ADNS: Register {} in {}", name, origin);
@@ -1102,7 +1101,10 @@ namespace aDNS
       throw std::runtime_error("invalid origin");
 
     if (!name.is_absolute())
-      throw std::runtime_error("service name must be absolute");
+      throw std::runtime_error("name must be absolute");
+
+    if (!name.ends_with(origin))
+      throw std::runtime_error("name outside of origin");
 
     std::shared_ptr<ravl::Attestation> att =
       ravl::parse_attestation(attestation);
@@ -1116,7 +1118,8 @@ namespace aDNS
     {
       if (!(claims = ravl::verify_synchronous(att)))
         throw std::runtime_error("attestation verification failed: no claims");
-      std::string policy_data =
+      std::string
+        policy_data = // TODO: add select state or JS functions to obtain it.
         "var data = { claims: " + claims->to_json() + " };";
       policy_ok = evaluate_registration_policy(policy_data);
     }
@@ -1131,18 +1134,14 @@ namespace aDNS
     if (!policy_ok)
       throw std::runtime_error("registration policy evaluation failed");
 
-    Name abs_name = name;
-    if (!name.is_absolute())
-      abs_name += origin;
-
     // publish ATTEST, TLSKEY
     ResourceRecord att_rr(
-      abs_name,
+      name,
       static_cast<uint16_t>(aDNS::Types::Type::ATTEST),
       static_cast<uint16_t>(Class::IN),
       configuration.default_ttl,
       aDNS::Types::ATTEST(attestation));
-    remove(origin, abs_name, Class::IN, Type::ATTEST);
+    remove(origin, name, Class::IN, Type::ATTEST);
     ignore_on_add = true;
     add(origin, att_rr);
 
@@ -1154,17 +1153,18 @@ namespace aDNS
 
     // TLSKEY: Use TLSA instead; possibly with slight changes.
     ResourceRecord tlskey_rr(
-      abs_name,
+      name,
       static_cast<uint16_t>(aDNS::Types::Type::TLSKEY),
       static_cast<uint16_t>(Class::IN),
       configuration.default_ttl,
-      aDNS::Types::TLSKEY(flags, algorithm, public_key_sv));
-    remove(origin, abs_name, Class::IN, Type::TLSKEY);
+      aDNS::Types::TLSKEY(
+        flags, configuration.signing_algorithm, public_key_sv));
+    remove(origin, name, Class::IN, Type::TLSKEY);
     ignore_on_add = true;
     add(origin, tlskey_rr);
 
     ResourceRecord address_rr(
-      abs_name,
+      name,
       static_cast<uint16_t>(RFC1035::Type::A),
       static_cast<uint16_t>(Class::IN),
       configuration.default_ttl,
@@ -1176,8 +1176,8 @@ namespace aDNS
     using namespace RFC7671;
     std::string prolow = protocol;
     std::transform(prolow.begin(), prolow.end(), prolow.begin(), ::tolower);
-    auto tlsa_name = Name("_" + std::to_string(port)) +
-      Name(std::string("_") + prolow) + abs_name;
+    auto tlsa_name =
+      Name("_" + std::to_string(port)) + Name(std::string("_") + prolow) + name;
 
     ResourceRecord tlsa_rr(
       tlsa_name,
