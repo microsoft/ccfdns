@@ -287,6 +287,27 @@ namespace ccfdns
           static_cast<uint16_t>(aDNS::Class::IN),
           cfg.default_ttl,
           A(cfg.ip)));
+
+      // Add our own attestation; may not be required.
+      std::shared_ptr<ravl::Attestation> attestation;
+      ccf::pal::attestation_report_data ard = {0};
+      ccf::pal::generate_quote(
+        ard,
+        [&attestation](
+          const ccf::QuoteInfo& quote_info,
+          const ccf::pal::snp::EndorsementEndpointsConfiguration&) {
+          attestation = std::make_shared<ravl::oe::Attestation>(
+            quote_info.quote, quote_info.endorsements);
+        });
+
+      add(
+        cfg.origin,
+        ResourceRecord(
+          cfg.name,
+          static_cast<uint16_t>(aDNS::Types::Type::ATTEST),
+          static_cast<uint16_t>(aDNS::Class::IN),
+          configuration.default_ttl,
+          aDNS::Types::ATTEST(attestation)));
     }
 
     virtual void add(const Name& origin, const ResourceRecord& rr) override
@@ -297,9 +318,7 @@ namespace ccfdns
         std::runtime_error("missing endpoint context");
 
       if (!origin.is_absolute())
-      {
-        throw std::runtime_error("Origin not absolute");
-      }
+        throw std::runtime_error("origin not absolute");
 
       auto origins = ctx->tx.rw<Origins>(origins_table_name);
       if (!origins->contains(origin))
@@ -331,7 +350,7 @@ namespace ccfdns
 
       if (!origin.is_absolute())
       {
-        throw std::runtime_error("Origin not absolute");
+        throw std::runtime_error("origin not absolute");
       }
 
       auto c = static_cast<aDNS::Class>(rr.class_);
@@ -362,15 +381,13 @@ namespace ccfdns
       aDNS::Type t) override
     {
       CCF_APP_DEBUG(
-        "Remove {} type {} at {}", name, string_from_type(t), origin);
+        "CCFDNS: Remove {} type {} at {}", name, string_from_type(t), origin);
 
       if (!ctx)
         std::runtime_error("missing endpoint context");
 
       if (!origin.is_absolute())
-      {
-        throw std::runtime_error("Origin not absolute");
-      }
+        throw std::runtime_error("origin not absolute");
 
       Name aname = name;
       if (!aname.is_absolute())
@@ -379,16 +396,15 @@ namespace ccfdns
       auto records = ctx->tx.rw<Records>(table_name(origin, c, t));
       if (records)
       {
-        records->foreach(
-          [origin, t, &aname, &records](const ResourceRecord& rr) {
-            if (rr.type == static_cast<uint16_t>(t) && rr.name == aname)
-            {
-              CCF_APP_TRACE(
-                "CCFDNS:  remove {}", string_from_resource_record(rr));
-              records->remove(rr);
-            }
-            return true;
-          });
+        records->foreach([origin, t, &aname, &records](
+                           const ResourceRecord& rr) {
+          if (rr.type == static_cast<uint16_t>(t) && rr.name == aname)
+          {
+            CCF_APP_TRACE("CCFDNS: remove {}", string_from_resource_record(rr));
+            records->remove(rr);
+          }
+          return true;
+        });
       }
     }
 
@@ -403,7 +419,7 @@ namespace ccfdns
 
       if (!origin.is_absolute())
       {
-        throw std::runtime_error("Origin not absolute");
+        throw std::runtime_error("origin not absolute");
       }
 
       auto records = ctx->tx.rw<Records>(table_name(origin, c, t));
@@ -698,6 +714,7 @@ namespace ccfdns
     }
 
     std::shared_ptr<ccf::ACMESubsystemInterface> acme_ss;
+    std::string acme_config_name;
     ccf::ACMEClientConfig acme_config;
     crypto::KeyPairPtr acme_account_key_pair;
     std::string internal_node_address = "127.0.0.1";
@@ -1022,7 +1039,22 @@ namespace ccfdns
           const auto in = params.get<GetCertificate::In>();
           ccfdns.set_endpoint_context(ctx);
           GetCertificate::Out out;
-          out.certificate = ccfdns.get_service_certificate(in.service_dns_name);
+
+          if (in.service_dns_name == ccfdns.get_configuration().name)
+          {
+            auto t = ctx.tx.template rw<ccf::ACMECertificates>(
+              ccf::Tables::ACME_CERTIFICATES);
+            if (!t)
+              throw std::runtime_error("ACME service certificate table empty");
+            auto v = t->get(acme_config_name);
+            if (!v)
+              throw std::runtime_error(
+                "ACME service certificate not available");
+            out.certificate = v->str();
+          }
+          else
+            out.certificate =
+              ccfdns.get_service_certificate(in.service_dns_name);
           return ccf::make_success(out);
         }
         catch (std::exception& ex)
@@ -1057,7 +1089,6 @@ namespace ccfdns
           CCF_APP_FAIL("Interface '{}' not found", interface_id);
         else
         {
-          std::string acme_config_name;
           auto endo = iit->second.endorsement;
           if (
             endo->authority == ccf::Authority::ACME && endo->acme_configuration)
@@ -1069,7 +1100,7 @@ namespace ccfdns
       }
 
       {
-        // For internal RPC calls
+        // Interface for internal RPC calls
         auto interface_id = "primary_rpc_interface";
         auto nci = context.get_subsystem<ccf::NodeConfigurationInterface>();
         auto ncs = nci->get();
