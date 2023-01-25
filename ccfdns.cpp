@@ -26,6 +26,8 @@
 #include <ccf/json_handler.h>
 #include <ccf/node/acme_subsystem_interface.h>
 #include <ccf/node/node_configuration_interface.h>
+#include <ccf/pal/attestation.h>
+#include <ccf/service/tables/acme_certificates.h>
 #include <ccf/version.h>
 #include <charconv>
 #include <crypto/curve.h>
@@ -35,6 +37,7 @@
 #include <optional>
 #include <quickjs/quickjs-exports.h>
 #include <quickjs/quickjs.h>
+#include <ravl/oe.h>
 #include <ravl/openssl.hpp>
 #include <service/acme_client_config.h>
 #include <stdexcept>

@@ -32,8 +32,7 @@ def run(args):
     if len(args.node) == 0:
         args.node = DEFAULT_NODES
 
-    service_dns_name = "service43.adns.ccf.dev"
-    public_host, public_port = public_host_port(args.node[0])
+    public_host, _ = public_host_port(args.node[0])
 
     if args.acme_config_name:
         if args.acme_config_name == "pebble":
@@ -58,7 +57,7 @@ def run(args):
                 args.acme_config_name: {
                     "ca_certs": ca_certs,
                     "directory_url": acme_directory,
-                    "service_dns_name": service_dns_name,
+                    "service_dns_name": args.dns_name,
                     "contact": ["mailto:" + email],
                     "terms_of_service_agreed": True,
                     "challenge_type": "dns-01",
@@ -77,7 +76,7 @@ def run(args):
                 ),
                 transport="tcp",
             )
-            endorsed_interface.public_host = service_dns_name
+            endorsed_interface.public_host = args.dns_name
             node.rpc_interfaces["endorsed_interface"] = endorsed_interface
 
     network = infra.network.Network(
@@ -132,5 +131,7 @@ if __name__ == "__main__":
     gargs.nodes = infra.e2e_args.min_nodes(gargs, f=0)
     gargs.constitution = glob.glob("../tests/constitution/*")
     gargs.package = "libccf_demo_service"
+
+    gargs.dns_name = "service43.adns.ccf.dev"
 
     run(gargs)

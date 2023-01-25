@@ -5,6 +5,7 @@ import glob
 import http
 import json
 import time
+import logging
 
 import infra.e2e_args
 import infra.network
@@ -15,6 +16,10 @@ import infra.health_watcher
 # from cryptography.x509 import Certificate,
 from cryptography.hazmat.primitives import serialization
 from loguru import logger as LOG
+
+import dns.rdatatype as rdt
+import dns.rdataclass as rdc
+import dns.rdtypes.ANY.SOA as SOA
 
 import adns_ccf_dev
 import ccf_demo_service
@@ -30,7 +35,7 @@ def cert_to_pem(x):
     return x.public_bytes(serialization.Encoding.PEM).decode("ascii")
 
 
-def get_acme_cert(network, name):
+def get_endorsed_cert(network, name):
     """Get the endorsed network certificate"""
 
     primary, _ = network.find_primary()
@@ -66,15 +71,15 @@ def configure_service(network, service_info, adns_base_url, ca_certs):
     return json.loads(str(r.body))
 
 
-def register_service(network, service_info, reginfo):
-    """Register the service ="""
+def register_service(network, origin, service_info, reginfo):
+    """Register the service"""
     primary, _ = network.find_primary()
     r = None
     with primary.client() as client:
         r = client.post(
             "/app/register",
             {
-                "origin": "adns.ccf.dev.",  # Chose origin to be registered in (no origin creation)
+                "origin": origin,  # Chose origin to be registered in (no origin creation)
                 "address": service_info["ip"],
                 "port": service_info["port"],
                 "protocol": reginfo["protocol"],
@@ -91,18 +96,18 @@ def register_service(network, service_info, reginfo):
     return True
 
 
-def wait_for_acme_cert(network, name):
-    """Wait until an ACME endorsed network certificate is available"""
+def wait_for_endorsed_cert(network, name):
+    """Wait until an endorsed network certificate is available"""
     num_retries = 20
     while num_retries > 0:
         try:
-            r = get_acme_cert(network, name)
+            r = get_endorsed_cert(network, name)
             return r
         except Exception:
             num_retries = num_retries - 1
         time.sleep(1)
     if num_retries == 0:
-        raise Exception("Failed to obtain ACME network certificate")
+        raise Exception("Failed to obtain endorsed network certificate")
 
 
 def run(adns_args, service_args):
@@ -110,14 +115,10 @@ def run(adns_args, service_args):
 
     adns_nw = service_nw = None
     procs = []
-
-    adns_args.regpol = """
-        data.claims.sgx_claims.report_body.mr_enclave.length == 32 &&
-        JSON.stringify(data.claims.custom_claims.sgx_report_data) == JSON.stringify([ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
-    """
+    mname_nodot = str(adns_args.soa.mname).rstrip(".")
 
     try:
-        # Start ADNS server for adns.ccf.dev, including a pebble CA and the DOH proxy
+        # Start ADNS server, including a pebble CA and the DOH proxy
         adns_nw, procs = adns_ccf_dev.run(adns_args)
 
         if not adns_nw:
@@ -126,10 +127,10 @@ def run(adns_args, service_args):
         # Configure aDNS
         adns_config = {
             "configuration": {
-                "name": "ns1.adns.ccf.dev.",
-                "ip": "51.143.161.224",
-                "origin": "adns.ccf.dev.",
-                "default_ttl": 86400,
+                "name": str(adns_args.soa.mname),
+                "ip": adns_args.ip,
+                "origin": adns_args.origin,
+                "default_ttl": adns_args.default_ttl,
                 "signing_algorithm": "ECDSAP384SHA384",
                 "digest_type": "SHA384",
                 "use_key_signing_key": True,
@@ -140,12 +141,19 @@ def run(adns_args, service_args):
                     cert_to_pem(adns_nw.cert),
                     open(adns_args.ca_cert_filename, "r", encoding="ascii").read(),
                 ],
+                "fixed_zsk": """-----BEGIN PRIVATE KEY-----
+MIG2AgEAMBAGByqGSM49AgEGBSuBBAAiBIGeMIGbAgEBBDApoJlA4ykORqLIJQNq
+rpE/KtX8WlGRmFj13deg1pLu2uazeeMKf4ccPOa4sH7oQWqhZANiAATe2J/4MjjS
+++0PMLpmgTxVqQgKG64siqKM1BBZjaex5TdxLKLVLPu6QAHKIRKtVeprL0KgkdNl
+XIiPf1pGst9TyaEfzTi/XxVqK/CGdZFct9r9eYMjWm01P6HLQi22SjI=
+-----END PRIVATE KEY-----
+""",
             }
         }
 
         adns_ccf_dev.configure(adns_nw, adns_config)
 
-        adns_acme_cert = wait_for_acme_cert(adns_nw, "ns1.adns.ccf.dev.")
+        adns_endorsed_cert = wait_for_endorsed_cert(adns_nw, str(adns_args.soa.mname))
 
         input("Press Enter to continue...")
 
@@ -158,8 +166,8 @@ def run(adns_args, service_args):
         input("Press Enter to continue...")
 
         service_info = {
-            "name": "service43.adns.ccf.dev.",
-            "ip": "51.143.161.224",
+            "name": "service43." + adns_args.origin,
+            "ip": service_args.ip,
             "port": 9443,
         }
 
@@ -167,20 +175,20 @@ def run(adns_args, service_args):
         reginfo = configure_service(
             service_nw,
             service_info,
-            "https://ns1.adns.ccf.dev:" + str(adns_args.service_port),
-            [cert_to_pem(adns_nw.cert), adns_acme_cert],
+            "https://" + mname_nodot + ":" + str(adns_args.service_port),
+            [cert_to_pem(adns_nw.cert), adns_endorsed_cert],
         )
 
         input("Press Enter to continue...")
 
         # Register the service with aDNS
-        register_service(adns_nw, service_info, reginfo)
+        register_service(adns_nw, adns_args.origin, service_info, reginfo)
 
         LOG.info("Waiting forever...")
         while True:
             pass
-    except Exception as ex:
-        LOG.error("exception: " + str(ex))
+    except Exception:
+        logging.exception("caught exception")
     finally:
         if service_nw:
             service_nw.stop_all_nodes()
@@ -206,10 +214,31 @@ def main():
     adns_args.package = "libccfdns"
     adns_args.label = "demo_adns"
     adns_args.acme_config_name = "pebble"
+    adns_args.email = "cwinter@microsoft.com"
     adns_args.wait_forever = False
     adns_args.acme_http_port = 8080
     adns_args.service_port = 8443
     adns_args.populate = False
+    # adns_args.udp_service_port = 54
+    adns_args.regpol = """
+        data.claims.sgx_claims.report_body.mr_enclave.length == 32 &&
+        JSON.stringify(data.claims.custom_claims.sgx_report_data) == JSON.stringify([ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    """
+
+    adns_args.origin = "adns.ccf.dev."
+    adns_args.ip = "51.143.161.224"
+    adns_args.default_ttl = 86400
+    adns_args.soa = SOA.SOA(
+        rdc.IN,
+        rdt.SOA,
+        mname="ns1.adns.ccf.dev.",
+        rname="some-dev.microsoft.com.",
+        serial=4,
+        refresh=604800,
+        retry=86400,
+        expire=2419200,
+        minimum=0,
+    )
 
     service_args = infra.e2e_args.cli_args(cliparser)
     service_args.node = ["local://10.1.0.4:443"]  # < 1024 requires root or setcap
@@ -219,6 +248,8 @@ def main():
     service_args.label = "demo_service"
     service_args.acme_config_name = None
     service_args.wait_forever = False
+    service_args.ip = "51.143.161.224"
+    service_args.dns_name = "service43." + adns_args.origin.rstrip(".")
 
     run(adns_args, service_args)
 

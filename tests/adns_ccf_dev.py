@@ -7,7 +7,6 @@ import http
 import time
 import base64
 import subprocess
-import json
 import copy
 
 import infra.e2e_args
@@ -22,6 +21,7 @@ import dns.message
 import dns.query
 import dns.rdatatype as rdt
 import dns.rdataclass as rdc
+import dns.rdtypes.ANY.SOA as SOA
 
 from loguru import logger as LOG
 
@@ -61,23 +61,17 @@ def configure(network, adns_config):
     )
 
 
-def populate_adns_ccf_dev(network, args):
-    """Populate the adns.ccf.dev. zone"""
+def populate(network, args):
+    """Populate the zone with example entries"""
     primary, _ = network.find_primary()
 
     with primary.client() as client:
-        origin = "adns.ccf.dev."
+        origin = args.origin
 
-        rd = dns.rdata.from_text(
-            rdc.IN,
-            rdt.SOA,
-            "ns1.adns.ccf.dev. some-dev.microsoft.com. 4 604800 86400 2419200 0",
-        )
-        add_record(client, origin, origin, "SOA", rd)
         rd = dns.rdata.from_text(rdc.IN, rdt.A, "51.143.161.224")
         add_record(client, origin, origin, "A", rd)
 
-        rd = dns.rdata.from_text(rdc.IN, rdt.NS, "ns1.adns.ccf.dev.")
+        rd = dns.rdata.from_text(rdc.IN, rdt.NS, "ns1." + origin)
         add_record(client, origin, origin, "NS", rd)
 
         rd = dns.rdata.from_text(rdc.IN, rdt.A, "51.143.161.224")
@@ -102,58 +96,6 @@ def populate_adns_ccf_dev(network, args):
 
         rd = dns.rdata.from_text(rdc.IN, rdt.TXT, "some text")
         add_record(client, origin, "cwinter", "TXT", rd)
-        # b'\x04some\x04text'
-
-
-# def start_dnscrypt_proxy(binary):
-#     # service_cert = "workspace/adns.ccf.dev_common/service_cert.pem"
-#     # hash = (
-#     #     subprocess.Popen(
-#     #         f"openssl asn1parse -in {service_cert} -out /dev/stdout -noout -strparse 4 | openssl dgst -sha256",
-#     #         shell=True,
-#     #         stdout=subprocess.PIPE,
-#     #     )
-#     #     .stdout.read()
-#     #     .decode("ascii")
-#     # )
-#     # hash = hash[hash.find(" ") + 1 :]
-
-#     # service_cert2 = "workspace/adns.ccf.dev_0/0.pem"
-#     # hash2 = (
-#     #     subprocess.Popen(
-#     #         f"openssl asn1parse -in {service_cert2} -out /dev/stdout -noout -strparse 4 | openssl dgst -sha256",
-#     #         shell=True,
-#     #         stdout=subprocess.PIPE,
-#     #     )
-#     #     .stdout.read()
-#     #     .decode("ascii")
-#     # )
-#     # hash2 = hash2[hash2.find(" ") + 1 :]
-
-#     shutil.copy("../tests/dnscrypt-proxy.toml", "dnscrypt-proxy.toml")
-
-#     stamp = dnsstamps.create_doh(
-#         "10.1.0.4",
-#         [],
-#         "10.1.0.4:8000",
-#         "/app/dns-query",
-#         [],
-#     )
-
-#     with open("dnscrypt-proxy.toml", "a", encoding="ascii") as f:
-#         f.write(f"\n    stamp='{stamp}'\n")
-
-#     try:
-#         p = subprocess.Popen(
-#             [binary, "-config", "dnscrypt-proxy.toml"],
-#         )
-
-#         pebble.wait_for_port_to_listen("127.0.0.1", 53, 5)
-#     except:
-#         if p:
-#             p.kill()
-
-#     return p
 
 
 def start_dns_to_http_proxy(binary, host, port, query_url, network_cert):
@@ -206,14 +148,14 @@ def run(args):
 
     pebble_proc = None
     proxy_proc = None
-    service_dns_name = "ns1.adns.ccf.dev"
+    service_dns_name = "ns1." + args.origin.rstrip(".")
 
     args.ca_cert_filename = "pebble-ca-cert.pem"
 
     if len(args.node) == 0:
         args.node = DEFAULT_NODES
 
-    public_host, public_port = public_host_port(args.node[0])
+    public_host, _ = public_host_port(args.node[0])
 
     # Proxy is here: https://github.com/aarond10/https_dns_proxy
     # Note: proxy needs: sudo setcap 'cap_net_bind_service=+ep' https_dns_proxy
@@ -221,7 +163,7 @@ def run(args):
 
     if args.acme_config_name == "pebble":
         pargs = copy.deepcopy(args)
-        pargs.dns_address = public_host + ":53"  # "ns1.adns.ccf.dev:53"
+        pargs.dns_address = public_host + ":53"
         pargs.wait_forever = False
         pargs.http_port = args.acme_http_port
         pebble_proc, _, _ = pebble.run_pebble(pargs)
@@ -242,7 +184,9 @@ def run(args):
             "-----BEGIN CERTIFICATE-----\nMIIDCzCCApGgAwIBAgIRALRY4992FVxZJKOJ3bpffWIwCgYIKoZIzj0EAwMwaDEL\nMAkGA1UEBhMCVVMxMzAxBgNVBAoTKihTVEFHSU5HKSBJbnRlcm5ldCBTZWN1cml0\neSBSZXNlYXJjaCBHcm91cDEkMCIGA1UEAxMbKFNUQUdJTkcpIEJvZ3VzIEJyb2Nj\nb2xpIFgyMB4XDTIwMDkwNDAwMDAwMFoXDTI1MDkxNTE2MDAwMFowVTELMAkGA1UE\nBhMCVVMxIDAeBgNVBAoTFyhTVEFHSU5HKSBMZXQncyBFbmNyeXB0MSQwIgYDVQQD\nExsoU1RBR0lORykgRXJzYXR6IEVkYW1hbWUgRTEwdjAQBgcqhkjOPQIBBgUrgQQA\nIgNiAAT9v/PJUtHOTk28nXCXrpP665vI4Z094h8o7R+5E6yNajZa0UubqjpZFoGq\nu785/vGXj6mdfIzc9boITGusZCSWeMj5ySMZGZkS+VSvf8VQqj+3YdEu4PLZEjBA\nivRFpEejggEQMIIBDDAOBgNVHQ8BAf8EBAMCAYYwHQYDVR0lBBYwFAYIKwYBBQUH\nAwIGCCsGAQUFBwMBMBIGA1UdEwEB/wQIMAYBAf8CAQAwHQYDVR0OBBYEFOv5JcKA\nKGbibQiSMvPC4a3D/zVFMB8GA1UdIwQYMBaAFN7Ro1lkDsGaNqNG7rAQdu+ul5Vm\nMDYGCCsGAQUFBwEBBCowKDAmBggrBgEFBQcwAoYaaHR0cDovL3N0Zy14Mi5pLmxl\nbmNyLm9yZy8wKwYDVR0fBCQwIjAgoB6gHIYaaHR0cDovL3N0Zy14Mi5jLmxlbmNy\nLm9yZy8wIgYDVR0gBBswGTAIBgZngQwBAgEwDQYLKwYBBAGC3xMBAQEwCgYIKoZI\nzj0EAwMDaAAwZQIwXcZbdgxcGH9rTErfSTkXfBKKygU0yO7OpbuNeY1id0FZ/hRY\nN5fdLOGuc+aHfCsMAjEA0P/xwKr6NQ9MN7vrfGAzO397PApdqfM7VdFK18aEu1xm\n3HMFKzIR8eEPsMx4smMl\n-----END CERTIFICATE-----\n",
             "-----BEGIN CERTIFICATE-----\nMIICTjCCAdSgAwIBAgIRAIPgc3k5LlLVLtUUvs4K/QcwCgYIKoZIzj0EAwMwaDEL\nMAkGA1UEBhMCVVMxMzAxBgNVBAoTKihTVEFHSU5HKSBJbnRlcm5ldCBTZWN1cml0\neSBSZXNlYXJjaCBHcm91cDEkMCIGA1UEAxMbKFNUQUdJTkcpIEJvZ3VzIEJyb2Nj\nb2xpIFgyMB4XDTIwMDkwNDAwMDAwMFoXDTQwMDkxNzE2MDAwMFowaDELMAkGA1UE\nBhMCVVMxMzAxBgNVBAoTKihTVEFHSU5HKSBJbnRlcm5ldCBTZWN1cml0eSBSZXNl\nYXJjaCBHcm91cDEkMCIGA1UEAxMbKFNUQUdJTkcpIEJvZ3VzIEJyb2Njb2xpIFgy\nMHYwEAYHKoZIzj0CAQYFK4EEACIDYgAEOvS+w1kCzAxYOJbA06Aw0HFP2tLBLKPo\nFQqR9AMskl1nC2975eQqycR+ACvYelA8rfwFXObMHYXJ23XLB+dAjPJVOJ2OcsjT\nVqO4dcDWu+rQ2VILdnJRYypnV1MMThVxo0IwQDAOBgNVHQ8BAf8EBAMCAQYwDwYD\nVR0TAQH/BAUwAwEB/zAdBgNVHQ4EFgQU3tGjWWQOwZo2o0busBB2766XlWYwCgYI\nKoZIzj0EAwMDaAAwZQIwRcp4ZKBsq9XkUuN8wfX+GEbY1N5nmCRc8e80kUkuAefo\nuc2j3cICeXo1cOybQ1iWAjEA3Ooawl8eQyR4wrjCofUE8h44p0j7Yl/kBlJZT8+9\nvbtH7QiVzeKCOTQPINyRql6P\n-----END CERTIFICATE-----\n",
         ]
-        email = "cwinter@microsoft.com"
+        if not args.email:
+            raise Exception("Valid e-mail address is required for Let's Encrypt")
+        email = args.email
     else:
         raise Exception("unknown ACME configuration name")
 
@@ -294,7 +238,7 @@ def run(args):
         if args.regpol:
             set_registration_policy(network, args)
         if args.populate:
-            populate_adns_ccf_dev(network, args)
+            populate(network, args)
 
         node = network.find_random_node()
         primary_if = node.host.rpc_interfaces[infra.interfaces.PRIMARY_RPC_INTERFACE]
@@ -311,7 +255,7 @@ def run(args):
 
         # TODO: wait for ACME cert to become available, then restart the proxy with the endorsed interface.
 
-        LOG.success("Server/network for adns.ccf.dev running.")
+        LOG.success(f"Server/network for {args.origin} running.")
 
         if args.wait_forever:
             LOG.info("Waiting forever...")
@@ -334,7 +278,7 @@ if __name__ == "__main__":
 
     def add(parser):
         """Add parser"""
-        parser.description = "DNS sandboxing for adns.ccf.dev"
+        parser.description = "DNS sandboxing for aDNS networks"
 
         parser.add_argument(
             "-n",
@@ -381,4 +325,29 @@ if __name__ == "__main__":
         data.claims.sgx_claims.report_body.mr_enclave.length == 32 &&
         JSON.stringify(data.claims.custom_claims.sgx_report_data) == JSON.stringify([ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
         """
-    run(gargs)
+
+    gargs.email = "cwinter@microsoft.com"
+    gargs.origin = "adns.ccf.dev."
+    gargs.soa = SOA.SOA(
+        rdc.IN,
+        rdt.SOA,
+        mname="ns1." + gargs.origin,
+        rname="some-dev.my-site.com.",
+        serial=4,
+        refresh=604800,
+        retry=86400,
+        expire=2419200,
+        minimum=0,
+    )
+
+    nw = None
+    procs = []
+    try:
+        nw, procs = run(gargs)
+    finally:
+        if nw:
+            nw.stop_all_nodes()
+        if procs:
+            for p in procs:
+                if p:
+                    p.kill()
