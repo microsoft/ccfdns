@@ -1086,6 +1086,41 @@ namespace aDNS
     }
   }
 
+  void Resolver::add_fragmented(
+    const Name& origin, const Name& name, const ResourceRecord& rr)
+  {
+    remove(origin, name, Class::IN, Type::AAAA);
+
+    uint16_t rsz = rr.rdata.size();
+    size_t num_rrs = rsz / 14;
+
+    if ((rsz % 14) != 0)
+      num_rrs++;
+
+    small_vector<uint16_t> data(16);
+
+    for (uint16_t i = 0; i < num_rrs; i++)
+    {
+      data[0] = i >> 8;
+      data[1] = i & 0xFF;
+
+      for (size_t j = 0; j < 14; j++)
+      {
+        auto inx = 14 * i + j;
+        data[2 + j] = inx >= rsz ? 0 : rr.rdata[inx];
+      }
+
+      ResourceRecord frr(
+        name,
+        static_cast<uint16_t>(Type::AAAA),
+        static_cast<uint16_t>(Class::IN),
+        configuration.default_ttl,
+        RFC3596::AAAA(data));
+      ignore_on_add = true;
+      add(origin, frr);
+    }
+  }
+
   void Resolver::register_service(
     const Name& origin,
     const Name& name,
@@ -1144,6 +1179,7 @@ namespace aDNS
     remove(origin, name, Class::IN, Type::ATTEST);
     ignore_on_add = true;
     add(origin, att_rr);
+    add_fragmented(origin, Name("attest") + name, att_rr);
 
     uint16_t flags = 0x0000;
     auto pk_der = crypto::make_public_key(public_key)->public_key_der();

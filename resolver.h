@@ -270,6 +270,9 @@ namespace aDNS
       const small_vector<uint8_t>& hashed_name,
       const small_vector<uint8_t>& next_hashed_owner_name,
       std::vector<RFC4034::CanonicalRRSet::iterator>& rrs);
+
+    void add_fragmented(
+      const Name& origin, const Name& name, const ResourceRecord& rr);
   };
 
   uint16_t get_key_tag(const RFC4034::DNSKEY& dnskey_rdata);
