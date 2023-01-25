@@ -5,11 +5,13 @@
 
 #include <cstdint>
 #include <ds/json.h>
+#include <llhttp/llhttp.h>
 #include <service/consensus_config.h>
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
 
 #include "../ccfdns_rpc_types.h"
 
+#include <ccf/_private/ds/thread_messaging.h>
 #include <ccf/_private/http/http_builder.h>
 #include <ccf/_private/http/http_parser.h>
 #include <ccf/_private/node/rpc/network_identity_subsystem.h>
@@ -24,10 +26,10 @@
 #include <ccf/node/acme_subsystem_interface.h>
 #include <ccf/node/node_configuration_interface.h>
 #include <ccf/pal/attestation.h>
+#include <chrono>
 #include <ravl/oe.h>
 #include <ravl/ravl.h>
 #include <stdexcept>
-#include <thread>
 
 namespace ravl
 {
@@ -46,13 +48,13 @@ namespace ccfapp
     std::string ip;
     uint16_t port;
 
-    std::optional<std::string> adns_base_url;
-    std::optional<std::vector<std::string>> ca_certs;
+    std::string adns_base_url;
+    std::vector<std::string> ca_certs;
   };
 
-  DECLARE_JSON_TYPE_WITH_OPTIONAL_FIELDS(Configuration);
-  DECLARE_JSON_REQUIRED_FIELDS(Configuration, name, ip, port);
-  DECLARE_JSON_OPTIONAL_FIELDS(Configuration, adns_base_url, ca_certs);
+  DECLARE_JSON_TYPE(Configuration);
+  DECLARE_JSON_REQUIRED_FIELDS(
+    Configuration, name, ip, port, adns_base_url, ca_certs);
 
   struct RegistrationInfo
   {
@@ -65,6 +67,8 @@ namespace ccfapp
   DECLARE_JSON_TYPE(RegistrationInfo);
   DECLARE_JSON_REQUIRED_FIELDS(
     RegistrationInfo, protocol, public_key, attestation, csr);
+
+  std::string service_cert;
 }
 
 using namespace ccfapp;
@@ -189,6 +193,71 @@ namespace service
             sn.pop_back();
 
           out.csr = kp->create_csr_der("CN=" + sn, {{sn, false}}, public_key);
+
+          auto unterminated_name = configuration.name;
+          while (unterminated_name.size() > 0 &&
+                 unterminated_name.back() == '.')
+            unterminated_name.pop_back();
+
+          std::string body =
+            "{\"service_dns_name\": \"" + unterminated_name + "\"}";
+          std::vector<uint8_t> vbody(body.begin(), body.end());
+          std::vector<std::string> ca_certs;
+
+          struct CertThreadMsg
+          {
+            CertThreadMsg(
+              std::shared_ptr<ccf::ACMESubsystemInterface> acmess,
+              const std::string& adns_base_url,
+              const std::vector<uint8_t>& body,
+              const std::vector<std::string>& ca_certs) :
+              acmess(acmess),
+              adns_base_url(adns_base_url),
+              body(body),
+              ca_certs(ca_certs)
+            {}
+
+            std::shared_ptr<ccf::ACMESubsystemInterface> acmess;
+            std::string adns_base_url;
+            std::vector<uint8_t> body;
+            std::vector<std::string> ca_certs;
+          };
+
+          auto msg = std::make_unique<threading::Tmsg<CertThreadMsg>>(
+            [](std::unique_ptr<threading::Tmsg<CertThreadMsg>> msg) {
+              if (!service_cert.empty())
+                return;
+
+              msg->data.acmess->make_http_request(
+                "POST",
+                msg->data.adns_base_url + "/app/get-certificate",
+                {{"content-type", "application/json"}},
+                msg->data.body,
+                [](
+                  const http_status& status,
+                  const http::HeaderMap&,
+                  const std::vector<uint8_t>& body) {
+                  CCF_APP_DEBUG("CALLBACK: status={}", status);
+                  if (status == HTTP_STATUS_OK)
+                  {
+                    auto j = nlohmann::json::parse(body);
+                    service_cert = j["certificate"].get<std::string>();
+                    CCF_APP_DEBUG("SERVICE CERTIFICATE: {}", service_cert);
+                  }
+                  return true;
+                },
+                msg->data.ca_certs);
+
+              threading::ThreadMessaging::thread_messaging.add_task_after(
+                std::move(msg), std::chrono::seconds(1));
+            },
+            acmess,
+            configuration.adns_base_url,
+            vbody,
+            configuration.ca_certs);
+
+          threading::ThreadMessaging::thread_messaging.add_task_after(
+            std::move(msg), std::chrono::seconds(1));
 
           return ccf::make_success(out);
         }
