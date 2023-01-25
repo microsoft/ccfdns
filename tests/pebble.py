@@ -164,10 +164,8 @@ def run_pebble(pargs):
 
     args = default_args(pargs)
 
-    if not os.path.exists(args.binary_filename) or not os.path.exists(
-        args.binary_filename
-    ):
-        raise Exception("pebble not found; run playbooks to install it")
+    if not os.path.exists(args.binary_filename):
+        raise Exception(f"pebble not found at {args.binary_filename}")
 
     make_pebble_config(
         args.config_filename,

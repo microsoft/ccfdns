@@ -166,12 +166,13 @@ def start_dns_to_http_proxy(binary, host, port, query_url, network_cert):
         "-r",
         query_url,
         "-v",
-        "debug",
-        "-x",
+        "-l",
+        "doh_proxy.log",
         "-C",
         network_cert,
     ]
-    return subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+
+    return subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
 
 def public_host_port(listen_addr):
@@ -254,6 +255,7 @@ def run(args):
                     authority=infra.interfaces.EndorsementAuthority.ACME,
                     acme_configuration=args.acme_config_name,
                 ),
+                app_protocol=infra.interfaces.AppProtocol.HTTP2,
             )
             node.rpc_interfaces["acme_endorsed_interface"] = endoed_if
             node.rpc_interfaces[

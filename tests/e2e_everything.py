@@ -4,6 +4,7 @@
 import glob
 import http
 import json
+import time
 
 import infra.e2e_args
 import infra.network
@@ -29,6 +30,21 @@ def cert_to_pem(x):
     return x.public_bytes(serialization.Encoding.PEM).decode("ascii")
 
 
+def get_acme_cert(network, name):
+    """Get the endorsed network certificate"""
+
+    primary, _ = network.find_primary()
+    r = None
+    with primary.client() as client:
+        r = client.post(
+            "/app/get-certificate",
+            {"service_dns_name": name},
+        )
+
+    assert r.status_code == http.HTTPStatus.OK
+    return json.loads(str(r.body))["certificate"]
+
+
 def configure_service(network, service_info, adns_base_url, ca_certs):
     """Configure the service"""
 
@@ -41,6 +57,8 @@ def configure_service(network, service_info, adns_base_url, ca_certs):
                 "name": service_info["name"],
                 "ip": service_info["ip"],
                 "port": service_info["port"],
+                "adns_base_url": adns_base_url,
+                "ca_certs": ca_certs,
             },
         )
 
@@ -71,6 +89,20 @@ def register_service(network, service_info, reginfo):
     # jbody = json.loads(str(r.body))
     # return jbody
     return True
+
+
+def wait_for_acme_cert(network, name):
+    """Wait until an ACME endorsed network certificate is available"""
+    num_retries = 20
+    while num_retries > 0:
+        try:
+            r = get_acme_cert(network, name)
+            return r
+        except Exception:
+            num_retries = num_retries - 1
+        time.sleep(1)
+    if num_retries == 0:
+        raise Exception("Failed to obtain ACME network certificate")
 
 
 def run(adns_args, service_args):
@@ -113,6 +145,8 @@ def run(adns_args, service_args):
 
         adns_ccf_dev.configure(adns_nw, adns_config)
 
+        adns_acme_cert = wait_for_acme_cert(adns_nw, "ns1.adns.ccf.dev.")
+
         input("Press Enter to continue...")
 
         # Start a demo service that registers with the ADNS server
@@ -133,11 +167,8 @@ def run(adns_args, service_args):
         reginfo = configure_service(
             service_nw,
             service_info,
-            "adns.ccf.dev",
-            [
-                cert_to_pem(adns_nw.cert),
-                open(adns_args.ca_cert_filename, "r", encoding="ascii").read(),
-            ],
+            "https://ns1.adns.ccf.dev:" + str(adns_args.service_port),
+            [cert_to_pem(adns_nw.cert), adns_acme_cert],
         )
 
         input("Press Enter to continue...")
