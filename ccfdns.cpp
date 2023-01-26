@@ -1043,7 +1043,9 @@ namespace ccfdns
           ccfdns.set_endpoint_context(ctx);
           GetCertificate::Out out;
 
-          if (in.service_dns_name == ccfdns.get_configuration().name)
+          if (
+            in.service_dns_name == ccfdns.get_configuration().name ||
+            in.service_dns_name + "." == ccfdns.get_configuration().name)
           {
             auto t = ctx.tx.template rw<ccf::ACMECertificates>(
               ccf::Tables::ACME_CERTIFICATES);
