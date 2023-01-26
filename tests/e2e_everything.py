@@ -4,7 +4,6 @@
 import glob
 import http
 import json
-import time
 import logging
 
 import infra.e2e_args
@@ -13,41 +12,15 @@ import infra.node
 import infra.checker
 import infra.health_watcher
 
-# from cryptography.x509 import Certificate,
-from cryptography.hazmat.primitives import serialization
 from loguru import logger as LOG
 
 import dns.rdatatype as rdt
 import dns.rdataclass as rdc
 import dns.rdtypes.ANY.SOA as SOA
 
-import adns_ccf_dev
+import adns_service
+from adns_service import cert_to_pem
 import ccf_demo_service
-
-
-def pk_to_pem(x):
-    return x.public_bytes(
-        serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo
-    ).decode("ascii")
-
-
-def cert_to_pem(x):
-    return x.public_bytes(serialization.Encoding.PEM).decode("ascii")
-
-
-def get_endorsed_cert(network, name):
-    """Get the endorsed network certificate"""
-
-    primary, _ = network.find_primary()
-    r = None
-    with primary.client() as client:
-        r = client.post(
-            "/app/get-certificate",
-            {"service_dns_name": name},
-        )
-
-    assert r.status_code == http.HTTPStatus.OK
-    return json.loads(str(r.body))["certificate"]
 
 
 def configure_service(network, service_info, adns_base_url, ca_certs):
@@ -96,20 +69,6 @@ def register_service(network, origin, service_info, reginfo):
     return True
 
 
-def wait_for_endorsed_cert(network, name):
-    """Wait until an endorsed network certificate is available"""
-    num_retries = 20
-    while num_retries > 0:
-        try:
-            r = get_endorsed_cert(network, name)
-            return r
-        except Exception:
-            num_retries = num_retries - 1
-        time.sleep(1)
-    if num_retries == 0:
-        raise Exception("Failed to obtain endorsed network certificate")
-
-
 def run(adns_args, service_args):
     """Run everything"""
 
@@ -119,12 +78,6 @@ def run(adns_args, service_args):
 
     try:
         # Start ADNS server, including a pebble CA and the DOH proxy
-        adns_nw, procs = adns_ccf_dev.run(adns_args)
-
-        if not adns_nw:
-            raise Exception("Failed to start aDNS network")
-
-        # Configure aDNS
         adns_config = {
             "configuration": {
                 "name": str(adns_args.soa.mname),
@@ -137,10 +90,7 @@ def run(adns_args, service_args):
                 "use_nsec3": True,
                 "nsec3_hash_algorithm": "SHA1",
                 "nsec3_hash_iterations": 3,
-                "ca_certs": [
-                    cert_to_pem(adns_nw.cert),
-                    open(adns_args.ca_cert_filename, "r", encoding="ascii").read(),
-                ],
+                "ca_certs": [],
                 "fixed_zsk": """-----BEGIN PRIVATE KEY-----
 MIG2AgEAMBAGByqGSM49AgEGBSuBBAAiBIGeMIGbAgEBBDApoJlA4ykORqLIJQNq
 rpE/KtX8WlGRmFj13deg1pLu2uazeeMKf4ccPOa4sH7oQWqhZANiAATe2J/4MjjS
@@ -151,9 +101,14 @@ XIiPf1pGst9TyaEfzTi/XxVqK/CGdZFct9r9eYMjWm01P6HLQi22SjI=
             }
         }
 
-        adns_ccf_dev.configure(adns_nw, adns_config)
+        adns_nw, procs = adns_service.run(adns_args, adns_config)
 
-        adns_endorsed_cert = wait_for_endorsed_cert(adns_nw, str(adns_args.soa.mname))
+        if not adns_nw:
+            raise Exception("Failed to start aDNS network")
+
+        adns_endorsed_cert = adns_service.wait_for_endorsed_cert(
+            adns_nw, str(adns_args.soa.mname)
+        )
 
         input("Press Enter to continue...")
 
