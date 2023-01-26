@@ -9,6 +9,7 @@
 #include <ccf/ds/hex.h>
 #include <cstdint>
 #include <initializer_list>
+#include <stdexcept>
 #include <string>
 
 template <typename T, typename E = uint8_t>
@@ -105,6 +106,13 @@ public:
 
   const E& operator[](const T& index) const
   {
+    return data[index];
+  }
+
+  E& at(const T& index) const
+  {
+    if (index >= size())
+      throw std::out_of_range("small_vector");
     return data[index];
   }
 

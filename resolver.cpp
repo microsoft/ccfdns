@@ -110,6 +110,7 @@ namespace aDNS
     TFSF(RFC6891);
     TFSF(RFC5155);
     TFSF(RFC7671);
+    TFSF(RFC8659);
     TFSF(aDNS::Types);
 
     throw std::runtime_error(
@@ -131,6 +132,7 @@ namespace aDNS
     SFTF(RFC6891);
     SFTF(RFC5155);
     SFTF(RFC7671);
+    SFTF(RFC8659);
     SFTF(aDNS::Types);
 
     // https://datatracker.ietf.org/doc/html/rfc3597#section-5
@@ -219,8 +221,10 @@ namespace aDNS
       case Type::NSEC3PARAM: return std::make_shared<RFC5155::NSEC3PARAM>(rdata); break;
 
       case Type::OPT: return std::make_shared<RFC6891::OPT>(rdata); break;
-
+          
       case Type::TLSA: return std::make_shared<RFC7671::TLSA>(rdata); break;
+
+      case Type::CAA: return std::make_shared<RFC8659::CAA>(rdata); break;
 
       case Type::TLSKEY: return std::make_shared<aDNS::Types::TLSKEY>(rdata); break;
       case Type::ATTEST: return std::make_shared<aDNS::Types::ATTEST>(rdata); break;
@@ -1021,29 +1025,13 @@ namespace aDNS
       "ADNS: {}: on_add: {}", origin, string_from_resource_record(rr));
     switch (t)
     {
-      case Type::A:
-      case Type::NS:
-      case Type::CNAME:
-      case Type::SOA:
-      case Type::MX:
-      case Type::TXT:
-      case Type::AAAA:
-      case Type::RRSIG:
-      case Type::NSEC:
-      case Type::NSEC3:
-      case Type::DS:
-      case Type::DNSKEY:
-      case Type::ATTEST:
-      case Type::TLSKEY:
-      case Type::TLSA:
-        sign(origin);
+      case Type::OPT:
+        CCF_APP_DEBUG(
+          "ADNS: Not re-signing after addition of {} record",
+          string_from_type(t));
         break;
       default:
-      {
-        CCF_APP_DEBUG(
-          "ADNS: Ignoring update to {} record", string_from_type(t));
-        break;
-      }
+        sign(origin);
     }
   }
 
@@ -1063,26 +1051,13 @@ namespace aDNS
       "ADNS: {}: on_remove: {}", origin, string_from_resource_record(rr));
     switch (t)
     {
-      case Type::A:
-      case Type::NS:
-      case Type::CNAME:
-      case Type::SOA:
-      case Type::MX:
-      case Type::TXT:
-      case Type::AAAA:
-      case Type::DS:
-      case Type::DNSKEY:
-      case Type::ATTEST:
-      case Type::TLSKEY:
-      case Type::TLSA:
-        sign(origin);
+      case Type::OPT:
+        CCF_APP_DEBUG(
+          "ADNS: Not re-signing after removal of {} record",
+          string_from_type(t));
         break;
       default:
-      {
-        CCF_APP_DEBUG(
-          "ADNS: Ignoring update to {} record", string_from_type(t));
-        break;
-      }
+        sign(origin);
     }
   }
 
@@ -1227,8 +1202,22 @@ namespace aDNS
         public_key_sv));
 
     remove(origin, tlsa_name, Class::IN, Type::TLSA);
-    ignore_on_add = false; // will trigger zone signing
+    ignore_on_add = true;
     add(origin, tlsa_rr);
+
+    // Add CAA record(s)
+    using namespace RFC8659;
+
+    ResourceRecord caa_rr(
+      name,
+      static_cast<uint16_t>(aDNS::Type::CAA),
+      static_cast<uint16_t>(Class::IN),
+      configuration.default_ttl,
+      CAA(0x42, "tag", "value"));
+
+    remove(origin, name, Class::IN, Type::CAA);
+    ignore_on_add = false; // will trigger zone signing
+    add(origin, caa_rr);
   }
 
   void Resolver::install_acme_response(
