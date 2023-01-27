@@ -139,13 +139,22 @@ namespace aDNS
       RFC4034::CanonicalRRSet authorities;
     };
 
+    struct RegistrationRequest
+    {
+      Name origin;
+      Name name;
+      std::string ip;
+      uint16_t port;
+      std::string protocol;
+      std::string attestation;
+      std::vector<uint8_t> csr;
+      std::vector<std::string> contact;
+    };
+
     Resolver();
     virtual ~Resolver();
 
-    virtual void configure(const Configuration& cfg)
-    {
-      configuration = cfg;
-    }
+    virtual void configure(const Configuration& cfg) = 0;
 
     virtual Message reply(const Message& msg);
 
@@ -192,18 +201,18 @@ namespace aDNS
       const crypto::Pem& pem,
       bool key_signing) = 0;
 
-    virtual void register_service(
+    virtual void register_service(const RegistrationRequest& req);
+
+    virtual void start_service_acme(
       const Name& origin,
       const Name& name,
-      const RFC1035::A& address,
-      uint16_t port,
-      const std::string& protocol,
-      const std::string& attestation,
-      const crypto::Pem& public_key);
+      const std::vector<uint8_t>& csr,
+      const std::vector<std::string>& contact) = 0;
 
     virtual void install_acme_response(
       const Name& origin,
       const Name& name,
+      const std::vector<Name>& alternative_names,
       const std::string& key_authorization);
 
     virtual void remove_acme_response(const Name& origin, const Name& name);
@@ -215,10 +224,7 @@ namespace aDNS
     virtual bool evaluate_registration_policy(
       const std::string& data) const = 0;
 
-    virtual const Configuration& get_configuration()
-    {
-      return configuration;
-    }
+    virtual Configuration get_configuration() const = 0;
 
     virtual void set_service_certificate(
       const std::string& service_dns_name,
@@ -227,8 +233,9 @@ namespace aDNS
     virtual std::string get_service_certificate(
       const std::string& service_dns_name) = 0;
 
+    virtual void save_registration_request(const RegistrationRequest& rr) = 0;
+
   protected:
-    Configuration configuration;
     bool ignore_on_add = false;
     bool ignore_on_remove = false;
     small_vector<uint8_t> nsec3_salt;

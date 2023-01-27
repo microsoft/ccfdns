@@ -33,6 +33,7 @@
 #include <openssl/ossl_typ.h>
 #include <openssl/x509.h>
 #include <ravl/oe.h>
+#include <ravl/openssl.hpp>
 #include <ravl/ravl.h>
 #include <set>
 #include <sstream>
@@ -221,7 +222,7 @@ namespace aDNS
       case Type::NSEC3PARAM: return std::make_shared<RFC5155::NSEC3PARAM>(rdata); break;
 
       case Type::OPT: return std::make_shared<RFC6891::OPT>(rdata); break;
-          
+
       case Type::TLSA: return std::make_shared<RFC7671::TLSA>(rdata); break;
 
       case Type::CAA: return std::make_shared<RFC8659::CAA>(rdata); break;
@@ -498,6 +499,8 @@ namespace aDNS
 
       if (result_set.empty())
       {
+        auto configuration = get_configuration();
+
         if (configuration.use_nsec3)
         {
           auto name_hash = RFC5155::NSEC3::hash(
@@ -591,6 +594,8 @@ namespace aDNS
   Resolver::KeyAndTag Resolver::add_new_signing_key(
     const Name& origin, Class class_, bool key_signing)
   {
+    auto configuration = get_configuration();
+
     std::shared_ptr<crypto::KeyPair> new_zsk;
 
     if (configuration.fixed_zsk)
@@ -626,6 +631,8 @@ namespace aDNS
   Resolver::KeyAndTag Resolver::get_signing_key(
     const Name& origin, Class class_, bool key_signing)
   {
+    auto configuration = get_configuration();
+
     bool find_ksk = configuration.use_key_signing_key && key_signing;
 
     RFC4034::CanonicalRRSet suitable_keys = find_records(
@@ -658,6 +665,8 @@ namespace aDNS
     const small_vector<uint16_t>& public_key,
     bool key_signing)
   {
+    auto configuration = get_configuration();
+
     uint16_t flags = 0x0000;
 
     if (!configuration.use_key_signing_key || !key_signing)
@@ -690,6 +699,8 @@ namespace aDNS
     if (origin.is_root())
       return;
 
+    auto configuration = get_configuration();
+
     Name parent = origin.parent();
     auto ds_rrs = find_records(parent, origin, QType::DS, QClass::IN);
 
@@ -718,6 +729,7 @@ namespace aDNS
     std::vector<RFC4034::CanonicalRRSet::iterator>& rrs)
   {
     assert(!rrs.empty());
+    auto configuration = get_configuration();
 
     std::string nameb32 = base32hex_encode(&name_hash[0], name_hash.size());
     assert(nameb32.size() <= 63);
@@ -761,6 +773,7 @@ namespace aDNS
     CCF_APP_DEBUG("ADNS: (Re)signing {}", origin);
 
     assert(origin.is_absolute());
+    auto configuration = get_configuration();
 
     for (const auto& [_, c] : supported_classes)
     {
@@ -1064,6 +1077,8 @@ namespace aDNS
   void Resolver::add_fragmented(
     const Name& origin, const Name& name, const ResourceRecord& rr)
   {
+    auto configuration = get_configuration();
+
     remove(origin, name, Class::IN, Type::AAAA);
 
     uint16_t rsz = rr.rdata.size();
@@ -1096,28 +1111,35 @@ namespace aDNS
     }
   }
 
-  void Resolver::register_service(
-    const Name& origin,
-    const Name& name,
-    const RFC1035::A& address,
-    uint16_t port,
-    const std::string& protocol,
-    const std::string& attestation,
-    const crypto::Pem& public_key)
+  void Resolver::register_service(const RegistrationRequest& rr)
   {
-    CCF_APP_DEBUG("ADNS: Register {} in {}", name, origin);
+    auto configuration = get_configuration();
 
-    if (!origin_exists(origin))
+    if (!origin_exists(rr.origin))
       throw std::runtime_error("invalid origin");
 
-    if (!name.is_absolute())
-      throw std::runtime_error("name must be absolute");
+    OpenSSL::UqX509_REQ req(rr.csr, false);
+    auto public_key = req.get_pubkey();
+    auto public_key_pem = public_key.pem_pubkey();
 
-    if (!name.ends_with(origin))
+    auto subject_name = req.get_subject_name().get_common_name();
+    Name name(subject_name);
+
+    if (!name.is_absolute())
+      name += std::vector<Label>{Label()};
+
+    CCF_APP_DEBUG("ADNS: Register {} in {}", name, rr.origin);
+
+    save_registration_request(rr);
+
+    if (!name.ends_with(rr.origin))
       throw std::runtime_error("name outside of origin");
 
+    if (!req.verify(public_key))
+      throw std::runtime_error("CSR signature validation failed");
+
     std::shared_ptr<ravl::Attestation> att =
-      ravl::parse_attestation(attestation);
+      ravl::parse_attestation(rr.attestation);
 
     std::shared_ptr<ravl::Claims> claims = nullptr;
 
@@ -1150,14 +1172,14 @@ namespace aDNS
       static_cast<uint16_t>(aDNS::Types::Type::ATTEST),
       static_cast<uint16_t>(Class::IN),
       configuration.default_ttl,
-      aDNS::Types::ATTEST(attestation));
-    remove(origin, name, Class::IN, Type::ATTEST);
+      aDNS::Types::ATTEST(rr.attestation));
+    remove(rr.origin, name, Class::IN, Type::ATTEST);
     ignore_on_add = true;
-    add(origin, att_rr);
-    add_fragmented(origin, Name("attest") + name, att_rr);
+    add(rr.origin, att_rr);
+    add_fragmented(rr.origin, Name("attest") + name, att_rr);
 
     uint16_t flags = 0x0000;
-    auto pk_der = crypto::make_public_key(public_key)->public_key_der();
+    auto pk_der = public_key.der_pubkey();
     // pk_der is in SubjectPublicKeyInfo format (ASN.1)
 
     small_vector<uint16_t> public_key_sv(pk_der.size(), pk_der.data());
@@ -1170,25 +1192,25 @@ namespace aDNS
       configuration.default_ttl,
       aDNS::Types::TLSKEY(
         flags, configuration.signing_algorithm, public_key_sv));
-    remove(origin, name, Class::IN, Type::TLSKEY);
+    remove(rr.origin, name, Class::IN, Type::TLSKEY);
     ignore_on_add = true;
-    add(origin, tlskey_rr);
+    add(rr.origin, tlskey_rr);
 
     ResourceRecord address_rr(
       name,
       static_cast<uint16_t>(RFC1035::Type::A),
       static_cast<uint16_t>(Class::IN),
       configuration.default_ttl,
-      address);
+      RFC1035::A(rr.ip));
     ignore_on_add = true;
-    add(origin, address_rr);
+    add(rr.origin, address_rr);
 
     // Add TLSA
     using namespace RFC7671;
-    std::string prolow = protocol;
+    std::string prolow = rr.protocol;
     std::transform(prolow.begin(), prolow.end(), prolow.begin(), ::tolower);
-    auto tlsa_name =
-      Name("_" + std::to_string(port)) + Name(std::string("_") + prolow) + name;
+    auto tlsa_name = Name("_" + std::to_string(rr.port)) +
+      Name(std::string("_") + prolow) + name;
 
     ResourceRecord tlsa_rr(
       tlsa_name,
@@ -1201,9 +1223,9 @@ namespace aDNS
         MatchingType::Full,
         public_key_sv));
 
-    remove(origin, tlsa_name, Class::IN, Type::TLSA);
+    remove(rr.origin, tlsa_name, Class::IN, Type::TLSA);
     ignore_on_add = true;
-    add(origin, tlsa_rr);
+    add(rr.origin, tlsa_rr);
 
     // Add CAA record(s)
     using namespace RFC8659;
@@ -1215,20 +1237,31 @@ namespace aDNS
       configuration.default_ttl,
       CAA(0x42, "tag", "value"));
 
-    remove(origin, name, Class::IN, Type::CAA);
+    remove(rr.origin, name, Class::IN, Type::CAA);
     ignore_on_add = false; // will trigger zone signing
-    add(origin, caa_rr);
+    add(rr.origin, caa_rr);
+
+    start_service_acme(rr.origin, name, rr.csr, rr.contact);
   }
 
   void Resolver::install_acme_response(
-    const Name& origin, const Name& name, const std::string& key_authorization)
+    const Name& origin,
+    const Name& name,
+    const std::vector<Name>& alternative_names,
+    const std::string& key_authorization)
   {
+    auto configuration = get_configuration();
+
+    if (!origin_exists(origin))
+      throw std::runtime_error("invalid origin");
+
     // Note: does not necessarily have to be installed on the same DNS server;
     // we can delegate the challenge to someone else, e.g. a non-DNSSEC
     // server.
 
     // Note: need some strategy for removing tokens periodically.
 
+    ignore_on_add = true;
     add(
       origin,
       ResourceRecord(
@@ -1237,6 +1270,19 @@ namespace aDNS
         static_cast<uint16_t>(Class::IN),
         configuration.default_ttl,
         TXT(key_authorization)));
+
+    for (const auto& n : alternative_names)
+      if (n != name)
+        add(
+          origin,
+          ResourceRecord(
+            Name("_acme-challenge") + n,
+            static_cast<uint16_t>(Type::TXT),
+            static_cast<uint16_t>(Class::IN),
+            configuration.default_ttl,
+            TXT(key_authorization)));
+
+    sign(origin);
   }
 
   void Resolver::remove_acme_response(const Name& origin, const Name& name)

@@ -9,6 +9,7 @@
 
 #include <ccf/crypto/key_pair.h>
 #include <ccf/ds/logger.h>
+#include <ravl/openssl.hpp>
 #include <ravl/options.h>
 #include <ravl/ravl.h>
 
@@ -18,6 +19,7 @@
 
 using namespace aDNS;
 using namespace RFC1035;
+using namespace OpenSSL;
 
 static uint32_t default_ttl = 86400;
 
@@ -46,6 +48,18 @@ public:
   std::map<Name, crypto::Pem, RFC4034::CanonicalNameOrdering> zone_signing_keys;
 
   std::string registration_policy_str;
+
+  Resolver::Configuration configuration;
+
+  virtual Configuration get_configuration() const override
+  {
+    return configuration;
+  }
+
+  virtual void configure(const Configuration& cfg) override
+  {
+    configuration = cfg;
+  }
 
   virtual void add(const Name& origin, const ResourceRecord& rr) override
   {
@@ -127,6 +141,8 @@ public:
     const small_vector<uint16_t>& public_key,
     bool key_signing) override
   {
+    auto configuration = get_configuration();
+
     if (configuration.use_key_signing_key && key_signing)
       return key_signing_keys[origin];
     else
@@ -139,6 +155,8 @@ public:
     const crypto::Pem& pem,
     bool key_signing) override
   {
+    auto configuration = get_configuration();
+
     if (configuration.use_key_signing_key && key_signing)
       key_signing_keys[origin] = pem;
     else
@@ -184,6 +202,16 @@ public:
   {
     return "";
   }
+
+  virtual void save_registration_request(const RegistrationRequest& rr) override
+  {}
+
+  virtual void start_service_acme(
+    const Name& origin,
+    const Name& name,
+    const std::vector<uint8_t>& csr,
+    const std::vector<std::string>& contact) override
+  {}
 };
 
 RFC1035::Message mk_question(const std::string& name, aDNS::QType type)
@@ -571,17 +599,30 @@ TEST_CASE("Service registration")
 
   Name service_name("service42.example.com.");
   auto service_key = crypto::make_key_pair(crypto::CurveID::SECP384R1);
+  std::string url_name = service_name.unterminated();
 
   RFC1035::A address("192.168.0.1");
 
+  auto csr =
+    service_key->create_csr_der("CN=" + url_name, {{"alt." + url_name, false}});
+
+  UqX509_REQ req(csr, false);
+
+  auto sans = req.get_subject_alternative_names();
+  REQUIRE(sans.size() == 1);
+  REQUIRE(sans.at(0).type() == UqGENERAL_NAME::Type::DNS);
+  REQUIRE(sans.at(0).is_dns());
+  REQUIRE((std::string)sans.at(0).string() == "alt.service42.example.com");
+
   s.register_service(
-    origin,
-    service_name,
-    address,
-    8000,
-    "tcp",
-    dummy_attestation,
-    service_key->public_key_pem());
+    {origin,
+     url_name,
+     address,
+     8000,
+     "tcp",
+     dummy_attestation,
+     csr,
+     {"joe@example.com"}});
 
   auto dnskey_rrs =
     s.resolve(origin, aDNS::QType::DNSKEY, aDNS::QClass::IN).answers;
@@ -596,7 +637,7 @@ TEST_CASE("Service registration")
   r = s.resolve(service_name, aDNS::QType::A, aDNS::QClass::IN);
   REQUIRE(RFC4034::verify_rrsigs(r.answers, dnskey_rrs, type2str));
 
-  s.install_acme_response(origin, service_name, RFC1035::TXT("sometoken"));
+  s.install_acme_response(origin, service_name, {}, RFC1035::TXT("sometoken"));
   auto challenge_name = Name("_acme-challenge") + service_name;
   r = s.resolve(challenge_name, aDNS::QType::TXT, aDNS::QClass::IN);
   REQUIRE(RFC4034::verify_rrsigs(r.answers, dnskey_rrs, type2str));

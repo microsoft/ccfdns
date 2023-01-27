@@ -33,6 +33,7 @@ def configure_service(network, service_info, adns_base_url, ca_certs):
             "/app/configure",
             {
                 "name": service_info["name"],
+                "alternative_names": service_info["alternative_names"],
                 "ip": service_info["ip"],
                 "port": service_info["port"],
                 "adns_base_url": adns_base_url,
@@ -53,8 +54,11 @@ def register_service(network, origin, service_info, reginfo):
             "/app/register",
             {
                 "origin": origin,  # Chose origin to be registered in (no origin creation)
-                "address": service_info["ip"],
+                "name": service_info["name"],
+                "alternative_names": service_info["alternative_names"],
+                "ip": service_info["ip"],
                 "port": service_info["port"],
+                "contact": service_info["contact"],
                 "protocol": reginfo["protocol"],
                 "attestation": reginfo["attestation"],
                 "csr": reginfo["csr"],
@@ -122,8 +126,10 @@ XIiPf1pGst9TyaEfzTi/XxVqK/CGdZFct9r9eYMjWm01P6HLQi22SjI=
 
         service_info = {
             "name": "service43." + adns_args.origin,
+            "alternative_names": ["www.service43.adns.ccf.dev"],
             "ip": service_args.ip,
             "port": 9443,
+            "contact": ["mailto:joe@example.com"],
         }
 
         # Configure the service & get registration info
@@ -187,7 +193,7 @@ def main():
         rdc.IN,
         rdt.SOA,
         mname="ns1.adns.ccf.dev.",
-        rname="some-dev.microsoft.com.",
+        rname="joe.example.com",
         serial=4,
         refresh=604800,
         retry=86400,

@@ -75,6 +75,7 @@ def run(args):
                     acme_configuration=args.acme_config_name,
                 ),
                 transport="tcp",
+                app_protocol=infra.interfaces.AppProtocol.HTTP2,
             )
             endorsed_interface.public_host = args.dns_name
             node.rpc_interfaces["endorsed_interface"] = endorsed_interface

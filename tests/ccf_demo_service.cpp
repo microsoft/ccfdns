@@ -3,10 +3,12 @@
 
 #include "ravl/sgx.h"
 
+#include <crypto/san.h>
 #include <cstdint>
 #include <ds/json.h>
 #include <llhttp/llhttp.h>
 #include <service/consensus_config.h>
+#include <service/node_info_network.h>
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
 
 #include "../ccfdns_rpc_types.h"
@@ -45,6 +47,7 @@ namespace ccfapp
   struct Configuration
   {
     std::string name;
+    std::vector<std::string> alternative_names;
     std::string ip;
     uint16_t port;
 
@@ -54,7 +57,7 @@ namespace ccfapp
 
   DECLARE_JSON_TYPE(Configuration);
   DECLARE_JSON_REQUIRED_FIELDS(
-    Configuration, name, ip, port, adns_base_url, ca_certs);
+    Configuration, name, alternative_names, ip, port, adns_base_url, ca_certs);
 
   struct RegistrationInfo
   {
@@ -155,6 +158,7 @@ namespace service
           t->put(in);
 
           configuration.name = in.name;
+          configuration.alternative_names = in.alternative_names;
           configuration.ip = in.ip;
           configuration.port = in.port;
           configuration.adns_base_url = in.adns_base_url;
@@ -192,7 +196,12 @@ namespace service
           while (sn.back() == '.')
             sn.pop_back();
 
-          out.csr = kp->create_csr_der("CN=" + sn, {{sn, false}}, public_key);
+          std::vector<crypto::SubjectAltName> sans;
+          sans.push_back({sn, false});
+          for (const auto& n : configuration.alternative_names)
+            sans.push_back({n, false});
+
+          out.csr = kp->create_csr_der("CN=" + sn, sans, public_key);
 
           auto unterminated_name = configuration.name;
           while (unterminated_name.size() > 0 &&
@@ -227,7 +236,6 @@ namespace service
             [](std::unique_ptr<threading::Tmsg<CertThreadMsg>> msg) {
               if (!service_cert.empty())
                 return;
-
               msg->data.acmess->make_http_request(
                 "POST",
                 msg->data.adns_base_url + "/app/get-certificate",
@@ -246,7 +254,8 @@ namespace service
                   }
                   return true;
                 },
-                msg->data.ca_certs);
+                msg->data.ca_certs,
+                ccf::ApplicationProtocol::HTTP2);
 
               threading::ThreadMessaging::thread_messaging.add_task_after(
                 std::move(msg), std::chrono::seconds(1));

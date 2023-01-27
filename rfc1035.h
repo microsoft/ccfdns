@@ -314,6 +314,14 @@ namespace RFC1035 // https://datatracker.ietf.org/doc/html/rfc1035
       return r;
     }
 
+    std::string unterminated() const
+    {
+      std::string r = *this;
+      while (r.back() == '.')
+        r.pop_back();
+      return r;
+    }
+
     /// Indicates whether the name starts with the given prefix.
     bool starts_with(const Name& prefix) const
     {

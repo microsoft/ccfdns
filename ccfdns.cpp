@@ -114,7 +114,7 @@ namespace ccfdns
     virtual void on_challenge(
       const std::string& token, const std::string& response) override
     {
-      CCF_APP_DEBUG("ADNS ACME: on_challenge");
+      CCF_APP_DEBUG("ADNS ACME: on_challenge for {}", config.service_dns_name);
 
       auto key_authorization = token + "." + response;
       auto digest = crypto::sha256(
@@ -122,13 +122,14 @@ namespace ccfdns
       auto digest_b64 =
         crypto::b64url_from_raw((uint8_t*)digest.data(), digest.size(), false);
 
+      std::vector<Name> sans;
+      for (const auto& n : config.alternative_names)
+        sans.push_back(n + ".");
+
       InstallACMEToken::In in = {
-        origin, config.service_dns_name + ".", digest_b64};
+        origin, config.service_dns_name + ".", sans, digest_b64};
       std::string url =
         "https://" + node_address + "/app/internal/install_acme_response";
-
-      for (const auto& c : config.ca_certs)
-        CCF_APP_DEBUG("CA certificate: {}", c);
 
       subsys->make_http_request(
         "POST",
@@ -238,7 +239,21 @@ namespace ccfdns
   class CCFDNS : public Resolver
   {
   public:
-    CCFDNS() : Resolver() {}
+    CCFDNS(
+      std::shared_ptr<ccf::ACMESubsystemInterface> acme_ss,
+      std::shared_ptr<ccf::NetworkIdentitySubsystem> nwid_ss,
+      const std::string& acme_config_name,
+      const ccf::ACMEClientConfig& acme_config,
+      const std::string& internal_node_address) :
+      Resolver(),
+      acme_ss(acme_ss),
+      nwid_ss(nwid_ss),
+      acme_config_name(acme_config_name),
+      acme_config(acme_config),
+      internal_node_address(internal_node_address)
+    {
+      acme_account_key_pair = crypto::make_key_pair(crypto::CurveID::SECP384R1);
+    }
 
     virtual ~CCFDNS() {}
 
@@ -248,27 +263,39 @@ namespace ccfdns
 
     using Records = ccf::ServiceSet<ResourceRecord>;
     using Origins = ccf::ServiceSet<RFC1035::Name>;
-    const std::string origins_table_name = "public:ccfdns.origins";
+    const std::string origins_table_name = "public:ccfdns->origins";
 
     using RegistrationPolicy = ccf::ServiceValue<std::string>;
     const std::string registration_policy_table_name =
-      "public:ccf.gov.ccfdns.registration_policy";
+      "public:ccf.gov.ccfdns->registration_policy";
 
     using ServiceCertificates = ccf::ServiceMap<std::string, std::string>;
     const std::string service_certifificates_table_name =
       "public:service_certificates";
 
-    void set_endpoint_context(ccf::endpoints::EndpointContext& ctx)
+    using LatestRegistrationRequest = ccf::ServiceValue<RegisterService::In>;
+    const std::string latest_registration_request_table_name =
+      "public:last_registration_request";
+
+    void set_endpoint_context(ccf::endpoints::EndpointContext* c)
     {
-      this->ctx = &ctx;
+      ctx = c;
+    }
+
+    virtual Configuration get_configuration() const override
+    {
+      auto t = ctx->tx.template ro<CCFDNS::TConfigurationTable>(
+        configuration_table_name);
+      if (!t)
+        throw std::runtime_error("empty configuration table");
+      auto cfg = t->get();
+      if (!cfg)
+        throw std::runtime_error("no configuration available");
+      return *cfg;
     }
 
     virtual void configure(const Configuration& cfg) override
     {
-      Resolver::configure(cfg);
-
-      // TODO: Add table hook to re-configure upon changes.
-
       auto t = ctx->tx.template rw<CCFDNS::TConfigurationTable>(
         configuration_table_name);
       t->put(cfg);
@@ -309,7 +336,7 @@ namespace ccfdns
           cfg.name,
           static_cast<uint16_t>(aDNS::Types::Type::ATTEST),
           static_cast<uint16_t>(aDNS::Class::IN),
-          configuration.default_ttl,
+          cfg.default_ttl,
           aDNS::Types::ATTEST(attestation)));
     }
 
@@ -666,12 +693,89 @@ namespace ccfdns
     virtual std::string get_service_certificate(
       const std::string& service_dns_name) override
     {
-      auto tbl =
-        ctx->tx.ro<ServiceCertificates>(service_certifificates_table_name);
-      auto r = tbl->get(service_dns_name);
-      if (!r)
-        throw std::runtime_error("no such certificate");
-      return *r;
+      if (
+        service_dns_name == get_configuration().name ||
+        service_dns_name + "." == get_configuration().name)
+      {
+        auto t = ctx->tx.template rw<ccf::ACMECertificates>(
+          ccf::Tables::ACME_CERTIFICATES);
+        if (!t)
+          throw std::runtime_error("ACME service certificate table empty");
+        auto v = t->get(acme_config_name);
+        if (!v)
+          throw std::runtime_error("ACME service certificate not available");
+        return v->str();
+      }
+      else
+      {
+        auto tbl =
+          ctx->tx.ro<ServiceCertificates>(service_certifificates_table_name);
+        auto r = tbl->get(service_dns_name);
+        if (!r)
+          throw std::runtime_error("no such certificate");
+        return *r;
+      }
+    }
+
+    virtual void save_registration_request(
+      const RegistrationRequest& rr) override
+    {
+      auto lrr = ctx->tx.template rw<CCFDNS::LatestRegistrationRequest>(
+        latest_registration_request_table_name);
+      if (!lrr)
+        throw std::runtime_error("could not access registration request table");
+      lrr->put(rr);
+    }
+
+    virtual void start_service_acme(
+      const Name& origin,
+      const Name& name,
+      const std::vector<uint8_t>& csr,
+      const std::vector<std::string>& contact) override
+    {
+      if (have_acme_client(name))
+        throw std::runtime_error("registration in process");
+
+      CCF_APP_DEBUG("Set up ACME client for {}", name);
+
+      std::string subject_name = name.unterminated();
+
+      OpenSSL::UqX509_REQ req(csr, false);
+
+      CCF_APP_DEBUG("CSR:\n{}", (std::string)req);
+
+      auto sans = req.get_subject_alternative_names();
+      std::vector<std::string> ssans;
+      for (size_t i = 0; i < sans.size(); i++)
+      {
+        auto san = sans.at(i);
+        if (san.is_dns())
+          ssans.push_back((std::string)san.string());
+      }
+
+      ACME::ClientConfig acme_client_config = {
+        .ca_certs = acme_config.ca_certs,
+        .directory_url = acme_config.directory_url,
+        .service_dns_name = subject_name,
+        .alternative_names = ssans,
+        .contact = contact,
+        .terms_of_service_agreed = true,
+        .challenge_type = "dns-01"};
+
+      acme_client_config.ca_certs.push_back(nwid_ss->get()->cert.str());
+
+      auto acme_client = std::make_shared<ccfdns::ACMEClient>(
+        *this,
+        origin,
+        acme_client_config,
+        csr,
+        internal_node_address,
+        acme_ss,
+        acme_account_key_pair);
+
+      acme_client->get_certificate(acme_account_key_pair);
+
+      acme_clients[name] = acme_client;
     }
 
     bool have_acme_client(const std::string& name) const
@@ -679,20 +783,17 @@ namespace ccfdns
       return acme_clients.find(name) != acme_clients.end();
     }
 
-    void add_acme_client(
-      const std::string& name, std::shared_ptr<ccfdns::ACMEClient> client)
-    {
-      acme_clients[name] = client;
-    }
-
-    void remove_acme_client(const std::string& name)
-    {
-      acme_clients.erase(name);
-    }
-
   protected:
     ccf::endpoints::EndpointContext* ctx = nullptr;
     std::map<std::string, std::shared_ptr<ccfdns::ACMEClient>> acme_clients;
+
+    std::shared_ptr<ccf::ACMESubsystemInterface> acme_ss;
+    std::shared_ptr<ccf::NetworkIdentitySubsystemInterface> nwid_ss;
+
+    std::string acme_config_name;
+    ccf::ACMEClientConfig acme_config;
+    crypto::KeyPairPtr acme_account_key_pair;
+    std::string internal_node_address = "127.0.0.1";
 
     std::string table_name(
       const Name& origin, aDNS::Class class_, aDNS::Type type) const
@@ -702,7 +803,7 @@ namespace ccfdns
     }
   };
 
-  CCFDNS ccfdns;
+  std::shared_ptr<CCFDNS> ccfdns;
 
   class Handlers : public ccf::UserEndpointRegistry
   {
@@ -716,12 +817,6 @@ namespace ccfdns
       return r;
     }
 
-    std::shared_ptr<ccf::ACMESubsystemInterface> acme_ss;
-    std::string acme_config_name;
-    ccf::ACMEClientConfig acme_config;
-    crypto::KeyPairPtr acme_account_key_pair;
-    std::string internal_node_address = "127.0.0.1";
-
   public:
     Handlers(ccfapp::AbstractNodeContext& context) :
       ccf::UserEndpointRegistry(context)
@@ -731,14 +826,29 @@ namespace ccfdns
         "This application implements an attested DNS-over-HTTPS server.";
       openapi_info.document_version = "0.0.0";
 
-      acme_account_key_pair = crypto::make_key_pair(crypto::CurveID::SECP384R1);
+      class ContextContext
+      {
+      public:
+        ContextContext(
+          std::shared_ptr<CCFDNS> ccfdns, ccf::endpoints::EndpointContext& ctx)
+        {
+          if (!ccfdns)
+            throw std::runtime_error("node initialization failed");
+          ccfdns->set_endpoint_context(&ctx);
+        }
+        ~ContextContext()
+        {
+          if (ccfdns)
+            ccfdns->set_endpoint_context(nullptr);
+        }
+      };
 
       auto configure = [this](auto& ctx, nlohmann::json&& params) {
         try
         {
+          ContextContext cc(ccfdns, ctx);
           const auto in = params.get<Configure::In>();
-          ccfdns.set_endpoint_context(ctx);
-          ccfdns.configure(in.configuration);
+          ccfdns->configure(in.configuration);
           return ccf::make_success();
         }
         catch (std::exception& ex)
@@ -759,10 +869,10 @@ namespace ccfdns
       auto install_acme_response = [this](auto& ctx, nlohmann::json&& params) {
         try
         {
+          ContextContext cc(ccfdns, ctx);
           const auto in = params.get<InstallACMEToken::In>();
-          ccfdns.set_endpoint_context(ctx);
-          ccfdns.install_acme_response(
-            in.origin, in.name, in.key_authorization);
+          ccfdns->install_acme_response(
+            in.origin, in.name, in.alternative_names, in.key_authorization);
           return ccf::make_success();
         }
         catch (std::exception& ex)
@@ -783,9 +893,9 @@ namespace ccfdns
       auto remove_acme_response = [this](auto& ctx, nlohmann::json&& params) {
         try
         {
+          ContextContext cc(ccfdns, ctx);
           const auto in = params.get<RemoveACMEToken::In>();
-          ccfdns.set_endpoint_context(ctx);
-          ccfdns.remove_acme_response(in.origin, in.name);
+          ccfdns->remove_acme_response(in.origin, in.name);
           return ccf::make_success();
         }
         catch (std::exception& ex)
@@ -806,9 +916,9 @@ namespace ccfdns
       auto add = [this](auto& ctx, nlohmann::json&& params) {
         try
         {
+          ContextContext cc(ccfdns, ctx);
           const auto in = params.get<AddRecord::In>();
-          ccfdns.set_endpoint_context(ctx);
-          ccfdns.add(in.origin, in.record);
+          ccfdns->add(in.origin, in.record);
           return ccf::make_success();
         }
         catch (std::exception& ex)
@@ -829,9 +939,9 @@ namespace ccfdns
       auto remove = [this](auto& ctx, nlohmann::json&& params) {
         try
         {
+          ContextContext cc(ccfdns, ctx);
           const auto in = params.get<RemoveRecord::In>();
-          ccfdns.set_endpoint_context(ctx);
-          ccfdns.remove(in.origin, in.record);
+          ccfdns->remove(in.origin, in.record);
           return ccf::make_success();
         }
         catch (std::exception& ex)
@@ -849,35 +959,10 @@ namespace ccfdns
         .set_auto_schema<RemoveRecord::In, RemoveRecord::Out>()
         .install();
 
-      auto remove_all = [this](auto& ctx, nlohmann::json&& params) {
-        try
-        {
-          const auto in = params.get<RemoveAll::In>();
-          ccfdns.set_endpoint_context(ctx);
-          ccfdns.remove(
-            in.origin,
-            static_cast<aDNS::Class>(in.class_),
-            static_cast<aDNS::Type>(in.type));
-          return ccf::make_success();
-        }
-        catch (std::exception& ex)
-        {
-          return ccf::make_error(
-            HTTP_STATUS_BAD_REQUEST, ccf::errors::InternalError, ex.what());
-        }
-      };
-
-      make_endpoint(
-        "/internal/remove_all",
-        HTTP_POST,
-        ccf::json_adapter(remove_all),
-        ccf::no_auth_required)
-        .set_auto_schema<RemoveAll::In, RemoveAll::Out>()
-        .install();
-
       auto dns_query = [this](auto& ctx) {
         try
         {
+          ContextContext cc(ccfdns, ctx);
           std::vector<uint8_t> bytes;
           auto verb = ctx.rpc_ctx->get_request_verb();
 
@@ -910,8 +995,7 @@ namespace ccfdns
           }
           CCF_APP_INFO("CCFDNS: query: {}", ds::to_hex(bytes));
 
-          ccfdns.set_endpoint_context(ctx);
-          auto reply = ccfdns.reply(Message(bytes));
+          auto reply = ccfdns->reply(Message(bytes));
 
           ctx.rpc_ctx->set_response_status(HTTP_STATUS_OK);
           ctx.rpc_ctx->set_response_header(
@@ -940,61 +1024,9 @@ namespace ccfdns
       auto register_service = [this](auto& ctx, nlohmann::json&& params) {
         try
         {
+          ContextContext cc(ccfdns, ctx);
           const auto in = params.get<RegisterService::In>();
-          ccfdns.set_endpoint_context(ctx);
-
-          // TODO: Save entire request including `in` in a special audit table.
-
-          OpenSSL::UqX509_REQ req(in.csr, false);
-          auto public_key = req.get_pubkey();
-          auto public_key_pem = public_key.pem_pubkey();
-
-          if (!req.verify(public_key))
-            throw std::runtime_error("CSR signature validation failed");
-
-          auto subject_name = req.get_subject_name().get_common_name();
-          Name absolute_name(subject_name, std::vector<Label>{Label()});
-
-          ccfdns.register_service(
-            Name(in.origin),
-            absolute_name,
-            RFC1035::A(in.address),
-            in.port,
-            in.protocol,
-            in.attestation,
-            public_key_pem);
-
-          if (ccfdns.have_acme_client(absolute_name))
-            throw std::runtime_error("registration in process");
-
-          CCF_APP_DEBUG("Set up ACME client for {}", subject_name);
-          ACME::ClientConfig acme_client_config = {
-            .ca_certs = acme_config.ca_certs,
-            .directory_url = acme_config.directory_url,
-            .service_dns_name =
-              subject_name, // TODO: could be multiple names, including service
-                            // name, get from CSR
-            .contact = {},
-            .terms_of_service_agreed = true,
-            .challenge_type = "dns-01"};
-
-          auto nwidss =
-            this->context.get_subsystem<ccf::NetworkIdentitySubsystem>();
-          acme_client_config.ca_certs.push_back(nwidss->get()->cert.str());
-
-          auto acme_client = std::make_shared<ccfdns::ACMEClient>(
-            ccfdns,
-            in.origin,
-            acme_client_config,
-            in.csr,
-            internal_node_address,
-            acme_ss,
-            acme_account_key_pair);
-
-          acme_client->get_certificate(acme_account_key_pair);
-
-          ccfdns.add_acme_client(absolute_name, acme_client);
-
+          ccfdns->register_service(in);
           ctx.rpc_ctx->set_response_status(HTTP_STATUS_OK);
           return ccf::make_success();
         }
@@ -1016,9 +1048,9 @@ namespace ccfdns
       auto set_certificate = [this](auto& ctx, nlohmann::json&& params) {
         try
         {
+          ContextContext cc(ccfdns, ctx);
           const auto in = params.get<SetCertificate::In>();
-          ccfdns.set_endpoint_context(ctx);
-          ccfdns.set_service_certificate(in.service_dns_name, in.certificate);
+          ccfdns->set_service_certificate(in.service_dns_name, in.certificate);
           return ccf::make_success();
         }
         catch (std::exception& ex)
@@ -1039,27 +1071,11 @@ namespace ccfdns
       auto get_certificate = [this](auto& ctx, nlohmann::json&& params) {
         try
         {
+          ContextContext cc(ccfdns, ctx);
           const auto in = params.get<GetCertificate::In>();
-          ccfdns.set_endpoint_context(ctx);
           GetCertificate::Out out;
-
-          if (
-            in.service_dns_name == ccfdns.get_configuration().name ||
-            in.service_dns_name + "." == ccfdns.get_configuration().name)
-          {
-            auto t = ctx.tx.template rw<ccf::ACMECertificates>(
-              ccf::Tables::ACME_CERTIFICATES);
-            if (!t)
-              throw std::runtime_error("ACME service certificate table empty");
-            auto v = t->get(acme_config_name);
-            if (!v)
-              throw std::runtime_error(
-                "ACME service certificate not available");
-            out.certificate = v->str();
-          }
-          else
-            out.certificate =
-              ccfdns.get_service_certificate(in.service_dns_name);
+          out.certificate =
+            ccfdns->get_service_certificate(in.service_dns_name);
           return ccf::make_success(out);
         }
         catch (std::exception& ex)
@@ -1082,7 +1098,12 @@ namespace ccfdns
     {
       ccf::UserEndpointRegistry::init_handlers();
 
-      acme_ss = context.get_subsystem<ccf::ACMESubsystemInterface>();
+      auto acme_ss = context.get_subsystem<ccf::ACMESubsystemInterface>();
+      auto nwid_ss = context.get_subsystem<ccf::NetworkIdentitySubsystem>();
+
+      std::string acme_config_name;
+      ccf::ACMEClientConfig acme_config;
+      std::string internal_node_address;
 
       // Get ACME config
       {
@@ -1115,6 +1136,9 @@ namespace ccfdns
         else
           internal_node_address = iit->second.published_address;
       }
+
+      ccfdns = std::make_shared<CCFDNS>(
+        acme_ss, nwid_ss, acme_config_name, acme_config, internal_node_address);
     }
   };
 }

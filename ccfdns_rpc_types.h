@@ -40,6 +40,7 @@ namespace ccfdns
     {
       aDNS::Name origin;
       aDNS::Name name;
+      std::vector<aDNS::Name> alternative_names;
       std::string key_authorization;
     };
     using Out = void;
@@ -69,16 +70,7 @@ namespace ccfdns
 
   struct RegisterService
   {
-    struct In
-    {
-      std::string origin;
-      std::string address;
-      uint16_t port;
-
-      std::string protocol;
-      std::string attestation;
-      std::vector<uint8_t> csr;
-    };
+    using In = aDNS::Resolver::RegistrationRequest;
     using Out = void;
   };
 
@@ -118,14 +110,10 @@ namespace ccfdns
 
   DECLARE_JSON_TYPE(InstallACMEToken::In);
   DECLARE_JSON_REQUIRED_FIELDS(
-    InstallACMEToken::In, origin, name, key_authorization);
+    InstallACMEToken::In, origin, name, alternative_names, key_authorization);
 
   DECLARE_JSON_TYPE(RemoveACMEToken::In);
   DECLARE_JSON_REQUIRED_FIELDS(RemoveACMEToken::In, origin, name);
-
-  DECLARE_JSON_TYPE(RegisterService::In);
-  DECLARE_JSON_REQUIRED_FIELDS(
-    RegisterService::In, origin, address, port, protocol, attestation, csr);
 
   DECLARE_JSON_TYPE(SetCertificate::In);
   DECLARE_JSON_REQUIRED_FIELDS(
@@ -135,4 +123,19 @@ namespace ccfdns
   DECLARE_JSON_REQUIRED_FIELDS(GetCertificate::In, service_dns_name);
   DECLARE_JSON_TYPE(GetCertificate::Out);
   DECLARE_JSON_REQUIRED_FIELDS(GetCertificate::Out, certificate);
+}
+
+namespace aDNS
+{
+  DECLARE_JSON_TYPE(Resolver::RegistrationRequest);
+  DECLARE_JSON_REQUIRED_FIELDS(
+    Resolver::RegistrationRequest,
+    origin,
+    name,
+    ip,
+    port,
+    protocol,
+    attestation,
+    csr,
+    contact);
 }
