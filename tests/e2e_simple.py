@@ -30,7 +30,7 @@ def add_record(client, origin, name, stype, rdata_obj):
     """Add a DNS record"""
 
     r = client.post(
-        "/app/add",
+        "/app/internal/add",
         {
             "origin": str(origin),
             "record": {

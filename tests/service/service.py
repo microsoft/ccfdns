@@ -126,7 +126,7 @@ def get_acme_certificate(
 
         # -> install validation token
 
-        url = adns_base_url + "/add"
+        url = adns_base_url + "/internal/add"
         rd = dns.rdata.from_text(rdc.IN, rdt.TXT, validation)
         data = {
             "origin": origin,
@@ -151,10 +151,8 @@ def get_acme_certificate(
             print(f"Failed authzrs: {ex.failed_authzrs}")
         raise ex
     finally:
-        if data:
-            # Remove the challenge TXT record
-            url = adns_base_url + "/remove"
-            requests.post(url, headers=headers, json=data, verify=False)
+        # Remove the challenge TXT record?
+        pass
 
     return certificate
 

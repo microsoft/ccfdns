@@ -72,7 +72,6 @@ public:
 
     origins.insert(origin.lowered());
     zones[origin].insert(rs);
-    Resolver::on_add(origin, rs);
   }
 
   virtual void remove(const Name& origin, const ResourceRecord& rr)
@@ -444,6 +443,8 @@ TEST_CASE("Basic lookups")
       aDNS::Class::IN,
       RFC1035::TXT("some text"))));
 
+  REQUIRE_NOTHROW(s.sign(origin));
+
   {
     RFC1035::Message msg =
       mk_question("_AcMe-CHAllENGE.sErvice42.eXaMple.com.", aDNS::QType::TXT);
@@ -462,6 +463,8 @@ TEST_CASE("Basic lookups")
       aDNS::Type::TXT,
       aDNS::Class::IN,
       RFC1035::TXT(std::vector<std::string>{"some", "texts"}))));
+
+  REQUIRE_NOTHROW(s.sign(origin));
 
   {
     RFC1035::Message msg =
@@ -505,6 +508,8 @@ TEST_CASE("DNSKEY RR Example")
       aDNS::Type::DNSKEY,
       aDNS::Class::IN,
       RFC4034::DNSKEY("256 3 5 " + demo_key_b64))));
+
+  REQUIRE_NOTHROW(s.sign(origin));
 
   {
     RFC1035::Message msg =
@@ -588,6 +593,8 @@ TEST_CASE("RRSIG tests")
       aDNS::Type::TXT,
       aDNS::Class::IN,
       RFC1035::TXT("some text"))));
+
+  REQUIRE_NOTHROW(s.sign(origin));
 
   auto dnskey_rrs =
     s.resolve(origin, aDNS::QType::DNSKEY, aDNS::QClass::IN).answers;

@@ -617,7 +617,7 @@ namespace aDNS
   Resolver::KeyAndTag Resolver::add_new_signing_key(
     const Name& origin, Class class_, bool key_signing)
   {
-    auto configuration = get_configuration();
+    const auto& configuration = get_configuration();
 
     std::shared_ptr<crypto::KeyPair> new_zsk;
 
@@ -654,7 +654,7 @@ namespace aDNS
   Resolver::KeyAndTag Resolver::get_signing_key(
     const Name& origin, Class class_, bool key_signing)
   {
-    auto configuration = get_configuration();
+    const auto& configuration = get_configuration();
 
     bool find_ksk = configuration.use_key_signing_key && key_signing;
 
@@ -706,7 +706,6 @@ namespace aDNS
       configuration.signing_algorithm,
       public_key);
 
-    ignore_on_add = true;
     add(origin, rr);
 
     return rr;
@@ -730,7 +729,6 @@ namespace aDNS
     if (!ds_rrs.empty())
       throw std::runtime_error("too many DS records");
 
-    ignore_on_add = true;
     add(
       parent,
       RFC4034::DSRR(
@@ -785,7 +783,6 @@ namespace aDNS
       ttl,
       rdata);
 
-    ignore_on_add = true;
     add(origin, rr);
 
     return rr;
@@ -795,12 +792,14 @@ namespace aDNS
   {
     CCF_APP_DEBUG("ADNS: (Re)signing {}", origin);
 
-    assert(origin.is_absolute());
-    auto configuration = get_configuration();
+    if (!origin.is_absolute())
+      throw std::runtime_error("origin is not absolute");
+
+    const auto& configuration = get_configuration();
 
     for (const auto& [_, c] : supported_classes)
     {
-      // the following may trigger addition of RRs
+      // Note: the following may trigger addition of RRs
       auto ksk_and_tag = get_signing_key(origin, c, true);
       auto zsk_and_tag = get_signing_key(origin, c, false);
 
@@ -868,7 +867,6 @@ namespace aDNS
         for (auto rit = it; rit != next; rit++)
           crrs.rdata.insert(rit->rdata);
 
-        ignore_on_add = true;
         add(
           origin,
           RFC4034::RRSIGRR(
@@ -960,7 +958,6 @@ namespace aDNS
             ttl,
             rr.rdata);
 
-          ignore_on_add = true;
           auto [key, key_tag] = zsk_and_tag;
           add(
             origin,
@@ -975,7 +972,6 @@ namespace aDNS
 
         if (is_authoritative)
         {
-          ignore_on_add = true;
           add(
             origin,
             RFC5155::NSEC3PARAMRR(
@@ -1016,8 +1012,6 @@ namespace aDNS
             next_domain_name,
             types,
             type2str);
-
-          ignore_on_add = true;
           add(origin, rr);
 
           RFC4034::CRRS crrs(
@@ -1028,7 +1022,6 @@ namespace aDNS
             rr.rdata);
 
           auto [key, key_tag] = zsk_and_tag;
-          ignore_on_add = true;
           add(
             origin,
             RFC4034::RRSIGRR(
@@ -1049,8 +1042,6 @@ namespace aDNS
     const Configuration& cfg)
   {
     set_configuration(cfg);
-
-    ignore_on_add = true;
 
     add(
       cfg.origin,
@@ -1098,55 +1089,6 @@ namespace aDNS
     return out;
   }
 
-  void Resolver::on_add(const Name& origin, const ResourceRecord& rr)
-  {
-    if (ignore_on_add)
-    {
-      ignore_on_add = false;
-      return;
-    }
-
-    auto t = static_cast<Type>(rr.type);
-    CCF_APP_DEBUG(
-      "ADNS: {}: on_add: {}", origin, string_from_resource_record(rr));
-    switch (t)
-    {
-      case Type::OPT:
-        CCF_APP_DEBUG(
-          "ADNS: Not re-signing after addition of {} record",
-          string_from_type(t));
-        break;
-      default:
-        sign(origin);
-    }
-  }
-
-  void Resolver::on_remove(const Name& origin, const ResourceRecord& rr)
-  {
-    if (ignore_on_remove)
-    {
-      ignore_on_remove = false;
-      return;
-    }
-
-    // TODO: for_each may not see the name of the removed record, which leaves
-    // stale RRSIG/NSEC/NSEC3 entries.
-
-    auto t = static_cast<Type>(rr.type);
-    CCF_APP_DEBUG(
-      "ADNS: {}: on_remove: {}", origin, string_from_resource_record(rr));
-    switch (t)
-    {
-      case Type::OPT:
-        CCF_APP_DEBUG(
-          "ADNS: Not re-signing after removal of {} record",
-          string_from_type(t));
-        break;
-      default:
-        sign(origin);
-    }
-  }
-
   void Resolver::add_fragmented(
     const Name& origin, const Name& name, const ResourceRecord& rr)
   {
@@ -1179,7 +1121,6 @@ namespace aDNS
         static_cast<uint16_t>(Class::IN),
         configuration.default_ttl,
         RFC3596::AAAA(data));
-      ignore_on_add = true;
       add(origin, frr);
     }
   }
@@ -1245,7 +1186,6 @@ namespace aDNS
       configuration.default_ttl,
       aDNS::Types::ATTEST(rr.attestation));
     remove(rr.origin, name, Class::IN, Type::ATTEST);
-    ignore_on_add = true;
     add(rr.origin, att_rr);
     add_fragmented(rr.origin, Name("attest") + name, att_rr);
 
@@ -1264,7 +1204,6 @@ namespace aDNS
       aDNS::Types::TLSKEY(
         flags, configuration.signing_algorithm, public_key_sv));
     remove(rr.origin, name, Class::IN, Type::TLSKEY);
-    ignore_on_add = true;
     add(rr.origin, tlskey_rr);
 
     ResourceRecord address_rr(
@@ -1273,7 +1212,6 @@ namespace aDNS
       static_cast<uint16_t>(Class::IN),
       configuration.default_ttl,
       RFC1035::A(rr.ip));
-    ignore_on_add = true;
     add(rr.origin, address_rr);
 
     // Add TLSA
@@ -1295,7 +1233,6 @@ namespace aDNS
         public_key_sv));
 
     remove(rr.origin, tlsa_name, Class::IN, Type::TLSA);
-    ignore_on_add = true;
     add(rr.origin, tlsa_rr);
 
     // Add CAA record(s)
@@ -1309,8 +1246,9 @@ namespace aDNS
       CAA(0x42, "tag", "value"));
 
     remove(rr.origin, name, Class::IN, Type::CAA);
-    ignore_on_add = false; // will trigger zone signing
     add(rr.origin, caa_rr);
+
+    sign(rr.origin);
 
     start_service_acme(rr.origin, name, rr.csr, rr.contact);
   }
@@ -1332,7 +1270,6 @@ namespace aDNS
 
     // Note: need some strategy for removing tokens periodically.
 
-    ignore_on_add = true;
     add(
       origin,
       ResourceRecord(
@@ -1424,14 +1361,12 @@ namespace aDNS
       static_cast<uint16_t>(Class::IN),
       configuration.default_ttl,
       RFC1035::NS(dr.name));
-    ignore_on_add = true;
     add(dr.origin, ns_rr);
 
     for (const auto& dnskey_rr : dr.dnskey_records)
     {
       auto tag = get_key_tag(dnskey_rr.rdata);
 
-      ignore_on_add = true;
       add(
         dr.origin,
         RFC4034::DSRR(
@@ -1459,9 +1394,6 @@ namespace aDNS
       RFC1035::A(dr.ip));
 
     for (const auto& gr : glue_records)
-    {
-      ignore_on_add = true;
       add(dr.origin, gr);
-    }
   }
 }

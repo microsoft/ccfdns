@@ -202,10 +202,6 @@ namespace aDNS
 
     virtual void sign(const Name& origin);
 
-    virtual void on_add(const Name& origin, const ResourceRecord& rr);
-
-    virtual void on_remove(const Name& origin, const ResourceRecord& rr);
-
     virtual void add(const Name& origin, const ResourceRecord& rr) = 0;
 
     virtual void remove(
@@ -276,8 +272,6 @@ namespace aDNS
       const DelegationRequest& rr) = 0;
 
   protected:
-    bool ignore_on_add = false;
-    bool ignore_on_remove = false;
     small_vector<uint8_t> nsec3_salt;
 
     typedef std::set<Name, RFC4034::CanonicalNameOrdering> Names;

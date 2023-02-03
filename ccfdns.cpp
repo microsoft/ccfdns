@@ -342,8 +342,6 @@ namespace ccfdns
 
       auto records = ctx->tx.rw<Records>(table_name(origin, c, t));
       records->insert(rs);
-
-      Resolver::on_add(origin, rs);
     }
 
     virtual void remove(const Name& origin, const ResourceRecord& rr)
@@ -373,8 +371,6 @@ namespace ccfdns
       auto records = ctx->tx.rw<Records>(table_name(origin, c, t));
       if (records)
         records->remove(rs);
-
-      Resolver::on_remove(origin, rs);
     }
 
     virtual void remove(
@@ -421,9 +417,7 @@ namespace ccfdns
         std::runtime_error("missing endpoint context");
 
       if (!origin.is_absolute())
-      {
         throw std::runtime_error("origin not absolute");
-      }
 
       auto records = ctx->tx.rw<Records>(table_name(origin, c, t));
       if (records)
@@ -471,6 +465,10 @@ namespace ccfdns
     virtual bool origin_exists(const Name& name) const override
     {
       CCF_APP_DEBUG("Looking for origin: {}", name);
+
+      if (!ctx)
+        std::runtime_error("missing endpoint context");
+
       auto origins = ctx->tx.ro<Origins>(origins_table_name);
       return origins->contains(name.lowered());
     }
@@ -481,6 +479,9 @@ namespace ccfdns
       const small_vector<uint16_t>& public_key,
       bool key_signing) override
     {
+      if (!ctx)
+        std::runtime_error("missing endpoint context");
+
       auto originl = origin.lowered();
       auto table_name = "private:signing_keys";
       auto table = ctx->tx.ro<Keys>(table_name);
@@ -524,6 +525,9 @@ namespace ccfdns
       const crypto::Pem& pem,
       bool key_signing) override
     {
+      if (!ctx)
+        std::runtime_error("missing endpoint context");
+
       auto origin_lowered = origin.lowered();
       auto table_name = "private:signing_keys";
       auto table = ctx->tx.rw<Keys>(table_name);
@@ -544,6 +548,9 @@ namespace ccfdns
 
     virtual std::string service_registration_policy() const override
     {
+      if (!ctx)
+        std::runtime_error("missing endpoint context");
+
       auto policy_table = ctx->tx.ro<ServiceRegistrationPolicy>(
         service_registration_policy_table_name);
       const std::optional<std::string> policy = policy_table->get();
@@ -555,6 +562,9 @@ namespace ccfdns
     virtual void set_service_registration_policy(
       const std::string& new_policy) override
     {
+      if (!ctx)
+        std::runtime_error("missing endpoint context");
+
       auto policy =
         ctx->tx
           .rw<ServiceRegistrationPolicy>(service_registration_policy_table_name)
@@ -564,6 +574,9 @@ namespace ccfdns
 
     virtual std::string delegation_registration_policy() const override
     {
+      if (!ctx)
+        std::runtime_error("missing endpoint context");
+
       auto policy_table = ctx->tx.ro<DelegationRegistrationPolicy>(
         delegation_registration_policy_table_name);
       const std::optional<std::string> policy = policy_table->get();
@@ -575,6 +588,9 @@ namespace ccfdns
     virtual void set_delegation_registration_policy(
       const std::string& new_policy) override
     {
+      if (!ctx)
+        std::runtime_error("missing endpoint context");
+
       auto policy = ctx->tx
                       .rw<DelegationRegistrationPolicy>(
                         delegation_registration_policy_table_name)
@@ -978,29 +994,6 @@ namespace ccfdns
         ccf::json_adapter(add),
         ccf::no_auth_required)
         .set_auto_schema<AddRecord::In, AddRecord::Out>()
-        .install();
-
-      auto remove = [this](auto& ctx, nlohmann::json&& params) {
-        try
-        {
-          ContextContext cc(ccfdns, ctx);
-          const auto in = params.get<RemoveRecord::In>();
-          ccfdns->remove(in.origin, in.record);
-          return ccf::make_success();
-        }
-        catch (std::exception& ex)
-        {
-          return ccf::make_error(
-            HTTP_STATUS_BAD_REQUEST, ccf::errors::InternalError, ex.what());
-        }
-      };
-
-      make_endpoint(
-        "/internal/remove",
-        HTTP_POST,
-        ccf::json_adapter(remove),
-        ccf::no_auth_required)
-        .set_auto_schema<RemoveRecord::In, RemoveRecord::Out>()
         .install();
 
       auto dns_query = [this](auto& ctx) {
