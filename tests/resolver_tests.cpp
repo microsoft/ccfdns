@@ -713,11 +713,13 @@ TEST_CASE("Delegation")
   auto r = main.resolve(sub_cfg.origin, aDNS::QType::A, aDNS::QClass::IN);
 
   REQUIRE(r.answers.size() == 0);
-  REQUIRE(r.authorities.size() == 3); // NS + RRSIG + NSEC3
+  REQUIRE(r.authorities.size() == 3); // NS + NSEC3 + RRSIG (over NSEC3)
   REQUIRE(r.additionals.size() == 1); // Glue record
+  // Note: verify_rrsigs would fail here because the delegation record (NS) is
+  // not signed.
 
   r = main.resolve(sub_cfg.origin, aDNS::QType::NS, aDNS::QClass::IN);
-  REQUIRE(RFC4034::verify_rrsigs(r.answers, dnskey_rrs, type2str));
+  REQUIRE(r.answers.size() == 1); // _unsigned_ NS record
 }
 
 int main(int argc, char** argv)
