@@ -32,7 +32,7 @@
 #include <openssl/ecdsa.h>
 #include <openssl/ossl_typ.h>
 #include <openssl/x509.h>
-#include <ravl/oe.h>
+#include <ravl/oe.h> // TODO: abstract details away
 #include <ravl/openssl.hpp>
 #include <ravl/ravl.h>
 #include <set>
@@ -358,6 +358,11 @@ namespace aDNS
           r.authorities.end(),
           resolution.authorities.begin(),
           resolution.authorities.end());
+
+        r.additionals.insert(
+          r.additionals.end(),
+          resolution.additionals.begin(),
+          resolution.additionals.end());
       }
 
       for (const auto& rr : msg.additionals)
@@ -451,7 +456,7 @@ namespace aDNS
     Resolution result;
 
     if (qtype == QType::ASTERISK || qclass == QClass::ASTERISK)
-      return {ResponseCode::NOT_IMPLEMENTED, {}, {}};
+      return {ResponseCode::NOT_IMPLEMENTED, {}, {}, {}};
 
     if (!qname.is_absolute())
       throw std::runtime_error("cannot resolve relative names");
@@ -525,6 +530,24 @@ namespace aDNS
             result.authorities += *soa_records.begin();
         }
 
+        if (qname != origin)
+        {
+          // Delegation records
+          result.authorities += // Note: need to try all sub-origins?
+            find_records(origin, qname, static_cast<QType>(Type::NS), qclass);
+
+          // Glue records
+          for (const auto& rr : result.authorities)
+            if (rr.type == static_cast<uint16_t>(Type::NS))
+            {
+              result.additionals += find_records(
+                origin,
+                NS(rr.rdata).nsdname,
+                static_cast<QType>(Type::A),
+                qclass);
+            }
+        }
+
         result.authorities += find_records(
           origin,
           qname,
@@ -575,9 +598,9 @@ namespace aDNS
         c,
         static_cast<QType>(t),
         [&origin, &records, &names](const auto& rr) {
-          if (
-            rr.type != static_cast<uint16_t>(Type::NS) ||
-            rr.name == origin) // delegation points/glue entries are not signed
+          // delegation points/glue entries are not signed
+          // (https://datatracker.ietf.org/doc/html/rfc4035#section-2.2)
+          if (rr.type != static_cast<uint16_t>(Type::NS) || rr.name == origin)
           {
             records.push_back(rr);
             names.insert(rr.name);
@@ -799,9 +822,7 @@ namespace aDNS
         CCF_APP_DEBUG("ADNS:  {}", string_from_resource_record(rr));
 
       {
-        // Remove existing RRSIGs and NSECs
-        // Check: do we want deterministic signatures to avoid unnecessary
-        // noise?
+        // Remove existing RRSIGs and NSECs (could be avoided)
         for (const auto& name : names)
         {
           CCF_APP_DEBUG("ADNS: Remove {}", name);
@@ -831,17 +852,16 @@ namespace aDNS
         }
 
         // https://datatracker.ietf.org/doc/html/rfc4035#section-2.2
+        auto tt = static_cast<Type>(type);
         if (
-          static_cast<Type>(type) == Type::RRSIG ||
-          (static_cast<Type>(type) == Type::NS && name != origin) ||
-          static_cast<Type>(type) == Type::NSEC ||
-          static_cast<Type>(type) == Type::NSEC3)
+          tt == Type::RRSIG || (tt == Type::NS && name != origin) ||
+          tt == Type::NSEC || tt == Type::NSEC3)
         {
           it = next;
           continue;
         }
 
-        bool is_dnskey = static_cast<Type>(type) == Type::DNSKEY;
+        bool is_dnskey = tt == Type::DNSKEY;
         auto [key, key_tag] = is_dnskey ? ksk_and_tag : zsk_and_tag;
 
         RFC4034::CRRS crrs(name, class_, type, ttl);
@@ -1025,6 +1045,59 @@ namespace aDNS
     }
   }
 
+  Resolver::RegistrationInformation Resolver::configure(
+    const Configuration& cfg)
+  {
+    set_configuration(cfg);
+
+    ignore_on_add = true;
+
+    add(
+      cfg.origin,
+      ResourceRecord(
+        cfg.origin,
+        static_cast<uint16_t>(aDNS::Type::NS),
+        static_cast<uint16_t>(aDNS::Class::IN),
+        cfg.default_ttl,
+        NS(cfg.name)));
+
+    add(
+      cfg.origin,
+      ResourceRecord(
+        cfg.name,
+        static_cast<uint16_t>(aDNS::Type::A),
+        static_cast<uint16_t>(aDNS::Class::IN),
+        cfg.default_ttl,
+        A(cfg.ip)));
+
+    sign(cfg.origin);
+
+    auto signing_key = get_signing_key(cfg.origin, Class::IN, true);
+
+    RegistrationInformation out;
+    out.protocol = "tcp";
+    out.public_key = signing_key.first->public_key_pem().str();
+
+    auto sn = cfg.name;
+    while (sn.back() == '.')
+      sn.pop_back();
+
+    out.csr = signing_key.first->create_csr_der(
+      "CN=" + sn, {}, signing_key.first->public_key_pem());
+
+    auto dnskeys = resolve(cfg.origin, aDNS::QType::DNSKEY, aDNS::QClass::IN);
+
+    if (dnskeys.answers.size() > 0)
+    {
+      out.dnskey_records = std::vector<ResourceRecord>();
+      for (const auto& keyrr : dnskeys.answers)
+        if (keyrr.type == static_cast<uint16_t>(aDNS::Type::DNSKEY))
+          out.dnskey_records->push_back(keyrr);
+    }
+
+    return out;
+  }
+
   void Resolver::on_add(const Name& origin, const ResourceRecord& rr)
   {
     if (ignore_on_add)
@@ -1128,9 +1201,9 @@ namespace aDNS
     if (!name.is_absolute())
       name += std::vector<Label>{Label()};
 
-    CCF_APP_DEBUG("ADNS: Register {} in {}", name, rr.origin);
+    CCF_APP_DEBUG("ADNS: Register service {} in {}", name, rr.origin);
 
-    save_registration_request(rr);
+    save_service_registration_request(rr);
 
     if (!name.ends_with(rr.origin))
       throw std::runtime_error("name outside of origin");
@@ -1138,22 +1211,20 @@ namespace aDNS
     if (!req.verify(public_key))
       throw std::runtime_error("CSR signature validation failed");
 
-    std::shared_ptr<ravl::Attestation> att =
-      ravl::parse_attestation(rr.attestation);
-
-    std::shared_ptr<ravl::Claims> claims = nullptr;
-
     bool policy_ok = false;
+    std::shared_ptr<ravl::Claims> claims = nullptr;
 #ifdef QUOTE_VERIFICATION_FAILURE_OK
     try
 #endif
     {
+      std::shared_ptr<ravl::Attestation> att =
+        ravl::parse_attestation(rr.attestation);
       if (!(claims = ravl::verify_synchronous(att)))
         throw std::runtime_error("attestation verification failed: no claims");
       std::string
         policy_data = // TODO: add select state or JS functions to obtain it.
         "var data = { claims: " + claims->to_json() + " };";
-      policy_ok = evaluate_registration_policy(policy_data);
+      policy_ok = evaluate_service_registration_policy(policy_data);
     }
 #ifdef QUOTE_VERIFICATION_FAILURE_OK
     catch (...)
@@ -1164,7 +1235,7 @@ namespace aDNS
 #endif
 
     if (!policy_ok)
-      throw std::runtime_error("registration policy evaluation failed");
+      throw std::runtime_error("service registration policy evaluation failed");
 
     // publish ATTEST, TLSKEY
     ResourceRecord att_rr(
@@ -1288,5 +1359,109 @@ namespace aDNS
   void Resolver::remove_acme_response(const Name& origin, const Name& name)
   {
     remove(origin, Name("_acme-challenge") + name, Class::IN, Type::TXT);
+  }
+
+  void Resolver::register_delegation(const DelegationRequest& dr)
+  {
+    auto configuration = get_configuration();
+
+    if (!origin_exists(dr.origin))
+      throw std::runtime_error("invalid origin");
+
+    if (!dr.subdomain.ends_with(dr.origin))
+      throw std::runtime_error("subdomain not within origin");
+
+    OpenSSL::UqX509_REQ req(dr.csr, false);
+    auto public_key = req.get_pubkey();
+    auto public_key_pem = public_key.pem_pubkey();
+
+    auto subject_name = req.get_subject_name().get_common_name();
+    Name name(subject_name);
+
+    if (!name.is_absolute())
+      name += std::vector<Label>{Label()};
+
+    CCF_APP_DEBUG("ADNS: Register delegation {} in {}", name, dr.origin);
+
+    save_delegation_registration_request(dr);
+
+    if (!name.ends_with(dr.origin))
+      throw std::runtime_error("name outside of origin");
+
+    if (!req.verify(public_key))
+      throw std::runtime_error("CSR signature validation failed");
+
+    bool policy_ok = false;
+    std::shared_ptr<ravl::Claims> claims = nullptr;
+#ifdef QUOTE_VERIFICATION_FAILURE_OK
+    try
+#endif
+    {
+      std::shared_ptr<ravl::Attestation> att =
+        ravl::parse_attestation(dr.attestation);
+      if (!(claims = ravl::verify_synchronous(att)))
+        throw std::runtime_error("attestation verification failed: no claims");
+      std::string
+        policy_data = // TODO: add select state or JS functions to obtain it.
+        "var data = { claims: " + claims->to_json() + " };";
+      policy_ok = evaluate_delegation_registration_policy(policy_data);
+    }
+#ifdef QUOTE_VERIFICATION_FAILURE_OK
+    catch (...)
+    {
+      claims = std::make_shared<ravl::oe::Claims>();
+      policy_ok = true;
+    }
+#endif
+
+    if (!policy_ok)
+      throw std::runtime_error(
+        "delegation registration policy evaluation failed");
+
+    ResourceRecord ns_rr(
+      dr.subdomain,
+      static_cast<uint16_t>(RFC1035::Type::NS),
+      static_cast<uint16_t>(Class::IN),
+      configuration.default_ttl,
+      RFC1035::NS(dr.name));
+    ignore_on_add = true;
+    add(dr.origin, ns_rr);
+
+    for (const auto& dnskey_rr : dr.dnskey_records)
+    {
+      auto tag = get_key_tag(dnskey_rr.rdata);
+
+      ignore_on_add = true;
+      add(
+        dr.origin,
+        RFC4034::DSRR(
+          dr.subdomain,
+          RFC1035::Class::IN,
+          configuration.default_ttl,
+          tag,
+          configuration.signing_algorithm,
+          configuration.digest_type,
+          dnskey_rr.rdata));
+    }
+
+    sign(dr.origin);
+
+    // Glue records are not signed
+    // (https://datatracker.ietf.org/doc/html/rfc4035#section-2.2)
+
+    RFC4034::CanonicalRRSet glue_records;
+
+    glue_records += ResourceRecord(
+      dr.name,
+      static_cast<uint16_t>(RFC1035::Type::A),
+      static_cast<uint16_t>(Class::IN),
+      configuration.default_ttl,
+      RFC1035::A(dr.ip));
+
+    for (const auto& gr : glue_records)
+    {
+      ignore_on_add = true;
+      add(dr.origin, gr);
+    }
   }
 }

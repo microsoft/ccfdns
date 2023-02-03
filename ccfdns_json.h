@@ -154,6 +154,12 @@ namespace aDNS
     nsec3_hash_iterations,
     ca_certs);
   DECLARE_JSON_OPTIONAL_FIELDS(Resolver::Configuration, fixed_zsk);
+
+  DECLARE_JSON_TYPE_WITH_OPTIONAL_FIELDS(Resolver::RegistrationInformation);
+  DECLARE_JSON_REQUIRED_FIELDS(
+    Resolver::RegistrationInformation, protocol, public_key, attestation, csr);
+  DECLARE_JSON_OPTIONAL_FIELDS(
+    Resolver::RegistrationInformation, dnskey_records);
 }
 
 namespace ccfdns

@@ -263,19 +263,27 @@ namespace ccfdns
 
     using Records = ccf::ServiceSet<ResourceRecord>;
     using Origins = ccf::ServiceSet<RFC1035::Name>;
-    const std::string origins_table_name = "public:ccfdns->origins";
-
-    using RegistrationPolicy = ccf::ServiceValue<std::string>;
-    const std::string registration_policy_table_name =
-      "public:ccf.gov.ccfdns->registration_policy";
+    const std::string origins_table_name = "public:ccfdns.origins";
 
     using ServiceCertificates = ccf::ServiceMap<std::string, std::string>;
     const std::string service_certifificates_table_name =
       "public:service_certificates";
 
+    using ServiceRegistrationPolicy = ccf::ServiceValue<std::string>;
+    const std::string service_registration_policy_table_name =
+      "public:ccf.gov.ccfdns.service_registration_policy";
+
     using LatestRegistrationRequest = ccf::ServiceValue<RegisterService::In>;
     const std::string latest_registration_request_table_name =
-      "public:last_registration_request";
+      "public:last_service_registration_request";
+
+    using DelegationRegistrationPolicy = ccf::ServiceValue<std::string>;
+    const std::string delegation_registration_policy_table_name =
+      "public:ccf.gov.ccfdns.delegation_registration_policy";
+
+    using LatestDelegationRequest = ccf::ServiceValue<RegisterDelegation::In>;
+    const std::string latest_delegation_request_table_name =
+      "public:last_delegation_registration_request";
 
     void set_endpoint_context(ccf::endpoints::EndpointContext* c)
     {
@@ -284,6 +292,9 @@ namespace ccfdns
 
     virtual Configuration get_configuration() const override
     {
+      if (!ctx)
+        std::runtime_error("missing endpoint context");
+
       auto t = ctx->tx.template ro<CCFDNS::TConfigurationTable>(
         configuration_table_name);
       if (!t)
@@ -294,50 +305,14 @@ namespace ccfdns
       return *cfg;
     }
 
-    virtual void configure(const Configuration& cfg) override
+    virtual void set_configuration(const Configuration& cfg) override
     {
+      if (!ctx)
+        std::runtime_error("missing endpoint context");
+
       auto t = ctx->tx.template rw<CCFDNS::TConfigurationTable>(
         configuration_table_name);
       t->put(cfg);
-
-      add(
-        cfg.origin,
-        ResourceRecord(
-          cfg.name,
-          static_cast<uint16_t>(aDNS::Type::NS),
-          static_cast<uint16_t>(aDNS::Class::IN),
-          cfg.default_ttl,
-          NS(cfg.name)));
-
-      add(
-        cfg.origin,
-        ResourceRecord(
-          cfg.name,
-          static_cast<uint16_t>(aDNS::Type::A),
-          static_cast<uint16_t>(aDNS::Class::IN),
-          cfg.default_ttl,
-          A(cfg.ip)));
-
-      // Add our own attestation; may not be required.
-      std::shared_ptr<ravl::Attestation> attestation;
-      ccf::pal::attestation_report_data ard = {0};
-      ccf::pal::generate_quote(
-        ard,
-        [&attestation](
-          const ccf::QuoteInfo& quote_info,
-          const ccf::pal::snp::EndorsementEndpointsConfiguration&) {
-          attestation = std::make_shared<ravl::oe::Attestation>(
-            quote_info.quote, quote_info.endorsements);
-        });
-
-      add(
-        cfg.origin,
-        ResourceRecord(
-          cfg.name,
-          static_cast<uint16_t>(aDNS::Types::Type::ATTEST),
-          static_cast<uint16_t>(aDNS::Class::IN),
-          cfg.default_ttl,
-          aDNS::Types::ATTEST(attestation)));
     }
 
     virtual void add(const Name& origin, const ResourceRecord& rr) override
@@ -379,9 +354,7 @@ namespace ccfdns
         std::runtime_error("missing endpoint context");
 
       if (!origin.is_absolute())
-      {
         throw std::runtime_error("origin not absolute");
-      }
 
       auto c = static_cast<aDNS::Class>(rr.class_);
       auto t = static_cast<aDNS::Type>(rr.type);
@@ -569,20 +542,43 @@ namespace ccfdns
       table->put(origin_lowered, *value);
     }
 
-    virtual std::string registration_policy() const override
+    virtual std::string service_registration_policy() const override
     {
-      auto policy_table =
-        ctx->tx.ro<RegistrationPolicy>(registration_policy_table_name);
+      auto policy_table = ctx->tx.ro<ServiceRegistrationPolicy>(
+        service_registration_policy_table_name);
       const std::optional<std::string> policy = policy_table->get();
       if (!policy)
-        throw std::runtime_error("no registration policy");
+        throw std::runtime_error("no service registration policy");
       return *policy;
     }
 
-    virtual void set_registration_policy(const std::string& new_policy) override
+    virtual void set_service_registration_policy(
+      const std::string& new_policy) override
     {
       auto policy =
-        ctx->tx.rw<RegistrationPolicy>(registration_policy_table_name)->get();
+        ctx->tx
+          .rw<ServiceRegistrationPolicy>(service_registration_policy_table_name)
+          ->get();
+      policy = new_policy;
+    }
+
+    virtual std::string delegation_registration_policy() const override
+    {
+      auto policy_table = ctx->tx.ro<DelegationRegistrationPolicy>(
+        delegation_registration_policy_table_name);
+      const std::optional<std::string> policy = policy_table->get();
+      if (!policy)
+        throw std::runtime_error("no delegation registration policy");
+      return *policy;
+    }
+
+    virtual void set_delegation_registration_policy(
+      const std::string& new_policy) override
+    {
+      auto policy = ctx->tx
+                      .rw<DelegationRegistrationPolicy>(
+                        delegation_registration_policy_table_name)
+                      ->get();
       policy = new_policy;
     }
 
@@ -669,14 +665,23 @@ namespace ccfdns
       JSContext* ctx = nullptr;
     };
 
-    virtual bool evaluate_registration_policy(
+    virtual bool evaluate_service_registration_policy(
       const std::string& data) const override
     {
       RPJSRuntime rt;
-      std::string program = data + "\n\n" + registration_policy();
+      std::string program = data + "\n\n" + service_registration_policy();
       return rt.eval(program);
     }
 
+    virtual bool evaluate_delegation_registration_policy(
+      const std::string& data) const override
+    {
+      RPJSRuntime rt;
+      std::string program = data + "\n\n" + delegation_registration_policy();
+      return rt.eval(program);
+    }
+
+    using Resolver::register_delegation;
     using Resolver::register_service;
 
     virtual void set_service_certificate(
@@ -717,14 +722,26 @@ namespace ccfdns
       }
     }
 
-    virtual void save_registration_request(
+    virtual void save_service_registration_request(
       const RegistrationRequest& rr) override
     {
       auto lrr = ctx->tx.template rw<CCFDNS::LatestRegistrationRequest>(
         latest_registration_request_table_name);
       if (!lrr)
-        throw std::runtime_error("could not access registration request table");
+        throw std::runtime_error(
+          "could not access service registration request table");
       lrr->put(rr);
+    }
+
+    virtual void save_delegation_registration_request(
+      const DelegationRequest& dr) override
+    {
+      auto lrr = ctx->tx.template rw<CCFDNS::LatestDelegationRequest>(
+        latest_delegation_request_table_name);
+      if (!lrr)
+        throw std::runtime_error(
+          "could not access delegation registration request table");
+      lrr->put(dr);
     }
 
     virtual void start_service_acme(
@@ -848,8 +865,9 @@ namespace ccfdns
         {
           ContextContext cc(ccfdns, ctx);
           const auto in = params.get<Configure::In>();
-          ccfdns->configure(in.configuration);
-          return ccf::make_success();
+          Configure::Out out;
+          out.registration_info = ccfdns->configure(in.configuration);
+          return ccf::make_success(out);
         }
         catch (std::exception& ex)
         {
@@ -864,6 +882,32 @@ namespace ccfdns
         ccf::json_adapter(configure),
         ccf::no_auth_required)
         .set_auto_schema<Configure::In, Configure::Out>()
+        .install();
+
+      auto set_service_certificate =
+        [this](auto& ctx, nlohmann::json&& params) {
+          try
+          {
+            const auto in = params.get<SetServiceCertificate::In>();
+            auto tbl = ctx.tx.template rw<ccf::ACMECertificates>(
+              ccf::Tables::ACME_CERTIFICATES);
+            if (!tbl)
+              throw std::runtime_error("missing ACME certificate table");
+            tbl->put("custom", in.certificate);
+            return ccf::make_success();
+          }
+          catch (std::exception& ex)
+          {
+            return ccf::make_error(
+              HTTP_STATUS_BAD_REQUEST, ccf::errors::InternalError, ex.what());
+          }
+        };
+
+      make_endpoint(
+        "/set-service-certificate",
+        HTTP_POST,
+        ccf::json_adapter(set_service_certificate),
+        ccf::no_auth_required)
         .install();
 
       auto install_acme_response = [this](auto& ctx, nlohmann::json&& params) {
@@ -1038,11 +1082,35 @@ namespace ccfdns
       };
 
       make_endpoint(
-        "/register",
+        "/register-service",
         HTTP_POST,
         ccf::json_adapter(register_service),
         ccf::no_auth_required)
         .set_auto_schema<RegisterService::In, RegisterService::Out>()
+        .install();
+
+      auto register_delegation = [this](auto& ctx, nlohmann::json&& params) {
+        try
+        {
+          ContextContext cc(ccfdns, ctx);
+          const auto in = params.get<RegisterDelegation::In>();
+          ccfdns->register_delegation(in);
+          ctx.rpc_ctx->set_response_status(HTTP_STATUS_OK);
+          return ccf::make_success();
+        }
+        catch (std::exception& ex)
+        {
+          return ccf::make_error(
+            HTTP_STATUS_BAD_REQUEST, ccf::errors::InternalError, ex.what());
+        }
+      };
+
+      make_endpoint(
+        "/register-delegation",
+        HTTP_POST,
+        ccf::json_adapter(register_delegation),
+        ccf::no_auth_required)
+        .set_auto_schema<RegisterDelegation::In, RegisterDelegation::Out>()
         .install();
 
       auto set_certificate = [this](auto& ctx, nlohmann::json&& params) {
@@ -1118,10 +1186,13 @@ namespace ccfdns
           auto endo = iit->second.endorsement;
           if (
             endo->authority == ccf::Authority::ACME && endo->acme_configuration)
+          {
             acme_config_name = *endo->acme_configuration;
-          if (acme_config_name.empty())
-            CCF_APP_FAIL("Empty ACME configuration");
-          acme_config = **acme_ss->config(acme_config_name);
+            if (acme_config_name.empty())
+              CCF_APP_FAIL("Empty ACME configuration");
+            else
+              acme_config = **acme_ss->config(acme_config_name);
+          }
         }
       }
 

@@ -47,7 +47,8 @@ public:
   std::map<Name, crypto::Pem, RFC4034::CanonicalNameOrdering> key_signing_keys;
   std::map<Name, crypto::Pem, RFC4034::CanonicalNameOrdering> zone_signing_keys;
 
-  std::string registration_policy_str;
+  std::string service_registration_policy_str;
+  std::string delegation_registration_policy_str;
 
   Resolver::Configuration configuration;
 
@@ -56,7 +57,7 @@ public:
     return configuration;
   }
 
-  virtual void configure(const Configuration& cfg) override
+  virtual void set_configuration(const Configuration& cfg) override
   {
     configuration = cfg;
   }
@@ -176,17 +177,35 @@ public:
       CCF_APP_DEBUG("<empty>");
   }
 
-  virtual std::string registration_policy() const override
+  virtual std::string service_registration_policy() const override
   {
-    return registration_policy_str;
+    return service_registration_policy_str;
   }
 
-  virtual void set_registration_policy(const std::string& new_policy) override
+  virtual void set_service_registration_policy(
+    const std::string& new_policy) override
   {
-    registration_policy_str = new_policy;
+    service_registration_policy_str = new_policy;
   }
 
-  virtual bool evaluate_registration_policy(
+  virtual bool evaluate_service_registration_policy(
+    const std::string& data) const override
+  {
+    return true;
+  }
+
+  virtual std::string delegation_registration_policy() const override
+  {
+    return delegation_registration_policy_str;
+  }
+
+  virtual void set_delegation_registration_policy(
+    const std::string& new_policy) override
+  {
+    delegation_registration_policy_str = new_policy;
+  }
+
+  virtual bool evaluate_delegation_registration_policy(
     const std::string& data) const override
   {
     return true;
@@ -203,7 +222,12 @@ public:
     return "";
   }
 
-  virtual void save_registration_request(const RegistrationRequest& rr) override
+  virtual void save_service_registration_request(
+    const RegistrationRequest& rr) override
+  {}
+
+  virtual void save_delegation_registration_request(
+    const DelegationRequest& rr) override
   {}
 
   virtual void start_service_acme(
@@ -640,6 +664,59 @@ TEST_CASE("Service registration")
   s.install_acme_response(origin, service_name, {}, RFC1035::TXT("sometoken"));
   auto challenge_name = Name("_acme-challenge") + service_name;
   r = s.resolve(challenge_name, aDNS::QType::TXT, aDNS::QClass::IN);
+  REQUIRE(RFC4034::verify_rrsigs(r.answers, dnskey_rrs, type2str));
+}
+
+TEST_CASE("Delegation")
+{
+  TestResolver main, sub;
+
+  Resolver::Configuration main_cfg, sub_cfg;
+
+  main_cfg = {
+    .origin = "example.com.", .name = "ns1.example.com.", .ip = "192.168.0.1"};
+
+  auto main_reginfo = main.configure(main_cfg);
+
+  sub_cfg = {
+    .origin = "sub.example.com.",
+    .name = "ns1.sub.example.com.",
+    .ip = "192.168.1.1"};
+
+  auto sub_reginfo = sub.configure(sub_cfg);
+
+  REQUIRE(sub_reginfo.dnskey_records != std::nullopt);
+
+  Resolver::DelegationRequest dr = {
+    .origin = main_cfg.origin,
+    .subdomain = sub_cfg.origin,
+    .name = sub_cfg.name,
+    .ip = sub_cfg.ip,
+    .port = 53,
+    .protocol = sub_reginfo.protocol,
+    .attestation = sub_reginfo.attestation,
+    .csr = sub_reginfo.csr,
+    .contact = std::vector<std::string>{"someone@example.com"},
+    .dnskey_records = *sub_reginfo.dnskey_records};
+
+  main.register_delegation(dr);
+
+  auto dnskey_rrs =
+    main.resolve(main_cfg.origin, aDNS::QType::DNSKEY, aDNS::QClass::IN)
+      .answers;
+  REQUIRE(RFC4034::verify_rrsigs(dnskey_rrs, dnskey_rrs, type2str));
+
+  auto dnskey_sub_rrs =
+    sub.resolve(sub_cfg.origin, aDNS::QType::DNSKEY, aDNS::QClass::IN).answers;
+  REQUIRE(RFC4034::verify_rrsigs(dnskey_sub_rrs, dnskey_sub_rrs, type2str));
+
+  auto r = main.resolve(sub_cfg.origin, aDNS::QType::A, aDNS::QClass::IN);
+
+  REQUIRE(r.answers.size() == 0);
+  REQUIRE(r.authorities.size() == 3); // NS + RRSIG + NSEC3
+  REQUIRE(r.additionals.size() == 1); // Glue record
+
+  r = main.resolve(sub_cfg.origin, aDNS::QType::NS, aDNS::QClass::IN);
   REQUIRE(RFC4034::verify_rrsigs(r.answers, dnskey_rrs, type2str));
 }
 

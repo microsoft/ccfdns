@@ -88,13 +88,8 @@ def register(
         "algorithm": "ECDSAP384SHA384",
         "public_key": public_key_pem,
     }
-    url = adns_base_url + "/register"
-    return requests.post(
-        url,
-        headers=headers,
-        json=data,
-        verify=False,
-    )
+    url = adns_base_url + "/register-service"
+    return requests.post(url, headers=headers, json=data, verify=False, timeout=10)
 
 
 def get_acme_certificate(

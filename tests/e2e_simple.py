@@ -94,7 +94,7 @@ def submit_service_registration(
     }"""
 
     r = client.post(
-        "/app/register",
+        "/app/register-service",
         {
             "origin": str(origin),
             "name": str(name),

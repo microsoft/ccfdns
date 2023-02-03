@@ -110,59 +110,40 @@ def make_pebble_config(
         json.dump(pebble_config, f)
 
 
-class Options:
-    def __init__(self):
-        self.binary_filename = "/opt/pebble/pebble_linux-amd64"
-        self.config_filename = "pebble.config.json"
-        self.ca_key_filename = "pebble-key.pem"
-        self.ca_cert_filename = "pebble-ca-cert.pem"
-        self.output_filename = "pebble.out"
-        self.error_filename = "pebble.err"
-        self.listen_address = "127.0.0.1:1024"
-        self.mgmt_address = "127.0.0.1:1025"
-        self.dns_address = None
-        self.tls_port = 1026
-        self.http_port = 1027
-        self.wait_forever = False
+class Arguments:
+    """Pebble arguments"""
+
+    def __init__(
+        self,
+        binary_filename="/opt/pebble/pebble_linux-amd64",
+        config_filename="pebble.config.json",
+        ca_key_filename="pebble-key.pem",
+        ca_cert_filename="pebble-ca-cert.pem",
+        output_filename="pebble.out",
+        error_filename="pebble.err",
+        listen_address="127.0.0.1:1024",
+        mgmt_address="127.0.0.1:1025",
+        dns_address=None,
+        tls_port=1026,
+        http_port=1027,
+        wait_forever=False,
+    ):
+        self.binary_filename = binary_filename
+        self.config_filename = config_filename
+        self.ca_key_filename = ca_key_filename
+        self.ca_cert_filename = ca_cert_filename
+        self.output_filename = output_filename
+        self.error_filename = error_filename
+        self.listen_address = listen_address
+        self.mgmt_address = mgmt_address
+        self.dns_address = dns_address
+        self.tls_port = tls_port
+        self.http_port = http_port
+        self.wait_forever = wait_forever
 
 
-def default_args(args):
-    """Fill in default args"""
-
-    r = Options()
-
-    if hasattr(args, "binary_filename"):
-        r.binary_filename = args.binary_filename
-    if hasattr(args, "config_filename"):
-        r.config_filename = args.config_filename
-    if hasattr(args, "ca_key_filename"):
-        r.ca_key_filename = args.ca_key_filename
-    if hasattr(args, "ca_cert_filename"):
-        r.ca_cert_filename = args.ca_cert_filename
-    if hasattr(args, "output_filename"):
-        r.output_filename = args.output_filename
-    if hasattr(args, "error_filename"):
-        r.error_filename = args.error_filename
-    if hasattr(args, "listen_address"):
-        r.listen_address = args.listen_address
-    if hasattr(args, "mgmt_address"):
-        r.mgmt_address = args.mgmt_address
-    if hasattr(args, "dns_address"):
-        r.dns_address = args.dns_address
-    if hasattr(args, "tls_port"):
-        r.tls_port = args.tls_port
-    if hasattr(args, "http_port"):
-        r.http_port = args.http_port
-    if hasattr(args, "wait_forever"):
-        r.wait_forever = args.wait_forever
-
-    return r
-
-
-def run_pebble(pargs):
+def run_pebble(args):
     """Run pebble"""
-
-    args = default_args(pargs)
 
     if not os.path.exists(args.binary_filename):
         raise Exception(f"pebble not found at {args.binary_filename}")
@@ -195,7 +176,7 @@ def run_pebble(pargs):
         )
 
     if args.wait_forever:
-        wait_forever(
+        run_blocking(
             args.output_filename,
             args.error_filename,
             args.binary_filename,
@@ -239,7 +220,7 @@ def run_pebble_proc(args):
     return proc, out, err
 
 
-def wait_forever(
+def run_blocking(
     output_filename,
     error_filename,
     binary_filename,

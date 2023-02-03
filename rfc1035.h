@@ -40,8 +40,9 @@ namespace RFC1035 // https://datatracker.ietf.org/doc/html/rfc1035
       uint8_t flags = bytes[pos] >> 6;
       uint8_t sz = bytes[pos] & 0x3F;
 
-      if (pos + sz >= bytes.size() || bytes[pos] > MAX_LABEL_SIZE)
-        throw std::runtime_error("invalid label size (bytes)");
+      if (pos + sz >= bytes.size() || sz > MAX_LABEL_SIZE)
+        throw std::runtime_error(
+          "invalid label size (" + std::to_string(sz) + " bytes)");
 
       data = small_vector<uint8_t>(bytes[pos]);
       for (size_t i = 0; i < bytes[pos]; i++)
@@ -907,6 +908,11 @@ namespace RFC1035
   {
   public:
     Name nsdname;
+
+    NS(const Name& n)
+    {
+      nsdname = n;
+    }
 
     NS(const std::string& data)
     {

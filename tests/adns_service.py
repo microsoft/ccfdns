@@ -7,7 +7,6 @@ import http
 import time
 import base64
 import subprocess
-import copy
 import json
 import logging
 
@@ -16,7 +15,13 @@ import infra.network
 import infra.node
 import infra.checker
 import infra.health_watcher
-import infra.interfaces
+from infra.interfaces import (
+    RPCInterface,
+    AppProtocol,
+    Endorsement,
+    EndorsementAuthority,
+    PRIMARY_RPC_INTERFACE,
+)
 
 import dns
 import dns.message
@@ -73,6 +78,7 @@ def configure(network, adns_config):
         r.status_code == http.HTTPStatus.OK
         or r.status_code == http.HTTPStatus.NO_CONTENT
     )
+    return json.loads(str(r.body))["registration_info"]
 
 
 def populate(network, args):
@@ -123,7 +129,7 @@ def start_dns_to_http_proxy(binary, host, port, query_url, network_cert):
         query_url,
         "-v",
         "-l",
-        "doh_proxy.log",
+        "doh_proxy_" + host + ".log",
         "-C",
         network_cert,
     ]
@@ -139,11 +145,11 @@ def public_host_port(listen_addr):
     return public_host, public_port
 
 
-def set_registration_policy(network, args):
+def set_policy(network, proposal_name, policy):
     primary, _ = network.find_primary()
 
     proposal_body, careful_vote = network.consortium.make_proposal(
-        "set_registration_policy", new_policy=args.regpol
+        proposal_name, new_policy=policy
     )
 
     proposal = network.consortium.get_any_active_member().propose(
@@ -189,11 +195,9 @@ def wait_for_endorsed_cert(network, name):
 def run(args, adns_config):
     """Start the network"""
 
-    pebble_proc = None
     proxy_proc = None
     service_dns_name = "ns1." + args.origin.rstrip(".")
-
-    args.ca_cert_filename = "pebble-ca-cert.pem"
+    ca_certs = []
 
     if len(args.node) == 0:
         args.node = DEFAULT_NODES
@@ -205,15 +209,8 @@ def run(args, adns_config):
     doh_proxy_binary = "/data/cwinter/https_dns_proxy/build/https_dns_proxy"
 
     if args.acme_config_name == "pebble":
-        pargs = copy.deepcopy(args)
-        pargs.dns_address = public_host + ":53"
-        pargs.wait_forever = False
-        pargs.http_port = args.acme_http_port
-        pebble_proc, _, _ = pebble.run_pebble(pargs)
-        while not os.path.exists(pargs.ca_cert_filename):
-            time.sleep(0.25)
         acme_directory = "https://127.0.0.1:1024/dir"
-        ca_certs = [open(pargs.ca_cert_filename, mode="r", encoding="ascii").read()]
+        ca_certs = [open(args.ca_cert_filename, mode="r", encoding="ascii").read()]
         email = "nobody@example.com"
     elif args.acme_config_name == "letsencrypt":
         if args.acme_http_port != 80:
@@ -231,30 +228,42 @@ def run(args, adns_config):
             raise Exception("Valid e-mail address is required for Let's Encrypt")
         email = args.email
     else:
-        raise Exception("unknown ACME configuration name")
+        acme_directory = args.acme_directory
+        email = args.email
 
     try:
-        for node in args.nodes:
-            endoed_if = infra.interfaces.RPCInterface(
-                host=public_host,
-                port=args.service_port,
-                endorsement=infra.interfaces.Endorsement(
-                    authority=infra.interfaces.EndorsementAuthority.ACME,
-                    acme_configuration=args.acme_config_name,
-                ),
-                app_protocol=infra.interfaces.AppProtocol.HTTP2,
-            )
-            node.rpc_interfaces["acme_endorsed_interface"] = endoed_if
-            node.rpc_interfaces[
-                "acme_challenge_server_if"
-            ] = infra.interfaces.RPCInterface(
-                host="0.0.0.0",
-                port=args.acme_http_port,
-                endorsement=infra.interfaces.Endorsement(
-                    authority=infra.interfaces.EndorsementAuthority.Unsecured
-                ),
-                accepted_endpoints=["/.well-known/acme-challenge/.*"],
-            )
+        if not args.acme_config_name:
+            for node in args.nodes:
+                endoed_if = RPCInterface(
+                    host=public_host,
+                    port=args.service_port,
+                    endorsement=Endorsement(
+                        authority=EndorsementAuthority.Service,
+                    ),
+                    app_protocol=AppProtocol.HTTP2,
+                )
+                node.rpc_interfaces["acme_endorsed_interface"] = endoed_if
+        else:
+            for node in args.nodes:
+                endoed_if = RPCInterface(
+                    host=public_host,
+                    port=args.service_port,
+                    endorsement=Endorsement(
+                        authority=EndorsementAuthority.ACME,
+                        acme_configuration=args.acme_config_name,
+                    ),
+                    app_protocol=AppProtocol.HTTP2,
+                )
+                node.rpc_interfaces["acme_endorsed_interface"] = endoed_if
+                if args.acme_http_port:
+                    node.rpc_interfaces["acme_challenge_server_if"] = RPCInterface(
+                        host=public_host,
+                        port=args.acme_http_port,
+                        endorsement=Endorsement(
+                            authority=EndorsementAuthority.Unsecured
+                        ),
+                        accepted_endpoints=["/.well-known/acme-challenge/.*"],
+                    )
 
         args.acme = {
             "configurations": {
@@ -265,10 +274,14 @@ def run(args, adns_config):
                     "contact": ["mailto:" + email],
                     "terms_of_service_agreed": True,
                     "challenge_type": "http-01",
-                    "challenge_server_interface": "acme_challenge_server_if",
                 }
             }
         }
+
+        if args.acme_http_port:
+            args.acme["configurations"][args.acme_config_name][
+                "challenge_server_interface"
+            ] = "acme_challenge_server_if"
 
         network = infra.network.Network(
             args.nodes,
@@ -278,32 +291,37 @@ def run(args, adns_config):
             library_dir=args.library_dir,
         )
         network.start_and_open(args)
-        if args.regpol:
-            set_registration_policy(network, args)
-        if args.populate:
-            populate(network, args)
+
+        if args.registration_policy:
+            set_policy(network, "set_registration_policy", args.registration_policy)
+        if args.delegation_policy:
+            set_policy(network, "set_delegation_policy", args.delegation_policy)
 
         node = network.find_random_node()
-        primary_if = node.host.rpc_interfaces[infra.interfaces.PRIMARY_RPC_INTERFACE]
+        primary_if = node.host.rpc_interfaces[PRIMARY_RPC_INTERFACE]
         host, port = primary_if.host, primary_if.port
         net_cert_path = os.path.join(node.common_dir, "service_cert.pem")
 
-        proxy_proc = start_dns_to_http_proxy(
-            doh_proxy_binary,
-            public_host,
-            "53",
-            "https://" + host + ":" + str(port) + "/app/dns-query",
-            net_cert_path,
-        )
+        if args.start_proxy:
+            proxy_proc = start_dns_to_http_proxy(
+                doh_proxy_binary,
+                public_host,
+                "53",
+                "https://" + host + ":" + str(port) + "/app/dns-query",
+                net_cert_path,
+            )
 
-        adns_config["configuration"]["ca_certs"] += [
-            cert_to_pem(network.cert),
-            open(args.ca_cert_filename, "r", encoding="ascii").read(),
-        ]
+        adns_config["configuration"]["ca_certs"] += [cert_to_pem(network.cert)]
 
-        configure(network, adns_config)
+        reginfo = configure(network, adns_config)
 
-        endorsed_cert = wait_for_endorsed_cert(network, service_dns_name)
+        endorsed_cert = None
+        if args.wait_for_endorsed_cert:
+            endorsed_cert = wait_for_endorsed_cert(network, service_dns_name)
+
+        if args.populate:
+            populate(network, args)
+
         # TODO: restart the proxy with endorsed_cert?
 
         LOG.success(f"Server/network for {args.origin} running.")
@@ -313,16 +331,14 @@ def run(args, adns_config):
             while True:
                 time.sleep(1)
         else:
-            return network, [pebble_proc, proxy_proc]
+            return network, proxy_proc, endorsed_cert, reginfo
 
     except Exception:
         logging.exception("caught exception")
-        if pebble_proc:
-            pebble_proc.kill()
         if proxy_proc:
             proxy_proc.kill()
 
-    return None, []
+    return None, None, None, None
 
 
 if __name__ == "__main__":
@@ -372,10 +388,20 @@ if __name__ == "__main__":
     gargs.package = "libccfdns"
 
     gargs.populate = True
-    gargs.regpol = """
+    gargs.registration_policy = """
         data.claims.sgx_claims.report_body.mr_enclave.length == 32 &&
         JSON.stringify(data.claims.custom_claims.sgx_report_data) == JSON.stringify([ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
         """
+    gargs.delegation_policy = """
+        data.claims.sgx_claims.report_body.mr_enclave.length == 32 &&
+        JSON.stringify(data.claims.custom_claims.sgx_report_data) == JSON.stringify([ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+        """
+
+    gargs.start_proxy = True
+    gargs.wait_for_endorsed_cert = False
+    gargs.fixed_zsk = False
+    gargs.ca_cert_filename = ""
+    gargs.ip = "51.143.161.224"
 
     gargs.email = "cwinter@microsoft.com"
     gargs.origin = "adns.ccf.dev."
@@ -390,6 +416,16 @@ if __name__ == "__main__":
         expire=2419200,
         minimum=0,
     )
+
+    pebble_args = pebble.Arguments(
+        dns_address="ns1.adns.ccf.dev:53",
+        wait_forever=False,
+        http_port=8080,
+        ca_cert_filename="pebble-ca-cert.pem",
+        config_filename="pebble.config.json",
+    )
+
+    gargs.ca_cert_filename = pebble_args.ca_cert_filename
 
     config = {
         "configuration": {
@@ -410,7 +446,8 @@ if __name__ == "__main__":
     nw = None
     procs = []
     try:
-        nw, procs = run(gargs, config)
+        nw, p, _, _ = run(gargs, config)
+        procs += [p]
     finally:
         if nw:
             nw.stop_all_nodes()

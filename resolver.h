@@ -113,10 +113,10 @@ namespace aDNS
   public:
     struct Configuration
     {
+      std::string origin;
       std::string name;
       std::string ip;
 
-      std::string origin;
       uint32_t default_ttl = 86400;
       RFC4034::Algorithm signing_algorithm =
         RFC4034::Algorithm::ECDSAP384SHA384;
@@ -132,11 +132,21 @@ namespace aDNS
       std::optional<std::string> fixed_zsk; // TODO: Debug-only?
     };
 
+    struct RegistrationInformation
+    {
+      std::string protocol;
+      std::string public_key;
+      std::string attestation;
+      std::vector<uint8_t> csr;
+      std::optional<std::vector<aDNS::ResourceRecord>> dnskey_records;
+    };
+
     struct Resolution
     {
       RFC1035::ResponseCode response_code = RFC1035::ResponseCode::NO_ERROR;
       RFC4034::CanonicalRRSet answers;
       RFC4034::CanonicalRRSet authorities;
+      RFC4034::CanonicalRRSet additionals;
     };
 
     struct RegistrationRequest
@@ -151,10 +161,24 @@ namespace aDNS
       std::vector<std::string> contact;
     };
 
+    struct DelegationRequest
+    {
+      Name origin;
+      Name subdomain;
+      Name name; // TODO: should be a set of names?
+      std::string ip;
+      uint16_t port;
+      std::string protocol;
+      std::string attestation;
+      std::vector<uint8_t> csr;
+      std::vector<std::string> contact;
+      std::vector<aDNS::ResourceRecord> dnskey_records;
+    };
+
     Resolver();
     virtual ~Resolver();
 
-    virtual void configure(const Configuration& cfg) = 0;
+    virtual RegistrationInformation configure(const Configuration& cfg);
 
     virtual Message reply(const Message& msg);
 
@@ -201,8 +225,6 @@ namespace aDNS
       const crypto::Pem& pem,
       bool key_signing) = 0;
 
-    virtual void register_service(const RegistrationRequest& req);
-
     virtual void start_service_acme(
       const Name& origin,
       const Name& name,
@@ -217,14 +239,28 @@ namespace aDNS
 
     virtual void remove_acme_response(const Name& origin, const Name& name);
 
-    virtual std::string registration_policy() const = 0;
+    virtual void register_service(const RegistrationRequest& req);
 
-    virtual void set_registration_policy(const std::string& new_policy) = 0;
+    virtual std::string service_registration_policy() const = 0;
 
-    virtual bool evaluate_registration_policy(
+    virtual void set_service_registration_policy(
+      const std::string& new_policy) = 0;
+
+    virtual bool evaluate_service_registration_policy(
+      const std::string& data) const = 0;
+
+    virtual void register_delegation(const DelegationRequest& req);
+
+    virtual std::string delegation_registration_policy() const = 0;
+
+    virtual void set_delegation_registration_policy(
+      const std::string& new_policy) = 0;
+
+    virtual bool evaluate_delegation_registration_policy(
       const std::string& data) const = 0;
 
     virtual Configuration get_configuration() const = 0;
+    virtual void set_configuration(const Configuration& cfg) = 0;
 
     virtual void set_service_certificate(
       const std::string& service_dns_name,
@@ -233,7 +269,11 @@ namespace aDNS
     virtual std::string get_service_certificate(
       const std::string& service_dns_name) = 0;
 
-    virtual void save_registration_request(const RegistrationRequest& rr) = 0;
+    virtual void save_service_registration_request(
+      const RegistrationRequest& rr) = 0;
+
+    virtual void save_delegation_registration_request(
+      const DelegationRequest& rr) = 0;
 
   protected:
     bool ignore_on_add = false;
@@ -248,7 +288,8 @@ namespace aDNS
     RFC4034::CanonicalRRSet get_record_set(
       const Name& origin, const Name& name, QClass c, QType t) const;
 
-    typedef std::pair<std::shared_ptr<crypto::KeyPair>, uint16_t> KeyAndTag;
+    typedef std::pair<std::shared_ptr<crypto::KeyPair>, uint16_t>
+      KeyAndTag; // TODO: Should use OpenSSL type instead of KeyPair
 
     KeyAndTag get_signing_key(
       const Name& origin, Class class_, bool key_signing);

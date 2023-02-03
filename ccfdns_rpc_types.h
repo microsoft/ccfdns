@@ -19,6 +19,18 @@ namespace ccfdns
     {
       aDNS::Resolver::Configuration configuration;
     };
+    struct Out
+    {
+      aDNS::Resolver::RegistrationInformation registration_info;
+    };
+  };
+
+  struct SetServiceCertificate
+  {
+    struct In
+    {
+      std::string certificate;
+    };
     using Out = void;
   };
 
@@ -74,6 +86,12 @@ namespace ccfdns
     using Out = void;
   };
 
+  struct RegisterDelegation
+  {
+    using In = aDNS::Resolver::DelegationRequest;
+    using Out = void;
+  };
+
   struct SetCertificate
   {
     struct In
@@ -101,6 +119,12 @@ namespace ccfdns
 {
   DECLARE_JSON_TYPE(Configure::In);
   DECLARE_JSON_REQUIRED_FIELDS(Configure::In, configuration);
+
+  DECLARE_JSON_TYPE(Configure::Out);
+  DECLARE_JSON_REQUIRED_FIELDS(Configure::Out, registration_info);
+
+  DECLARE_JSON_TYPE(SetServiceCertificate::In);
+  DECLARE_JSON_REQUIRED_FIELDS(SetServiceCertificate::In, certificate);
 
   DECLARE_JSON_TYPE(AddRecord::In);
   DECLARE_JSON_REQUIRED_FIELDS(AddRecord::In, origin, record);
@@ -138,4 +162,18 @@ namespace aDNS
     attestation,
     csr,
     contact);
+
+  DECLARE_JSON_TYPE(Resolver::DelegationRequest);
+  DECLARE_JSON_REQUIRED_FIELDS(
+    Resolver::DelegationRequest,
+    origin,
+    name,
+    subdomain,
+    ip,
+    port,
+    protocol,
+    attestation,
+    csr,
+    contact,
+    dnskey_records);
 }

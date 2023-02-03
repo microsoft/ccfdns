@@ -3,6 +3,8 @@
 
 import glob
 import time
+import json
+import http
 
 import infra.e2e_args
 import infra.network
@@ -26,6 +28,28 @@ def public_host_port(listen_addr):
     return public_host, public_port
 
 
+def configure(network, service_info, adns_base_url, ca_certs):
+    """Configure the service"""
+
+    primary, _ = network.find_primary()
+    r = None
+    with primary.client() as client:
+        r = client.post(
+            "/app/configure",
+            {
+                "name": service_info["name"],
+                "alternative_names": service_info["alternative_names"],
+                "ip": service_info["ip"],
+                "port": service_info["port"],
+                "adns_base_url": adns_base_url,
+                "ca_certs": ca_certs,
+            },
+        )
+
+    assert r.status_code == http.HTTPStatus.OK
+    return json.loads(str(r.body))
+
+
 def run(args):
     """Run the demo service"""
 
@@ -34,7 +58,20 @@ def run(args):
 
     public_host, _ = public_host_port(args.node[0])
 
-    if args.acme_config_name:
+    if not args.acme_config_name:
+        for node in args.nodes:
+            endorsed_interface = infra.interfaces.RPCInterface(
+                host=public_host,
+                port=args.service_port,
+                endorsement=infra.interfaces.Endorsement(
+                    authority=infra.interfaces.EndorsementAuthority.Service
+                ),
+                transport="tcp",
+                app_protocol=infra.interfaces.AppProtocol.HTTP2,
+            )
+            endorsed_interface.public_host = args.dns_name
+            node.rpc_interfaces["endorsed_interface"] = endorsed_interface
+    else:
         if args.acme_config_name == "pebble":
             # TODO: grab these from pebble.config.json
             pebble_mgmt_address = "127.0.0.1:1025"
@@ -51,6 +88,12 @@ def run(args):
                 "-----BEGIN CERTIFICATE-----\nMIICTjCCAdSgAwIBAgIRAIPgc3k5LlLVLtUUvs4K/QcwCgYIKoZIzj0EAwMwaDEL\nMAkGA1UEBhMCVVMxMzAxBgNVBAoTKihTVEFHSU5HKSBJbnRlcm5ldCBTZWN1cml0\neSBSZXNlYXJjaCBHcm91cDEkMCIGA1UEAxMbKFNUQUdJTkcpIEJvZ3VzIEJyb2Nj\nb2xpIFgyMB4XDTIwMDkwNDAwMDAwMFoXDTQwMDkxNzE2MDAwMFowaDELMAkGA1UE\nBhMCVVMxMzAxBgNVBAoTKihTVEFHSU5HKSBJbnRlcm5ldCBTZWN1cml0eSBSZXNl\nYXJjaCBHcm91cDEkMCIGA1UEAxMbKFNUQUdJTkcpIEJvZ3VzIEJyb2Njb2xpIFgy\nMHYwEAYHKoZIzj0CAQYFK4EEACIDYgAEOvS+w1kCzAxYOJbA06Aw0HFP2tLBLKPo\nFQqR9AMskl1nC2975eQqycR+ACvYelA8rfwFXObMHYXJ23XLB+dAjPJVOJ2OcsjT\nVqO4dcDWu+rQ2VILdnJRYypnV1MMThVxo0IwQDAOBgNVHQ8BAf8EBAMCAQYwDwYD\nVR0TAQH/BAUwAwEB/zAdBgNVHQ4EFgQU3tGjWWQOwZo2o0busBB2766XlWYwCgYI\nKoZIzj0EAwMDaAAwZQIwRcp4ZKBsq9XkUuN8wfX+GEbY1N5nmCRc8e80kUkuAefo\nuc2j3cICeXo1cOybQ1iWAjEA3Ooawl8eQyR4wrjCofUE8h44p0j7Yl/kBlJZT8+9\nvbtH7QiVzeKCOTQPINyRql6P\n-----END CERTIFICATE-----\n",
             ]
             email = "cwinter@microsoft.com"
+        elif args.acme_config_name == "custom":
+            acme_directory = ""
+            email = ""
+            ca_certs = []
+        else:
+            raise Exception("unsupported ACME config")
 
         args.acme = {
             "configurations": {
@@ -132,6 +175,7 @@ if __name__ == "__main__":
     gargs.nodes = infra.e2e_args.min_nodes(gargs, f=0)
     gargs.constitution = glob.glob("../tests/constitution/*")
     gargs.package = "libccf_demo_service"
+    gargs.http2 = True
 
     gargs.dns_name = "service43.adns.ccf.dev"
 

@@ -184,7 +184,7 @@ namespace RFC4034
 
     for (const auto& rd : crrs.rdata)
     {
-      CCF_APP_DEBUG("ADNS:  - {}", ds::to_hex(rd));
+      CCF_APP_DEBUG("ADNS:  - rdata: {}", ds::to_hex(rd));
 
       put(crrs.name, data_to_sign);
       put(crrs.type, data_to_sign);
