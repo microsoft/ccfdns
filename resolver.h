@@ -116,6 +116,9 @@ namespace aDNS
       std::string origin;
       std::string name;
       std::string ip;
+      std::optional<std::vector<std::string>> alternative_names;
+      std::optional<std::string> parent_base_url;
+      std::vector<std::string> ca_certs;
 
       uint32_t default_ttl = 86400;
       RFC4034::Algorithm signing_algorithm =
@@ -128,7 +131,6 @@ namespace aDNS
         RFC5155::HashAlgorithm::SHA1;
       uint16_t nsec3_hash_iterations = 3;
 
-      std::vector<std::string> ca_certs = {};
       std::optional<std::string> fixed_zsk; // TODO: Debug-only?
     };
 

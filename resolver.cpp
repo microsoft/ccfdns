@@ -18,6 +18,7 @@
 #include <ccf/crypto/hash_bytes.h>
 #include <ccf/crypto/key_pair.h>
 #include <ccf/crypto/md_type.h>
+#include <ccf/crypto/san.h>
 #include <ccf/crypto/sha256_hash.h>
 #include <ccf/ds/logger.h>
 #include <ccf/kv/map.h>
@@ -1073,8 +1074,14 @@ namespace aDNS
     while (sn.back() == '.')
       sn.pop_back();
 
+    std::vector<crypto::SubjectAltName> sans;
+    sans.push_back({sn, false});
+    if (cfg.alternative_names)
+      for (const auto& san : *cfg.alternative_names)
+        sans.push_back({san, false});
+
     out.csr = signing_key.first->create_csr_der(
-      "CN=" + sn, {}, signing_key.first->public_key_pem());
+      "CN=" + sn, sans, signing_key.first->public_key_pem());
 
     auto dnskeys = resolve(cfg.origin, aDNS::QType::DNSKEY, aDNS::QClass::IN);
 
@@ -1395,5 +1402,7 @@ namespace aDNS
 
     for (const auto& gr : glue_records)
       add(dr.origin, gr);
+
+    start_service_acme(dr.origin, dr.name, dr.csr, dr.contact);
   }
 }

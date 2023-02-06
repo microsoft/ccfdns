@@ -288,7 +288,6 @@ namespace service
                     {
                       auto j = nlohmann::json::parse(body);
                       service_cert = j["certificate"].get<std::string>();
-                      CCF_APP_DEBUG("SERVICE CERTIFICATE: {}", service_cert);
 
                       SetServiceCertificate::In robj = {service_cert};
                       nlohmann::json jin;

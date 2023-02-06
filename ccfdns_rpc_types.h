@@ -25,15 +25,6 @@ namespace ccfdns
     };
   };
 
-  struct SetServiceCertificate
-  {
-    struct In
-    {
-      std::string certificate;
-    };
-    using Out = void;
-  };
-
   struct AddRecord
   {
     struct In
@@ -122,9 +113,6 @@ namespace ccfdns
 
   DECLARE_JSON_TYPE(Configure::Out);
   DECLARE_JSON_REQUIRED_FIELDS(Configure::Out, registration_info);
-
-  DECLARE_JSON_TYPE(SetServiceCertificate::In);
-  DECLARE_JSON_REQUIRED_FIELDS(SetServiceCertificate::In, certificate);
 
   DECLARE_JSON_TYPE(AddRecord::In);
   DECLARE_JSON_REQUIRED_FIELDS(AddRecord::In, origin, record);

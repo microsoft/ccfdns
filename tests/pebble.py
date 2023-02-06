@@ -54,7 +54,7 @@ def get_without_cert_check(url):
     return urllib.request.urlopen(url, context=ctx).read().decode("utf-8")
 
 
-def get_pebble_ca_certs(mgmt_address):
+def ca_certs(mgmt_address):
     """Get the pebble CA certificate(s)"""
     ca = get_without_cert_check("https://" + mgmt_address + "/roots/0")
     intermediate = get_without_cert_check(
@@ -220,6 +220,19 @@ def run_pebble_proc(args):
     return proc, out, err
 
 
+def split_pem(pem):
+    r = []
+    begin = "-----BEGIN "
+    items = pem.split(begin)
+    for item in items[1:]:
+        r += [begin + item]
+    return r
+
+
+def ca_certs_from_file(filename):
+    return split_pem(open(filename, mode="r", encoding="ascii").read())
+
+
 def run_blocking(
     output_filename,
     error_filename,
@@ -245,7 +258,7 @@ def run_blocking(
                     err,
                 )
 
-                ca_certs = get_pebble_ca_certs(mgmt_address)
+                _ = ca_certs(mgmt_address)
 
                 LOG.success("Pebble running.")
 

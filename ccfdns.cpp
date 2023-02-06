@@ -704,16 +704,34 @@ namespace ccfdns
       const std::string& service_dns_name,
       const std::string& certificate_pem) override
     {
+      if (!ctx)
+        std::runtime_error("missing endpoint context");
+
       auto tbl =
         ctx->tx.rw<ServiceCertificates>(service_certifificates_table_name);
       tbl->put(service_dns_name, certificate_pem);
 
       acme_clients.erase(service_dns_name);
+
+      if (
+        service_dns_name == get_configuration().name ||
+        service_dns_name + "." == get_configuration().name)
+      {
+        auto tbl = ctx->tx.template rw<ccf::ACMECertificates>(
+          ccf::Tables::ACME_CERTIFICATES);
+        if (!tbl)
+          throw std::runtime_error("missing ACME certificate table");
+        tbl->put("custom", certificate_pem);
+        service_cert_ok = true;
+      }
     }
 
     virtual std::string get_service_certificate(
       const std::string& service_dns_name) override
     {
+      if (!ctx)
+        std::runtime_error("missing endpoint context");
+
       if (
         service_dns_name == get_configuration().name ||
         service_dns_name + "." == get_configuration().name)
@@ -721,10 +739,10 @@ namespace ccfdns
         auto t = ctx->tx.template rw<ccf::ACMECertificates>(
           ccf::Tables::ACME_CERTIFICATES);
         if (!t)
-          throw std::runtime_error("ACME service certificate table empty");
+          throw std::runtime_error("service certificate table empty");
         auto v = t->get(acme_config_name);
         if (!v)
-          throw std::runtime_error("ACME service certificate not available");
+          throw std::runtime_error("service certificate not available");
         return v->str();
       }
       else
@@ -736,6 +754,127 @@ namespace ccfdns
           throw std::runtime_error("no such certificate");
         return *r;
       }
+    }
+
+    virtual RegistrationInformation configure(const Configuration& cfg) override
+    {
+      auto reginfo = Resolver::configure(cfg);
+
+      if (cfg.parent_base_url)
+      {
+        // Start checking for our service certificate.
+
+        struct CertThreadMsg
+        {
+          CertThreadMsg(
+            CCFDNS& ccfdns,
+            const std::string& parent_base_url,
+            const std::vector<std::string>& ca_certs,
+            const std::vector<uint8_t>& body,
+            const std::string& dns_name) :
+            ccfdns(ccfdns),
+            parent_base_url(parent_base_url),
+            ca_certs(ca_certs),
+            body(body),
+            dns_name(dns_name)
+          {}
+
+          CCFDNS& ccfdns;
+          std::string parent_base_url;
+          std::vector<std::string> ca_certs;
+          std::vector<uint8_t> body;
+          std::string dns_name;
+        };
+
+        auto dns_name = cfg.name;
+        while (dns_name.size() > 0 && dns_name.back() == '.')
+          dns_name.pop_back();
+
+        nlohmann::json jin;
+        to_json(jin, GetCertificate::In{dns_name});
+        std::string s = jin.dump();
+        auto body = std::vector<uint8_t>(s.data(), s.data() + s.size());
+
+        std::vector<std::string> ca_certs = cfg.ca_certs;
+        ca_certs.push_back(nwid_ss->get()->cert.str());
+
+        auto msg = std::make_unique<threading::Tmsg<CertThreadMsg>>(
+          [](std::unique_ptr<threading::Tmsg<CertThreadMsg>> msg) {
+            if (msg->data.ccfdns.service_cert_ok)
+              return;
+
+            msg->data.ccfdns.acme_ss->make_http_request(
+              "POST",
+              msg->data.parent_base_url + "/app/get-certificate",
+              {{"content-type", "application/json"}},
+              msg->data.body,
+              [data = msg->data](
+                const http_status& status,
+                const http::HeaderMap&,
+                const std::vector<uint8_t>& body) {
+                if (status != HTTP_STATUS_OK)
+                {
+                  CCF_APP_FAIL("HTTP request failed with status {}", status);
+                  return false;
+                }
+                else
+                {
+                  try
+                  {
+                    auto j = nlohmann::json::parse(body);
+                    auto service_cert = j["certificate"].get<std::string>();
+
+                    nlohmann::json jin;
+                    to_json(
+                      jin, SetCertificate::In{data.dns_name, service_cert});
+                    std::string s = jin.dump();
+                    auto body =
+                      std::vector<uint8_t>(s.data(), s.data() + s.size());
+
+                    data.ccfdns.acme_ss->make_http_request(
+                      "POST",
+                      "https://" + data.ccfdns.internal_node_address +
+                        "/app/internal/set-certificate",
+                      {},
+                      body,
+                      [data](
+                        const http_status& status,
+                        const http::HeaderMap&,
+                        const std::vector<uint8_t>&) {
+                        CCF_APP_DEBUG("SET CERT CALLBACK {}", status);
+                        if (status != 200)
+                          CCF_APP_FAIL("Internal RPC call failed.");
+                        else
+                          data.ccfdns.service_cert_ok = true;
+                        return true;
+                      },
+                      data.ca_certs,
+                      ccf::ApplicationProtocol::HTTP1);
+                  }
+                  catch (...)
+                  {
+                    CCF_APP_DEBUG("caught unknown exception");
+                  }
+                  return true;
+                }
+              },
+              msg->data.ca_certs,
+              ccf::ApplicationProtocol::HTTP2);
+
+            threading::ThreadMessaging::instance().add_task_after(
+              std::move(msg), std::chrono::seconds(1));
+          },
+          *this,
+          *cfg.parent_base_url,
+          ca_certs,
+          body,
+          dns_name);
+
+        threading::ThreadMessaging::instance().add_task_after(
+          std::move(msg), std::chrono::seconds(1));
+      }
+
+      return reginfo;
     }
 
     virtual void save_service_registration_request(
@@ -827,6 +966,7 @@ namespace ccfdns
     ccf::ACMEClientConfig acme_config;
     crypto::KeyPairPtr acme_account_key_pair;
     std::string internal_node_address = "127.0.0.1";
+    bool service_cert_ok = false;
 
     std::string table_name(
       const Name& origin, aDNS::Class class_, aDNS::Type type) const
@@ -898,32 +1038,6 @@ namespace ccfdns
         ccf::json_adapter(configure),
         ccf::no_auth_required)
         .set_auto_schema<Configure::In, Configure::Out>()
-        .install();
-
-      auto set_service_certificate =
-        [this](auto& ctx, nlohmann::json&& params) {
-          try
-          {
-            const auto in = params.get<SetServiceCertificate::In>();
-            auto tbl = ctx.tx.template rw<ccf::ACMECertificates>(
-              ccf::Tables::ACME_CERTIFICATES);
-            if (!tbl)
-              throw std::runtime_error("missing ACME certificate table");
-            tbl->put("custom", in.certificate);
-            return ccf::make_success();
-          }
-          catch (std::exception& ex)
-          {
-            return ccf::make_error(
-              HTTP_STATUS_BAD_REQUEST, ccf::errors::InternalError, ex.what());
-          }
-        };
-
-      make_endpoint(
-        "/set-service-certificate",
-        HTTP_POST,
-        ccf::json_adapter(set_service_certificate),
-        ccf::no_auth_required)
         .install();
 
       auto install_acme_response = [this](auto& ctx, nlohmann::json&& params) {

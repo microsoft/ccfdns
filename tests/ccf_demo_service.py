@@ -78,7 +78,7 @@ def run(args):
             acme_directory = "https://127.0.0.1:1024/dir"
             ca_cert_file = "pebble-ca-cert.pem"
             ca_certs = [open(ca_cert_file, mode="r", encoding="ascii").read()]
-            ca_certs = ca_certs + pebble.get_pebble_ca_certs(pebble_mgmt_address)
+            ca_certs = ca_certs + pebble.ca_certs(pebble_mgmt_address)
             email = "nobody@example.com"
         elif args.acme_config_name == "letsencrypt":
             acme_directory = "https://acme-staging-v02.api.letsencrypt.org/directory"

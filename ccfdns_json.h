@@ -142,18 +142,19 @@ namespace aDNS
   DECLARE_JSON_TYPE_WITH_OPTIONAL_FIELDS(Resolver::Configuration);
   DECLARE_JSON_REQUIRED_FIELDS(
     Resolver::Configuration,
+    origin,
     name,
     ip,
-    origin,
+    ca_certs,
     default_ttl,
     signing_algorithm,
     digest_type,
     use_key_signing_key,
     use_nsec3,
     nsec3_hash_algorithm,
-    nsec3_hash_iterations,
-    ca_certs);
-  DECLARE_JSON_OPTIONAL_FIELDS(Resolver::Configuration, fixed_zsk);
+    nsec3_hash_iterations);
+  DECLARE_JSON_OPTIONAL_FIELDS(
+    Resolver::Configuration, alternative_names, parent_base_url, fixed_zsk);
 
   DECLARE_JSON_TYPE_WITH_OPTIONAL_FIELDS(Resolver::RegistrationInformation);
   DECLARE_JSON_REQUIRED_FIELDS(
