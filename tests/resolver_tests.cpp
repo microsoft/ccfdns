@@ -233,7 +233,10 @@ public:
     const Name& origin,
     const Name& name,
     const std::vector<uint8_t>& csr,
-    const std::vector<std::string>& contact) override
+    const std::vector<std::string>& contact,
+    const std::optional<std::string>& service_url = std::nullopt,
+    const std::optional<std::vector<std::string>>& service_ca_certs = {})
+    override
   {}
 };
 
@@ -681,13 +684,15 @@ TEST_CASE("Delegation")
   Resolver::Configuration main_cfg, sub_cfg;
 
   main_cfg = {
-    .origin = "example.com.", .name = "ns1.example.com.", .ip = "192.168.0.1"};
+    .origin = Name("example.com."),
+    .name = Name("ns1.example.com."),
+    .ip = "192.168.0.1"};
 
   auto main_reginfo = main.configure(main_cfg);
 
   sub_cfg = {
-    .origin = "sub.example.com.",
-    .name = "ns1.sub.example.com.",
+    .origin = Name("sub.example.com."),
+    .name = Name("ns1.sub.example.com."),
     .ip = "192.168.1.1"};
 
   auto sub_reginfo = sub.configure(sub_cfg);

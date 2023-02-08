@@ -1129,7 +1129,9 @@ namespace RFC1035
       {
         if (!r.empty())
           r += " ";
-        r += std::string("\"") + ds::to_hex(s) + "\"";
+        // auto ss = ds::to_hex(s);
+        std::string ss((const char*)s.raw(), s.size());
+        r += std::string("\"") + ss + "\"";
       }
       return r;
     }

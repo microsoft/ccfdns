@@ -113,10 +113,10 @@ namespace aDNS
   public:
     struct Configuration
     {
-      std::string origin;
-      std::string name;
+      Name origin;
+      Name name;
       std::string ip;
-      std::optional<std::vector<std::string>> alternative_names;
+      std::optional<std::vector<Name>> alternative_names;
       std::optional<std::string> parent_base_url;
       std::vector<std::string> ca_certs;
 
@@ -132,6 +132,14 @@ namespace aDNS
       uint16_t nsec3_hash_iterations = 3;
 
       std::optional<std::string> fixed_zsk; // TODO: Debug-only?
+
+      struct ServiceCA
+      {
+        std::string directory;
+        std::vector<std::string> ca_certificates;
+      };
+
+      ServiceCA service_ca;
     };
 
     struct RegistrationInformation
@@ -140,6 +148,7 @@ namespace aDNS
       std::string public_key;
       std::string attestation;
       std::vector<uint8_t> csr;
+
       std::optional<std::vector<aDNS::ResourceRecord>> dnskey_records;
     };
 
@@ -167,7 +176,7 @@ namespace aDNS
     {
       Name origin;
       Name subdomain;
-      Name name; // TODO: should be a set of names?
+      Name name; // TODO: should be a set of names/ips?
       std::string ip;
       uint16_t port;
       std::string protocol;
@@ -217,6 +226,8 @@ namespace aDNS
       const small_vector<uint16_t>& public_key,
       bool key_signing) = 0;
 
+    virtual std::shared_ptr<crypto::KeyPair> get_tls_key();
+
     virtual void on_new_signing_key(
       const Name& origin,
       uint16_t tag,
@@ -227,7 +238,9 @@ namespace aDNS
       const Name& origin,
       const Name& name,
       const std::vector<uint8_t>& csr,
-      const std::vector<std::string>& contact) = 0;
+      const std::vector<std::string>& contact,
+      const std::optional<std::string>& service_url = std::nullopt,
+      const std::optional<std::vector<std::string>>& service_ca_certs = {}) = 0;
 
     virtual void install_acme_response(
       const Name& origin,

@@ -333,7 +333,14 @@ function updateServiceConfig(new_config) {
 }
 
 function setRegistrationPolicy(new_policy) {
-  ccf.kv["public:ccf.gov.ccfdns.registration_policy"].set(
+  ccf.kv["public:ccf.gov.ccfdns.service_registration_policy"].set(
+    getSingletonKvKey(),
+    ccf.jsonCompatibleToBuf(new_policy)
+  );
+}
+
+function setDelegationPolicy(new_policy) {
+  ccf.kv["public:ccf.gov.ccfdns.delegation_registration_policy"].set(
     getSingletonKvKey(),
     ccf.jsonCompatibleToBuf(new_policy)
   );
@@ -1388,6 +1395,17 @@ const actions = new Map([
       },
       function (args) {
         setRegistrationPolicy(args.new_policy);
+      }
+    ),
+  ],
+  [
+    "set_delegation_policy",
+    new Action(
+      function (args) {
+        checkType(args.new_policy, "string", "new_policy");
+      },
+      function (args) {
+        setDelegationPolicy(args.new_policy);
       }
     ),
   ],

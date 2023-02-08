@@ -37,7 +37,7 @@ namespace ccfdns
 
   typedef AddRecord RemoveRecord;
 
-  struct InstallACMEToken
+  struct InstallACMEResponse
   {
     struct In
     {
@@ -120,9 +120,13 @@ namespace ccfdns
   DECLARE_JSON_TYPE(RemoveAll::In);
   DECLARE_JSON_REQUIRED_FIELDS(RemoveAll::In, origin, name, class_, type);
 
-  DECLARE_JSON_TYPE(InstallACMEToken::In);
+  DECLARE_JSON_TYPE(InstallACMEResponse::In);
   DECLARE_JSON_REQUIRED_FIELDS(
-    InstallACMEToken::In, origin, name, alternative_names, key_authorization);
+    InstallACMEResponse::In,
+    origin,
+    name,
+    alternative_names,
+    key_authorization);
 
   DECLARE_JSON_TYPE(RemoveACMEToken::In);
   DECLARE_JSON_REQUIRED_FIELDS(RemoveACMEToken::In, origin, name);

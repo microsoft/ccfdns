@@ -35,8 +35,11 @@ def wait_for_port_to_listen(host, port, timeout=10):
 def start_pebble_process(
     filename, config_filename, dns_address, listen_address, out, err, env
 ):
+    args = [filename, "-config", config_filename]
+    if dns_address:
+        args += ["-dnsserver", dns_address]
     p = subprocess.Popen(
-        [filename, "-config", config_filename, "-dnsserver", dns_address],
+        args,
         stdout=out,
         stderr=err,
         close_fds=True,

@@ -139,6 +139,10 @@ namespace RFC5155
 
 namespace aDNS
 {
+  DECLARE_JSON_TYPE(Resolver::Configuration::ServiceCA);
+  DECLARE_JSON_REQUIRED_FIELDS(
+    Resolver::Configuration::ServiceCA, directory, ca_certificates);
+
   DECLARE_JSON_TYPE_WITH_OPTIONAL_FIELDS(Resolver::Configuration);
   DECLARE_JSON_REQUIRED_FIELDS(
     Resolver::Configuration,
@@ -152,7 +156,8 @@ namespace aDNS
     use_key_signing_key,
     use_nsec3,
     nsec3_hash_algorithm,
-    nsec3_hash_iterations);
+    nsec3_hash_iterations,
+    service_ca);
   DECLARE_JSON_OPTIONAL_FIELDS(
     Resolver::Configuration, alternative_names, parent_base_url, fixed_zsk);
 

@@ -531,22 +531,25 @@ namespace aDNS
             result.authorities += *soa_records.begin();
         }
 
-        if (qname != origin)
+        if (!qname.is_root())
         {
-          // Delegation records
-          result.authorities += // Note: need to try all sub-origins?
-            find_records(origin, qname, static_cast<QType>(Type::NS), qclass);
+          for (Name n = qname; n != origin && !n.is_root(); n = n.parent())
+          {
+            // Delegation records
+            result.authorities +=
+              find_records(origin, n, static_cast<QType>(Type::NS), qclass);
 
-          // Glue records
-          for (const auto& rr : result.authorities)
-            if (rr.type == static_cast<uint16_t>(Type::NS))
-            {
-              result.additionals += find_records(
-                origin,
-                NS(rr.rdata).nsdname,
-                static_cast<QType>(Type::A),
-                qclass);
-            }
+            // Glue records
+            for (const auto& rr : result.authorities)
+              if (rr.type == static_cast<uint16_t>(Type::NS))
+              {
+                result.additionals += find_records(
+                  origin,
+                  NS(rr.rdata).nsdname,
+                  static_cast<QType>(Type::A),
+                  qclass);
+              }
+          }
         }
 
         result.authorities += find_records(
@@ -1039,6 +1042,14 @@ namespace aDNS
     }
   }
 
+  std::shared_ptr<crypto::KeyPair> Resolver::get_tls_key()
+  {
+    // The CCF resolver uses the network key, but we could also use the zone or
+    // key signing key.
+    const auto& cfg = get_configuration();
+    return get_signing_key(cfg.origin, Class::IN, true).first;
+  }
+
   Resolver::RegistrationInformation Resolver::configure(
     const Configuration& cfg)
   {
@@ -1064,15 +1075,13 @@ namespace aDNS
 
     sign(cfg.origin);
 
-    auto signing_key = get_signing_key(cfg.origin, Class::IN, true);
+    auto tls_key = get_tls_key();
 
     RegistrationInformation out;
     out.protocol = "tcp";
-    out.public_key = signing_key.first->public_key_pem().str();
+    out.public_key = tls_key->public_key_pem().str();
 
-    auto sn = cfg.name;
-    while (sn.back() == '.')
-      sn.pop_back();
+    auto sn = cfg.name.unterminated();
 
     std::vector<crypto::SubjectAltName> sans;
     sans.push_back({sn, false});
@@ -1080,8 +1089,8 @@ namespace aDNS
       for (const auto& san : *cfg.alternative_names)
         sans.push_back({san, false});
 
-    out.csr = signing_key.first->create_csr_der(
-      "CN=" + sn, sans, signing_key.first->public_key_pem());
+    out.csr =
+      tls_key->create_csr_der("CN=" + sn, sans, tls_key->public_key_pem());
 
     auto dnskeys = resolve(cfg.origin, aDNS::QType::DNSKEY, aDNS::QClass::IN);
 
@@ -1275,15 +1284,13 @@ namespace aDNS
     // we can delegate the challenge to someone else, e.g. a non-DNSSEC
     // server.
 
-    // Note: need some strategy for removing tokens periodically.
-
     add(
       origin,
       ResourceRecord(
         Name("_acme-challenge") + name,
         static_cast<uint16_t>(Type::TXT),
         static_cast<uint16_t>(Class::IN),
-        configuration.default_ttl,
+        1,
         TXT(key_authorization)));
 
     for (const auto& n : alternative_names)
@@ -1294,7 +1301,7 @@ namespace aDNS
             Name("_acme-challenge") + n,
             static_cast<uint16_t>(Type::TXT),
             static_cast<uint16_t>(Class::IN),
-            configuration.default_ttl,
+            1,
             TXT(key_authorization)));
 
     sign(origin);
@@ -1402,7 +1409,5 @@ namespace aDNS
 
     for (const auto& gr : glue_records)
       add(dr.origin, gr);
-
-    start_service_acme(dr.origin, dr.name, dr.csr, dr.contact);
   }
 }

@@ -39,6 +39,7 @@ def register_service(network, origin, service_info, reginfo):
                 "ip": service_info["ip"],
                 "port": service_info["port"],
                 "contact": service_info["contact"],
+                #
                 "protocol": reginfo["protocol"],
                 "attestation": reginfo["attestation"],
                 "csr": reginfo["csr"],
@@ -66,6 +67,7 @@ def register_delegation(network, origin, delegation_info, registration_info):
                 "alternative_names": delegation_info["alternative_names"],
                 "port": delegation_info["port"],
                 "contact": delegation_info["contact"],
+                #
                 "protocol": registration_info["protocol"],
                 "attestation": registration_info["attestation"],
                 "csr": registration_info["csr"],
@@ -96,6 +98,8 @@ def run_server(args):
             "nsec3_hash_algorithm": "SHA1",
             "nsec3_hash_iterations": 3,
             "ca_certs": args.ca_certs,
+            "parent_base_url": args.parent_base_url,
+            "service_ca": args.service_ca,
         }
     }
 
@@ -110,8 +114,8 @@ XIiPf1pGst9TyaEfzTi/XxVqK/CGdZFct9r9eYMjWm01P6HLQi22SjI=
 -----END PRIVATE KEY-----
 """
 
-    if args.parent_base_url:
-        adns_config["configuration"]["parent_base_url"] = args.parent_base_url
+    if "acme_config" in args:
+        args.acme_config["ca_certs"] += adns_config["configuration"]["ca_certs"]
 
     adns_nw, proc, adns_endorsed_certs, reginfo = adns_service.run(args, adns_config)
 
@@ -168,6 +172,8 @@ def run(pebble_args, adns_args, service_args, sub_adns_args, sub_service_args):
         pebble_certs = pebble.ca_certs(pebble_args.mgmt_address)
         pebble_certs += pebble.ca_certs_from_file(pebble_args.ca_cert_filename)
 
+        adns_args.service_ca["ca_certificates"] += pebble_certs
+
         # Start top-level aDNS
         adns_args.ca_certs += pebble_certs
         adns_nw, adns_proc, adns_certs, _ = run_server(adns_args)
@@ -176,7 +182,8 @@ def run(pebble_args, adns_args, service_args, sub_adns_args, sub_service_args):
         start_and_register_service(adns_nw, adns_args, service_args, adns_certs)
 
         # Start a sub-domain aDNS
-        sub_adns_args.ca_certs += pebble_certs + adns_certs
+        sub_adns_args.ca_certs += adns_certs
+        sub_adns_args.service_ca["ca_certificates"] += pebble_certs
         sub_adns_args.wait_for_endorsed_cert = False
         sub_adns_args.parent_base_url = (
             "https://" + adns_mname_nodot + ":" + str(adns_args.service_port)
@@ -198,12 +205,15 @@ def run(pebble_args, adns_args, service_args, sub_adns_args, sub_service_args):
             adns_nw, adns_args.origin, delegation_info, sub_adns_reginfo
         )
 
-        sub_endorsed_cert = adns_service.wait_for_endorsed_cert(
+        sub_endorsed_cert = adns_service.wait_for_endorsed_certs(
             sub_adns_nw, delegation_info["name"]
         )
 
         start_and_register_service(
-            sub_adns_nw, sub_adns_args, sub_service_args, sub_endorsed_cert
+            sub_adns_nw,
+            sub_adns_args,
+            sub_service_args,
+            sub_endorsed_cert,
         )
 
         LOG.info("Waiting forever...")
@@ -232,7 +242,7 @@ def main():
 
     # Pebble CA
     pebble_args = pebble.Arguments(
-        dns_address="ns1.adns.ccf.dev:53",
+        # dns_address="ns1.adns.ccf.dev:53",
         wait_forever=False,
         http_port=8080,
         ca_cert_filename="pebble-ca-cert.pem",
@@ -247,7 +257,7 @@ def main():
     adns_args.constitution = glob.glob("../tests/constitution/*")
     adns_args.package = "libccfdns"
     adns_args.label = "demo_adns"
-    adns_args.acme_config_name = "pebble"
+    adns_args.acme_config_name = "pebble"  # CA for TLD aDNS server
     adns_args.email = "some-dev@example.com"
     adns_args.wait_forever = False
     adns_args.acme_http_port = pebble_args.http_port
@@ -259,6 +269,10 @@ def main():
     adns_args.http2 = True
     adns_args.parent_base_url = None
     adns_args.ca_certs = []
+    adns_args.service_ca = {  # CA for service certificates
+        "directory": "https://127.0.0.1:1024/dir",
+        "ca_certificates": [],
+    }
 
     adns_args.registration_policy = """
         data.claims.sgx_claims.report_body.mr_enclave.length == 32 &&
@@ -276,7 +290,7 @@ def main():
         rdc.IN,
         rdt.SOA,
         mname="ns1.adns.ccf.dev.",
-        rname="joe.example.com",
+        rname="some-dev.example.com",
         serial=4,
         refresh=604800,
         retry=86400,
@@ -287,19 +301,18 @@ def main():
     # A service that registers for adns.ccf.dev.
 
     service_args = infra.e2e_args.cli_args(cliparser)
-    service_args.node = ["local://10.1.0.4:9443"]  # < 1024 requires root or setcap
+    service_args.node = ["local://10.1.0.4:9443"]
     service_args.nodes = infra.e2e_args.min_nodes(service_args, f=0)
     service_args.constitution = glob.glob("../tests/constitution/*")
     service_args.package = "libccf_demo_service"
     service_args.label = "demo_service"
+    service_args.email = "bill@example.com"
     service_args.acme_config_name = "custom"
-    service_args.acme_directory = ""
     service_args.wait_forever = False
     service_args.ip = "51.143.161.224"
     service_args.service_port = 9443
     service_args.dns_name = "service43." + adns_args.origin.rstrip(".")
     service_args.alternative_names = ["www." + service_args.dns_name]
-    service_args.email = "joe@example.com"
     service_args.http2 = True
 
     # Then, a second aDNS server for sub.adns.ccf.dev.
@@ -310,9 +323,8 @@ def main():
     sub_adns_args.constitution = glob.glob("../tests/constitution/*")
     sub_adns_args.package = "libccfdns"
     sub_adns_args.label = "demo_sub_adns"
-    sub_adns_args.acme_config_name = "custom"
-    sub_adns_args.acme_directory = ""
     sub_adns_args.email = "some-dev@sub.example.com"
+    sub_adns_args.acme_config_name = "custom"
     sub_adns_args.wait_forever = False
     sub_adns_args.acme_http_port = None
     sub_adns_args.service_port = 8443
@@ -320,6 +332,10 @@ def main():
     sub_adns_args.http2 = True
     sub_adns_args.fixed_zsk = False
     sub_adns_args.ca_certs = []
+    sub_adns_args.service_ca = {
+        "directory": "https://127.0.0.1:1024/dir",
+        "ca_certificates": [],
+    }
 
     sub_adns_args.populate = False
     sub_adns_args.registration_policy = """
@@ -338,7 +354,7 @@ def main():
         rdc.IN,
         rdt.SOA,
         mname="ns1.sub.adns.ccf.dev.",
-        rname="joe.example.com",
+        rname="some-dev.sub.example.com",
         serial=4,
         refresh=604800,
         retry=86400,
@@ -349,18 +365,18 @@ def main():
     # A service that registers for sub.adns.ccf.dev.
 
     sub_service_args = infra.e2e_args.cli_args(cliparser)
-    sub_service_args.node = ["local://10.1.0.5:9443"]  # < 1024 requires root or setcap
-    sub_service_args.nodes = infra.e2e_args.min_nodes(service_args, f=0)
+    sub_service_args.node = ["local://10.1.0.5:9443"]
+    sub_service_args.nodes = infra.e2e_args.min_nodes(sub_service_args, f=0)
     sub_service_args.constitution = glob.glob("../tests/constitution/*")
     sub_service_args.package = "libccf_demo_service"
-    sub_service_args.label = "demo_service"
+    sub_service_args.label = "demo_sub_service"
     sub_service_args.acme_config_name = "custom"
     sub_service_args.acme_directory = ""
     sub_service_args.wait_forever = False
     sub_service_args.ip = "20.108.155.64"
     sub_service_args.service_port = 9443
-    sub_service_args.dns_name = "service43." + adns_args.origin.rstrip(".")
-    sub_service_args.alternative_names = ["www." + service_args.dns_name]
+    sub_service_args.dns_name = "service45." + sub_adns_args.origin.rstrip(".")
+    sub_service_args.alternative_names = ["www." + sub_service_args.dns_name]
     sub_service_args.email = "joe@example.com"
     sub_service_args.http2 = True
 

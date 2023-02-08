@@ -3,11 +3,12 @@
 
 #include "ravl/sgx.h"
 
-#include <crypto/san.h>
+#include <ccf/crypto/san.h>
+#include <ccf/ds/json.h>
+#include <ccf/endpoints/authentication/cert_auth.h>
+#include <ccf/service/tables/acme_certificates.h>
 #include <cstdint>
-#include <ds/json.h>
 #include <llhttp/llhttp.h>
-#include <service/tables/acme_certificates.h>
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
 
 #include "../ccfdns_rpc_types.h"
@@ -141,10 +142,10 @@ namespace service
         };
 
       make_endpoint(
-        "/set-service-certificate",
+        "/internal/set-service-certificate",
         HTTP_POST,
         ccf::json_adapter(set_service_certificate),
-        ccf::no_auth_required)
+        {std::make_shared<ccf::NodeCertAuthnPolicy>()})
         .install();
 
       auto index = [this](auto& ctx) {
@@ -230,111 +231,115 @@ namespace service
 
           out.csr = kp->create_csr_der("CN=" + sn, sans, public_key);
 
-          auto unterminated_name = configuration.name;
-          while (unterminated_name.size() > 0 &&
-                 unterminated_name.back() == '.')
-            unterminated_name.pop_back();
-
-          std::string body =
-            "{\"service_dns_name\": \"" + unterminated_name + "\"}";
-          std::vector<uint8_t> vbody(body.begin(), body.end());
-          std::vector<std::string> ca_certs = configuration.ca_certs;
-          ca_certs.push_back(niss->get()->cert.str());
-
-          struct CertThreadMsg
+          if (!configuration.adns_base_url.empty())
           {
-            CertThreadMsg(
-              std::shared_ptr<ccf::ACMESubsystemInterface> acmess,
-              std::shared_ptr<ccf::NetworkIdentitySubsystem> niss,
-              const std::string& adns_base_url,
-              const std::vector<uint8_t>& body,
-              const std::vector<std::string>& ca_certs,
-              const std::string& rpc_address) :
-              acmess(acmess),
-              niss(niss),
-              adns_base_url(adns_base_url),
-              body(body),
-              ca_certs(ca_certs),
-              rpc_address(rpc_address)
-            {}
+            auto unterminated_name = configuration.name;
+            while (unterminated_name.size() > 0 &&
+                   unterminated_name.back() == '.')
+              unterminated_name.pop_back();
 
-            std::shared_ptr<ccf::ACMESubsystemInterface> acmess;
-            std::shared_ptr<ccf::NetworkIdentitySubsystem> niss;
-            std::string adns_base_url;
-            std::vector<uint8_t> body;
-            std::vector<std::string> ca_certs;
-            std::string rpc_address;
-          };
+            std::string body =
+              "{\"service_dns_name\": \"" + unterminated_name + "\"}";
+            std::vector<uint8_t> vbody(body.begin(), body.end());
+            std::vector<std::string> ca_certs = configuration.ca_certs;
+            ca_certs.push_back(niss->get()->cert.str());
 
-          auto msg = std::make_unique<threading::Tmsg<CertThreadMsg>>(
-            [](std::unique_ptr<threading::Tmsg<CertThreadMsg>> msg) {
-              if (!service_cert.empty())
-                return;
+            struct CertThreadMsg
+            {
+              CertThreadMsg(
+                std::shared_ptr<ccf::ACMESubsystemInterface> acmess,
+                std::shared_ptr<ccf::NetworkIdentitySubsystem> niss,
+                const std::string& adns_base_url,
+                const std::vector<uint8_t>& body,
+                const std::vector<std::string>& ca_certs,
+                const std::string& rpc_address) :
+                acmess(acmess),
+                niss(niss),
+                adns_base_url(adns_base_url),
+                body(body),
+                ca_certs(ca_certs),
+                rpc_address(rpc_address)
+              {}
 
-              msg->data.acmess->make_http_request(
-                "POST",
-                msg->data.adns_base_url + "/app/get-certificate",
-                {{"content-type", "application/json"}},
-                msg->data.body,
-                [data = msg->data](
-                  const http_status& status,
-                  const http::HeaderMap&,
-                  const std::vector<uint8_t>& body) {
-                  if (status != HTTP_STATUS_OK)
-                    return false;
-                  else
-                  {
-                    try
+              std::shared_ptr<ccf::ACMESubsystemInterface> acmess;
+              std::shared_ptr<ccf::NetworkIdentitySubsystem> niss;
+              std::string adns_base_url;
+              std::vector<uint8_t> body;
+              std::vector<std::string> ca_certs;
+              std::string rpc_address;
+            };
+
+            auto msg = std::make_unique<threading::Tmsg<CertThreadMsg>>(
+              [](std::unique_ptr<threading::Tmsg<CertThreadMsg>> msg) {
+                if (!service_cert.empty())
+                  return;
+
+                msg->data.acmess->make_http_request(
+                  "POST",
+                  msg->data.adns_base_url + "/app/get-certificate",
+                  {{"content-type", "application/json"}},
+                  msg->data.body,
+                  [data = msg->data](
+                    const http_status& status,
+                    const http::HeaderMap&,
+                    const std::vector<uint8_t>& body) {
+                    if (status != HTTP_STATUS_OK)
+                      return false;
+                    else
                     {
-                      auto j = nlohmann::json::parse(body);
-                      service_cert = j["certificate"].get<std::string>();
+                      try
+                      {
+                        auto j = nlohmann::json::parse(body);
+                        service_cert = j["certificate"].get<std::string>();
 
-                      SetServiceCertificate::In robj = {service_cert};
-                      nlohmann::json jin;
-                      to_json(jin, robj);
-                      std::string s = jin.dump();
-                      auto body =
-                        std::vector<uint8_t>(s.data(), s.data() + s.size());
+                        SetServiceCertificate::In robj = {service_cert};
+                        nlohmann::json jin;
+                        to_json(jin, robj);
+                        std::string s = jin.dump();
+                        auto body =
+                          std::vector<uint8_t>(s.data(), s.data() + s.size());
 
-                      data.acmess->make_http_request(
-                        "POST",
-                        "https://" + data.rpc_address +
-                          "/set-service-certificate",
-                        {},
-                        body,
-                        [](
-                          const http_status& http_status,
-                          const http::HeaderMap&,
-                          const std::vector<uint8_t>&) {
-                          if (http_status != 200)
-                            CCF_APP_FAIL("Internal RPC call failed.");
-                          return true;
-                        },
-                        data.ca_certs,
-                        ccf::ApplicationProtocol::HTTP1);
+                        data.acmess->make_http_request(
+                          "POST",
+                          "https://" + data.rpc_address +
+                            "/app/internal/set-service-certificate",
+                          {},
+                          body,
+                          [](
+                            const http_status& http_status,
+                            const http::HeaderMap&,
+                            const std::vector<uint8_t>&) {
+                            if (http_status != 200)
+                              CCF_APP_FAIL("Internal RPC call failed.");
+                            return true;
+                          },
+                          data.ca_certs,
+                          ccf::ApplicationProtocol::HTTP1,
+                          true);
+                      }
+                      catch (...)
+                      {
+                        CCF_APP_DEBUG("caught unknown exception");
+                      }
+                      return true;
                     }
-                    catch (...)
-                    {
-                      CCF_APP_DEBUG("caught unknown exception");
-                    }
-                    return true;
-                  }
-                },
-                msg->data.ca_certs,
-                ccf::ApplicationProtocol::HTTP2);
+                  },
+                  msg->data.ca_certs,
+                  ccf::ApplicationProtocol::HTTP2);
 
-              threading::ThreadMessaging::instance().add_task_after(
-                std::move(msg), std::chrono::seconds(1));
-            },
-            acmess,
-            niss,
-            configuration.adns_base_url,
-            vbody,
-            ca_certs,
-            internal_node_address);
+                threading::ThreadMessaging::instance().add_task_after(
+                  std::move(msg), std::chrono::seconds(1));
+              },
+              acmess,
+              niss,
+              configuration.adns_base_url,
+              vbody,
+              ca_certs,
+              internal_node_address);
 
-          threading::ThreadMessaging::instance().add_task_after(
-            std::move(msg), std::chrono::seconds(1));
+            threading::ThreadMessaging::instance().add_task_after(
+              std::move(msg), std::chrono::seconds(1));
+          }
 
           return ccf::make_success(out);
         }
