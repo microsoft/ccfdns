@@ -383,13 +383,15 @@ namespace aDNS
             break;
           }
 
+          peer_udp_payload_size = rr.class_;
+
           RFC6891::TTL ttl(rr.ttl);
           ttl.version = 0;
           ttl.dnssec_ok = true;
           ttl.extended_rcode = 0;
           ttl.z = 0;
 
-          uint16_t udp_payload_size = 4096;
+          uint16_t udp_payload_size = 512;
           ResourceRecord opt_reply(
             Name("."),
             static_cast<uint16_t>(Type::OPT),
@@ -683,8 +685,8 @@ namespace aDNS
       }
     }
 
-    CCF_APP_TRACE(
-      "ADNS: Resolve: {} type {} class {}:{}",
+    CCF_APP_DEBUG(
+      "ADNS: Resolve: {} type {} class {}: {} records",
       qname,
       string_from_qtype(qtype),
       string_from_qclass(qclass),

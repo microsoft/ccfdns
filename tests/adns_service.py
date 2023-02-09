@@ -356,7 +356,9 @@ def assign_node_addresses(network, addr, add_node_id=True):
     return node_addresses
 
 
-def run(args, wait_for_endorsed_cert=False, with_proxies=True, tcp_port=None):
+def run(
+    args, wait_for_endorsed_cert=False, with_proxies=True, tcp_port=None, udp_port=None
+):
     """Start an aDNS server network"""
 
     service_dns_name = args.adns.origin.strip(".")
@@ -396,6 +398,15 @@ def run(args, wait_for_endorsed_cert=False, with_proxies=True, tcp_port=None):
                     app_protocol=AppProtocol.Custom,
                 )
                 host_spec.rpc_interfaces["tcp_dns_if"] = tcp_dns_if
+            if udp_port:
+                udp_dns_if = RPCInterface(
+                    host=ext_if.host,
+                    port=udp_port,
+                    transport="udp",
+                    endorsement=Endorsement(authority=EndorsementAuthority.Unsecured),
+                    app_protocol=AppProtocol.Custom,
+                )
+                host_spec.rpc_interfaces["udp_dns_if"] = udp_dns_if
 
             nodes += [host_spec]
 

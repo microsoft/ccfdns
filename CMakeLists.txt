@@ -54,6 +54,7 @@ add_ccf_app(ccfdns
 )
 
 target_include_directories(${ENCLAVE_TARGET} PRIVATE ${CCF_PKG_DIR}/../include/ccf/_private)
+target_compile_definitions(${ENCLAVE_TARGET} PRIVATE ALWAYS_USE_TCP)
 
 if (NOT VIRTUAL)
 sign_app_library(

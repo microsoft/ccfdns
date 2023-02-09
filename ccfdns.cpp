@@ -9,11 +9,17 @@
 #include "rfc1035.h"
 #include "rfc4034.h"
 
+#include <arpa/inet.h>
 #include <ccf/_private/ds/thread_messaging.h>
 #include <ccf/_private/http/http_parser.h>
+#include <ccf/_private/kv/committable_tx.h>
+#include <ccf/_private/kv/store.h>
 #include <ccf/_private/node/acme_client.h>
+#include <ccf/_private/node/rpc/custom_protocol_subsystem_interface.h>
 #include <ccf/_private/node/rpc/network_identity_interface.h>
 #include <ccf/_private/node/rpc/network_identity_subsystem.h>
+#include <ccf/_private/quic/msg_types.h>
+#include <ccf/_private/tls/msg_types.h>
 #include <ccf/app_interface.h>
 #include <ccf/base_endpoint_registry.h>
 #include <ccf/common_auth_policies.h>
@@ -42,6 +48,7 @@
 #include <kv/version.h>
 #include <llhttp/llhttp.h>
 #include <memory>
+#include <mutex>
 #include <nlohmann/json.hpp>
 #include <optional>
 #include <quickjs/quickjs-exports.h>
@@ -467,13 +474,11 @@ namespace ccfdns
       const ccf::ByteVector& v) override
     {
       std::lock_guard<ccf::pal::Mutex> guard(lock);
-      CCF_APP_DEBUG("CCFDNS: visit_entry {}", k);
       txids_by_key[k] = txid;
     }
 
     std::optional<ccf::TxID> last_write(const ccf::ByteVector& k)
     {
-      CCF_APP_DEBUG("CCFDNS: last_write {}", k);
       auto it = txids_by_key.find(k);
       if (it == txids_by_key.end())
         return std::nullopt;
@@ -523,7 +528,7 @@ namespace ccfdns
         const auto& e = iface.second.endorsement;
         if (e->authority == ccf::Authority::ACME && e->acme_configuration)
           acme_config_name = *iface.second.endorsement->acme_configuration;
-        else
+        else if (iface.first != "tcp_dns_if" && iface.first != "udp_dns_if")
           internal_node_address = "https://" + iface.second.published_address;
       }
     }
@@ -747,6 +752,7 @@ namespace ccfdns
 
     virtual Reply reply(const Message& msg) override
     {
+      std::lock_guard<std::mutex> lock(reply_mtx);
       check_context();
       return Resolver::reply(msg);
     }
@@ -1262,7 +1268,6 @@ namespace ccfdns
         my_name = it->second.name;
         while (my_name.back() == '.')
           my_name.pop_back();
-        CCF_APP_DEBUG("MY NAME: {}", my_name);
       }
 
       if (!cfg.parent_base_url)
@@ -1598,13 +1603,25 @@ namespace ccfdns
       return *r;
     }
 
+    std::shared_ptr<kv::Store> get_store()
+    {
+      return acme_ss->get_node_state().get_store();
+    }
+
+    ringbuffer::AbstractWriterFactory& get_writer_factory()
+    {
+      return acme_ss->get_node_state().get_writer_factory();
+    }
+
   protected:
     ccf::endpoints::EndpointContext* ctx = nullptr;
     std::map<std::string, std::shared_ptr<ccfdns::ACMEClient>> acme_clients;
+    std::mutex reply_mtx;
 
     std::shared_ptr<ccf::ACMESubsystemInterface> acme_ss;
     std::shared_ptr<ccf::NetworkIdentitySubsystemInterface> nwid_ss;
     std::shared_ptr<ccf::NodeConfigurationInterface> nci_ss;
+    std::shared_ptr<ccf::CustomProtocolSubsystemInterface> cp_ss;
     HTTPClient http_client;
 
     crypto::KeyPairPtr acme_account_key_pair;
@@ -1635,6 +1652,355 @@ namespace ccfdns
   };
 
   std::shared_ptr<CCFDNS> ccfdns;
+
+  class DNSQuerySession : public ccf::Session
+  {
+  protected:
+    ringbuffer::WriterPtr to_host = nullptr;
+
+    uint16_t message_length = 0;
+    std::vector<uint8_t> bytes;
+    int64_t session_id = 0;
+    std::shared_ptr<CCFDNS> ccfdns;
+    std::mutex mtx;
+
+  public:
+    DNSQuerySession(std::shared_ptr<CCFDNS> ccfdns) :
+      to_host(ccfdns->get_writer_factory().create_writer_to_outside()),
+      ccfdns(ccfdns)
+    {}
+
+    virtual ~DNSQuerySession()
+    {
+      // Let the host know that we're done and that it can destroy the
+      // associated TCPImpl. Without this, file/socket descriptors will not be
+      // closed.
+      RINGBUFFER_WRITE_MESSAGE(
+        tls::tls_stop,
+        to_host,
+        session_id,
+        std::string("DNS/TCP Session closed"));
+    }
+
+    virtual void handle_incoming_data(std::span<const uint8_t> data) override
+    {
+      if (data.empty())
+        return;
+
+      std::lock_guard<std::mutex> lock(mtx);
+
+      try
+      {
+        bytes.insert(bytes.end(), data.begin(), data.end());
+
+        while (bytes.size() >= 8)
+        {
+          session_id = *(int64_t*)bytes.data();
+          bytes.erase(bytes.begin(), bytes.begin() + 8);
+
+          do
+          {
+            if (message_length == 0 && bytes.size() >= 2)
+            {
+              size_t pos = 0;
+              message_length = get<uint16_t>(bytes, pos);
+
+              if (message_length == 0)
+                bytes.erase(bytes.begin(), bytes.begin() + 1);
+            }
+
+            if (message_length > 0 && bytes.size() >= message_length + 2)
+            {
+              size_t pos = 2;
+              RFC1035::Message msg(bytes, pos);
+              bytes.erase(bytes.begin(), bytes.begin() + pos);
+              message_length = 0;
+              auto reply = handle_message(msg);
+              send_data((std::vector<uint8_t>)reply.message);
+            }
+          } while (bytes.size() >= message_length + 2);
+        }
+      }
+      catch (const std::exception& ex)
+      {
+        CCF_APP_FAIL(
+          "CCFDNS: Caught exception in TCP {}: {}", __func__, ex.what());
+        CCF_APP_TRACE("CCFDNS: data={}", ds::to_hex(data));
+        bytes.clear();
+        close_session();
+      }
+      catch (...)
+      {
+        CCF_APP_FAIL("CCFDNS: Caught unknown exception in TCP {}", __func__);
+        CCF_APP_TRACE("CCFDNS: data={}", ds::to_hex(data));
+        bytes.clear();
+        close_session();
+      }
+    }
+
+    Resolver::Reply handle_message(const Message& msg)
+    {
+      try
+      {
+        // Note: This creates a write transaction & endpoint context.
+        auto store = ccfdns->get_store();
+        auto tx = store->create_tx();
+
+        ccf::endpoints::EndpointContext ctx(nullptr, tx);
+        ccfdns->set_endpoint_context(&ctx);
+        auto r = ccfdns->reply(msg);
+        ccfdns->set_endpoint_context(nullptr);
+        return r;
+      }
+      catch (const std::exception& ex)
+      {
+        CCF_APP_FAIL("CCFDNS: Caught exception in {}: {}", __func__, ex.what());
+      }
+      catch (...)
+      {
+        CCF_APP_FAIL("CCFDNS: Caught unknown exception in {}", __func__);
+      }
+
+      return {};
+    }
+
+    virtual void send_data(std::span<const uint8_t> data) override
+    {
+      try
+      {
+        if (data.size() < 1024)
+          CCF_APP_TRACE("CCFDNS: TCP reply: {}", ds::to_hex(data));
+        else
+          CCF_APP_TRACE("CCFDNS: TCP reply of size {}", data.size());
+
+        uint8_t size[2] = {(uint8_t)(data.size() >> 8), (uint8_t)(data.size())};
+
+        RINGBUFFER_TRY_WRITE_MESSAGE(
+          tls::tls_outbound,
+          to_host,
+          session_id,
+          serializer::ByteRange{size, 2});
+
+        size_t fragment_size = data.size();
+
+        for (size_t i = 0; i < data.size();)
+        {
+          bool ok = false;
+          size_t n = std::min(data.size() - i, fragment_size);
+
+          try
+          {
+            ok = RINGBUFFER_TRY_WRITE_MESSAGE(
+              tls::tls_outbound,
+              to_host,
+              session_id,
+              serializer::ByteRange{&data.data()[i], n});
+          }
+          catch (const std::exception& ex)
+          {
+            CCF_APP_FAIL(
+              "CCFDNS: Caught exception in {}: {}", __func__, ex.what());
+          }
+          catch (...)
+          {
+            CCF_APP_FAIL("CCFDNS: Caught unknown exception in {}", __func__);
+          }
+
+          if (ok)
+            i += n;
+          else if (fragment_size == 1)
+            throw std::runtime_error("TCP send error with fragment_size == 1");
+          else
+            fragment_size = std::max(fragment_size / 2, 1ul);
+        }
+      }
+      catch (const std::exception& ex)
+      {
+        CCF_APP_FAIL("CCFDNS: Caught exception in {}: {}", __func__, ex.what());
+        bytes.clear();
+        close_session();
+      }
+      catch (...)
+      {
+        CCF_APP_FAIL("CCFDNS: Caught unknown exception in {}", __func__);
+        bytes.clear();
+        close_session();
+      }
+    }
+
+    virtual void close_session() override
+    {
+      // RFC 1035:
+      // If the server needs to close a dormant connection to reclaim
+      // resources, it should wait until the connection has been idle for a
+      // period on the order of two minutes.  In particular, the server should
+      // allow the SOA and AXFR request sequence (which begins a refresh
+      // operation) to be made on a single connection. Since the server would
+      // be unable to answer queries anyway, a unilateral close or reset may
+      // be used instead of a graceful close.
+
+      CCF_APP_TRACE("CCFDNS: TCP session {} closed", session_id);
+      session_id = 0;
+    }
+  };
+
+  class UDPDNSQuerySession : public DNSQuerySession
+  {
+  public:
+    UDPDNSQuerySession(std::shared_ptr<CCFDNS> ccfdns) : DNSQuerySession(ccfdns)
+    {}
+
+    virtual ~UDPDNSQuerySession() = default;
+
+    virtual void handle_incoming_data(std::span<const uint8_t> data) override
+    {
+      // TODO: separate addr for each request? Fork off?
+      std::lock_guard<std::mutex> lock(mtx);
+
+      std::vector<uint8_t> payload;
+
+      try
+      {
+        auto [sid, family, addr, msg_payload] =
+          ringbuffer::read_message<udp::inbound>(data);
+
+        session_id = sid;
+        addr_family = family;
+        addr_data = addr;
+        payload = {msg_payload.data, msg_payload.data + msg_payload.size};
+      }
+      catch (...)
+      {
+        CCF_APP_FAIL("CCFDNS: Failed to read UDP ringbuffer message");
+        return;
+      }
+
+      try
+      {
+#ifndef NDEBUG
+        char buf[64];
+        inet_ntop(addr_family, &addr_data, buf, sizeof(buf));
+        CCF_APP_DEBUG("CCFDNS: UDP request from {}", buf);
+#endif
+
+        size_t num_read = 0;
+        RFC1035::Message msg(
+          std::span<const uint8_t>(payload.data(), payload.size()), num_read);
+
+        std::vector<uint8_t> outbuf;
+
+#ifdef ALWAYS_USE_TCP
+        uint16_t id = 0;
+        if (payload.size() >= 2)
+          id = payload.data()[0] << 8 | payload.data()[1];
+
+        RFC1035::Message tc_reply;
+        tc_reply.header.id = id;
+        tc_reply.header.qr = true;
+        tc_reply.header.tc = true;
+        tc_reply.header.aa = true;
+
+        tc_reply.questions = msg.questions;
+        tc_reply.header.qdcount = msg.questions.size();
+
+        static const uint16_t udp_payload_size = 512;
+
+        RFC6891::TTL ttl;
+        ttl.dnssec_ok = true;
+
+        tc_reply.additionals.push_back(ResourceRecord(
+          Name("."),
+          static_cast<uint16_t>(aDNS::Type::OPT),
+          udp_payload_size,
+          ttl,
+          {}));
+        tc_reply.header.arcount++;
+
+        outbuf = (std::vector<uint8_t>)tc_reply;
+#else
+        auto reply = DNSQuerySession::handle_message(msg);
+        auto reply_data = (std::vector<uint8_t>)reply.message;
+        outbuf.insert(outbuf.end(), reply_data.begin(), reply_data.end());
+
+        size_t udp_payload_size = std::max(reply.peer_udp_payload_size, 512UL);
+
+        if (outbuf.size() > udp_payload_size)
+        {
+          CCF_APP_TRACE(
+            "CCFDNS: UDP reply too large, sending truncated reply for a "
+            "retry over TCP.");
+          RFC1035::Message tc_reply;
+          tc_reply.header.id = reply.message.header.id;
+          tc_reply.header.qr = true;
+          tc_reply.header.tc = true;
+          tc_reply.questions = msg.questions;
+          tc_reply.header.qdcount = msg.questions.size();
+          // TODO: Add OPT?
+          outbuf = (std::vector<uint8_t>)tc_reply;
+        }
+#endif
+
+        send_data(outbuf);
+
+        if (num_read < payload.size())
+        {
+          CCF_APP_DEBUG(
+            "CCFNDS: Excess data in UDP packet: {} bytes",
+            payload.size() - num_read);
+          CCF_APP_TRACE("CCFDNS: ecxess data={}", ds::to_hex(data));
+        }
+      }
+      catch (const std::exception& ex)
+      {
+        CCF_APP_FAIL(
+          "CCFDNS: Caught exception in UDP {}: {}", __func__, ex.what());
+        CCF_APP_TRACE("CCFDNS: data={}", ds::to_hex(data));
+      }
+      catch (...)
+      {
+        CCF_APP_FAIL("CCFDNS: Caught unknown exception in UDP {}", __func__);
+        CCF_APP_TRACE("CCFDNS: data={}", ds::to_hex(data));
+      }
+    }
+
+    virtual void send_data(std::span<const uint8_t> payload) override
+    {
+      CCF_APP_TRACE("CCFDNS: UDP reply: {}", ds::to_hex(payload));
+
+      try
+      {
+        auto ok = RINGBUFFER_TRY_WRITE_MESSAGE(
+          udp::outbound,
+          to_host,
+          session_id,
+          addr_family,
+          addr_data,
+          serializer::ByteRange{payload.data(), payload.size()});
+
+        if (!ok)
+          CCF_APP_DEBUG("CCFDNS: UDP write failed.");
+
+        addr_family = 0;
+        addr_data.clear();
+      }
+      catch (const std::exception& ex)
+      {
+        CCF_APP_FAIL(
+          "CCFDNS: Caught exception in UDP {}: {}", __func__, ex.what());
+        CCF_APP_TRACE("CCFDNS: data={}", ds::to_hex(payload));
+      }
+      catch (...)
+      {
+        CCF_APP_FAIL("CCFDNS: Caught unknown exception in UDP {}", __func__);
+        CCF_APP_TRACE("CCFDNS: data={}", ds::to_hex(payload));
+      }
+    }
+
+  protected:
+    std::mutex mtx;
+    short addr_family;
+    std::vector<uint8_t> addr_data;
+  };
 
   class Handlers : public ccf::UserEndpointRegistry
   {
@@ -2324,7 +2690,24 @@ namespace ccfdns
     virtual void init_handlers() override
     {
       ccf::UserEndpointRegistry::init_handlers();
+
       ccfdns->find_internal_interface();
+
+      auto cpss =
+        context.get_subsystem<ccf::CustomProtocolSubsystemInterface>();
+      cpss->install(
+        "tcp_dns_if", [](tls::ConnID, const std::unique_ptr<tls::Context>&&) {
+          return std::static_pointer_cast<ccf::Session>(
+            std::make_shared<DNSQuerySession>(ccfdns));
+        });
+
+      cpss->install(
+        "udp_dns_if", [](tls::ConnID, const std::unique_ptr<tls::Context>&&) {
+          return std::static_pointer_cast<ccf::Session>(
+            std::make_shared<UDPDNSQuerySession>(ccfdns));
+        });
+
+      CCF_APP_DEBUG("Custom protocol handlers installed.");
     }
   };
 }
