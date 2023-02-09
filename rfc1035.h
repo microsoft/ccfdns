@@ -816,6 +816,16 @@ namespace RFC1035
       additionals = get_n<ResourceRecord>(bytes, pos, header.arcount);
     }
 
+    Message(const std::vector<uint8_t>& bytes, size_t& pos)
+    {
+      header = Header(bytes, pos);
+
+      questions = get_n<Question>(bytes, pos, header.qdcount);
+      answers = get_n<ResourceRecord>(bytes, pos, header.ancount);
+      authorities = get_n<ResourceRecord>(bytes, pos, header.nscount);
+      additionals = get_n<ResourceRecord>(bytes, pos, header.arcount);
+    }
+
     ~Message() {}
 
     operator std::vector<uint8_t>() const

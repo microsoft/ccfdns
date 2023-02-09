@@ -187,6 +187,7 @@ namespace aDNS
     };
 
     Resolver();
+
     virtual ~Resolver();
 
     virtual RegistrationInformation configure(const Configuration& cfg);
