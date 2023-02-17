@@ -9,6 +9,7 @@
 #include <ccf/service/tables/acme_certificates.h>
 #include <cstdint>
 #include <llhttp/llhttp.h>
+#include <service/tables/nodes.h>
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
 
 #include "../ccfdns_rpc_types.h"
@@ -47,32 +48,49 @@ namespace ravl
 
 namespace ccfapp
 {
-  struct Configuration
+  struct NodeAddress
   {
     std::string name;
-    std::vector<std::string> alternative_names;
     std::string ip;
+    std::string protocol;
     uint16_t port;
+  };
+
+  struct NodeInfo
+  {
+    NodeAddress address;
+    std::string attestation;
+  };
+
+  struct Configuration
+  {
+    std::string service_name;
 
     std::string adns_base_url;
     std::vector<std::string> ca_certs;
+    std::map<std::string, NodeAddress> node_addresses;
   };
+
+  DECLARE_JSON_TYPE(NodeAddress);
+  DECLARE_JSON_REQUIRED_FIELDS(NodeAddress, name, ip, port, protocol);
+
+  DECLARE_JSON_TYPE(NodeInfo);
+  DECLARE_JSON_REQUIRED_FIELDS(NodeInfo, address, attestation);
 
   DECLARE_JSON_TYPE(Configuration);
   DECLARE_JSON_REQUIRED_FIELDS(
-    Configuration, name, alternative_names, ip, port, adns_base_url, ca_certs);
+    Configuration, service_name, adns_base_url, ca_certs, node_addresses);
 
   struct RegistrationInfo
   {
-    std::string protocol;
     std::string public_key;
-    std::string attestation;
     std::vector<uint8_t> csr;
+    std::map<std::string, NodeInfo> node_information;
   };
 
   DECLARE_JSON_TYPE(RegistrationInfo);
   DECLARE_JSON_REQUIRED_FIELDS(
-    RegistrationInfo, protocol, public_key, attestation, csr);
+    RegistrationInfo, public_key, csr, node_information);
 
   struct SetServiceCertificateIn
   {
@@ -160,8 +178,8 @@ namespace service
           if (!opt_cfg)
             response << "No service config.";
           else
-            response << "This is <a href=\"https://" << opt_cfg->name << "\">"
-                     << opt_cfg->name << "</a>";
+            response << "This is <a href=\"https://" << opt_cfg->service_name
+                     << "\">" << opt_cfg->service_name << "</a>";
 
           response << "</html>";
           ctx.rpc_ctx->set_response_status(HTTP_STATUS_OK);
@@ -179,37 +197,36 @@ namespace service
       auto configure = [this](auto& ctx, nlohmann::json&& params) {
         try
         {
-          const auto in = params.get<ConfigurationRPC::In>();
+          const auto cfg = params.get<ConfigurationRPC::In>();
 
-          auto t =
+          auto cfg_table =
             ctx.tx.template rw<TConfigurationTable>(configuration_table_name);
-          t->put(in);
+          if (!cfg_table)
+            throw std::runtime_error("error accessing configuration table");
 
-          configuration.name = in.name;
-          configuration.alternative_names = in.alternative_names;
-          configuration.ip = in.ip;
-          configuration.port = in.port;
-          configuration.adns_base_url = in.adns_base_url;
-          configuration.ca_certs = in.ca_certs;
+          cfg_table->put(cfg);
+
+          configuration = cfg;
 
           ConfigurationRPC::Out out;
 
-          out.protocol = "tcp";
+          auto nodes_table = ctx.tx.template ro<ccf::Nodes>(ccf::Tables::NODES);
+          if (!nodes_table)
+            throw std::runtime_error("error accessing nodes table");
 
-          auto public_key =
+          for (const auto& [id, addr] : cfg.node_addresses)
+          {
+            auto entry = nodes_table->get(id);
+            auto attestation = ravl::oe::Attestation(
+              entry->quote_info.quote, entry->quote_info.endorsements);
+            out.node_information[id] = {
+              .address = addr, .attestation = attestation};
+          }
+
+          auto nwk_public_key =
             crypto::public_key_pem_from_cert(acmess->network_cert().raw());
 
-          out.public_key = public_key.str();
-
-          ccf::pal::attestation_report_data ard = {0};
-          ccf::pal::generate_quote(
-            ard,
-            [&out](
-              const ccf::QuoteInfo& quote_info,
-              const ccf::pal::snp::EndorsementEndpointsConfiguration&) {
-              out.attestation = ravl::oe::Attestation(
-                quote_info.quote, quote_info.endorsements);
-            });
+          out.public_key = nwk_public_key.str();
 
           if (!niss)
             throw std::runtime_error("no network identity subsystem");
@@ -220,20 +237,26 @@ namespace service
           if (!kp)
             throw std::runtime_error("invalid network key");
 
-          auto sn = in.name;
+          auto sn = cfg.service_name;
           while (sn.back() == '.')
             sn.pop_back();
 
           std::vector<crypto::SubjectAltName> sans;
           sans.push_back({sn, false});
-          for (const auto& n : configuration.alternative_names)
-            sans.push_back({n, false});
-
-          out.csr = kp->create_csr_der("CN=" + sn, sans, public_key);
-
-          if (!configuration.adns_base_url.empty())
+          for (const auto& [id, addr] : cfg.node_addresses)
           {
-            auto unterminated_name = configuration.name;
+            auto n = addr.name;
+            while (n.back() == '.')
+              n.pop_back();
+            sans.push_back({n, false});
+            // sans.push_back({addr.ip, true});
+          }
+
+          out.csr = kp->create_csr_der("CN=" + sn, sans, nwk_public_key);
+
+          if (!cfg.adns_base_url.empty())
+          {
+            auto unterminated_name = cfg.service_name;
             while (unterminated_name.size() > 0 &&
                    unterminated_name.back() == '.')
               unterminated_name.pop_back();
@@ -241,7 +264,7 @@ namespace service
             std::string body =
               "{\"service_dns_name\": \"" + unterminated_name + "\"}";
             std::vector<uint8_t> vbody(body.begin(), body.end());
-            std::vector<std::string> ca_certs = configuration.ca_certs;
+            std::vector<std::string> ca_certs = cfg.ca_certs;
             ca_certs.push_back(niss->get()->cert.str());
 
             struct CertThreadMsg
@@ -314,7 +337,7 @@ namespace service
                             return true;
                           },
                           data.ca_certs,
-                          ccf::ApplicationProtocol::HTTP1,
+                          ccf::ApplicationProtocol::HTTP2,
                           true);
                       }
                       catch (...)

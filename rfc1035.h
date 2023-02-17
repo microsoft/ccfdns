@@ -323,6 +323,14 @@ namespace RFC1035 // https://datatracker.ietf.org/doc/html/rfc1035
       return r;
     }
 
+    Name terminated() const
+    {
+      Name t = *this;
+      if (t.labels.size() == 0 || !t.labels.back().empty())
+        t.labels.push_back(Label());
+      return t;
+    }
+
     /// Indicates whether the name starts with the given prefix.
     bool starts_with(const Name& prefix) const
     {

@@ -2,7 +2,6 @@
 // Licensed under the Apache 2.0 License.
 #pragma once
 
-#include "ccfdns_json.h"
 #include "resolver.h"
 #include "rfc1035.h"
 #include "rfc4034.h"
@@ -15,10 +14,7 @@ namespace ccfdns
 {
   struct Configure
   {
-    struct In
-    {
-      aDNS::Resolver::Configuration configuration;
-    };
+    using In = aDNS::Resolver::Configuration;
     struct Out
     {
       aDNS::Resolver::RegistrationInformation registration_info;
@@ -104,68 +100,4 @@ namespace ccfdns
       std::string certificate;
     };
   };
-}
-
-namespace ccfdns
-{
-  DECLARE_JSON_TYPE(Configure::In);
-  DECLARE_JSON_REQUIRED_FIELDS(Configure::In, configuration);
-
-  DECLARE_JSON_TYPE(Configure::Out);
-  DECLARE_JSON_REQUIRED_FIELDS(Configure::Out, registration_info);
-
-  DECLARE_JSON_TYPE(AddRecord::In);
-  DECLARE_JSON_REQUIRED_FIELDS(AddRecord::In, origin, record);
-
-  DECLARE_JSON_TYPE(RemoveAll::In);
-  DECLARE_JSON_REQUIRED_FIELDS(RemoveAll::In, origin, name, class_, type);
-
-  DECLARE_JSON_TYPE(InstallACMEResponse::In);
-  DECLARE_JSON_REQUIRED_FIELDS(
-    InstallACMEResponse::In,
-    origin,
-    name,
-    alternative_names,
-    key_authorization);
-
-  DECLARE_JSON_TYPE(RemoveACMEToken::In);
-  DECLARE_JSON_REQUIRED_FIELDS(RemoveACMEToken::In, origin, name);
-
-  DECLARE_JSON_TYPE(SetCertificate::In);
-  DECLARE_JSON_REQUIRED_FIELDS(
-    SetCertificate::In, service_dns_name, certificate);
-
-  DECLARE_JSON_TYPE(GetCertificate::In);
-  DECLARE_JSON_REQUIRED_FIELDS(GetCertificate::In, service_dns_name);
-  DECLARE_JSON_TYPE(GetCertificate::Out);
-  DECLARE_JSON_REQUIRED_FIELDS(GetCertificate::Out, certificate);
-}
-
-namespace aDNS
-{
-  DECLARE_JSON_TYPE(Resolver::RegistrationRequest);
-  DECLARE_JSON_REQUIRED_FIELDS(
-    Resolver::RegistrationRequest,
-    origin,
-    name,
-    ip,
-    port,
-    protocol,
-    attestation,
-    csr,
-    contact);
-
-  DECLARE_JSON_TYPE(Resolver::DelegationRequest);
-  DECLARE_JSON_REQUIRED_FIELDS(
-    Resolver::DelegationRequest,
-    origin,
-    name,
-    subdomain,
-    ip,
-    port,
-    protocol,
-    attestation,
-    csr,
-    contact,
-    dnskey_records);
 }

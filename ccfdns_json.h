@@ -2,6 +2,7 @@
 // Licensed under the Apache 2.0 License.
 #pragma once
 
+#include "ccfdns_rpc_types.h"
 #include "keys.h"
 #include "resolver.h"
 #include "rfc1035.h"
@@ -143,12 +144,16 @@ namespace aDNS
   DECLARE_JSON_REQUIRED_FIELDS(
     Resolver::Configuration::ServiceCA, directory, ca_certificates);
 
+  DECLARE_JSON_TYPE(Resolver::NodeAddress);
+  DECLARE_JSON_REQUIRED_FIELDS(Resolver::NodeAddress, name, ip, protocol, port);
+
+  DECLARE_JSON_TYPE(Resolver::NodeInfo);
+  DECLARE_JSON_REQUIRED_FIELDS(Resolver::NodeInfo, address, attestation);
+
   DECLARE_JSON_TYPE_WITH_OPTIONAL_FIELDS(Resolver::Configuration);
   DECLARE_JSON_REQUIRED_FIELDS(
     Resolver::Configuration,
     origin,
-    name,
-    ip,
     ca_certs,
     default_ttl,
     signing_algorithm,
@@ -157,15 +162,33 @@ namespace aDNS
     use_nsec3,
     nsec3_hash_algorithm,
     nsec3_hash_iterations,
-    service_ca);
+    service_ca,
+    node_addresses);
   DECLARE_JSON_OPTIONAL_FIELDS(
     Resolver::Configuration, alternative_names, parent_base_url, fixed_zsk);
 
   DECLARE_JSON_TYPE_WITH_OPTIONAL_FIELDS(Resolver::RegistrationInformation);
   DECLARE_JSON_REQUIRED_FIELDS(
-    Resolver::RegistrationInformation, protocol, public_key, attestation, csr);
+    Resolver::RegistrationInformation, public_key, csr, node_information);
   DECLARE_JSON_OPTIONAL_FIELDS(
     Resolver::RegistrationInformation, dnskey_records);
+
+  DECLARE_JSON_TYPE_WITH_OPTIONAL_FIELDS(Resolver::RegistrationRequest);
+  DECLARE_JSON_REQUIRED_FIELDS(
+    Resolver::RegistrationRequest, csr, contact, node_information);
+  DECLARE_JSON_OPTIONAL_FIELDS(
+    Resolver::RegistrationRequest, configuration_receipt);
+
+  DECLARE_JSON_TYPE_WITH_OPTIONAL_FIELDS(Resolver::DelegationRequest);
+  DECLARE_JSON_REQUIRED_FIELDS(
+    Resolver::DelegationRequest,
+    subdomain,
+    csr,
+    contact,
+    dnskey_records,
+    node_information);
+  DECLARE_JSON_OPTIONAL_FIELDS(
+    Resolver::DelegationRequest, configuration_receipt);
 }
 
 namespace ccfdns
@@ -173,4 +196,33 @@ namespace ccfdns
   DECLARE_JSON_TYPE(ZoneKeyInfo);
   DECLARE_JSON_REQUIRED_FIELDS(
     ZoneKeyInfo, key_signing_keys, zone_signing_keys);
+
+  DECLARE_JSON_TYPE(Configure::Out);
+  DECLARE_JSON_REQUIRED_FIELDS(Configure::Out, registration_info);
+
+  DECLARE_JSON_TYPE(AddRecord::In);
+  DECLARE_JSON_REQUIRED_FIELDS(AddRecord::In, origin, record);
+
+  DECLARE_JSON_TYPE(RemoveAll::In);
+  DECLARE_JSON_REQUIRED_FIELDS(RemoveAll::In, origin, name, class_, type);
+
+  DECLARE_JSON_TYPE(InstallACMEResponse::In);
+  DECLARE_JSON_REQUIRED_FIELDS(
+    InstallACMEResponse::In,
+    origin,
+    name,
+    alternative_names,
+    key_authorization);
+
+  DECLARE_JSON_TYPE(RemoveACMEToken::In);
+  DECLARE_JSON_REQUIRED_FIELDS(RemoveACMEToken::In, origin, name);
+
+  DECLARE_JSON_TYPE(SetCertificate::In);
+  DECLARE_JSON_REQUIRED_FIELDS(
+    SetCertificate::In, service_dns_name, certificate);
+
+  DECLARE_JSON_TYPE(GetCertificate::In);
+  DECLARE_JSON_REQUIRED_FIELDS(GetCertificate::In, service_dns_name);
+  DECLARE_JSON_TYPE(GetCertificate::Out);
+  DECLARE_JSON_REQUIRED_FIELDS(GetCertificate::Out, certificate);
 }

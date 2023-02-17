@@ -46,7 +46,7 @@ namespace aDNS
     TLSA = static_cast<uint16_t>(RFC7671::Type::TLSA),
     OPT = static_cast<uint16_t>(RFC6891::Type::OPT),
     CAA = static_cast<uint16_t>(RFC8659::Type::CAA),
-    TLSKEY = static_cast<uint16_t>(aDNS::Types::Type::TLSKEY),
+    // TLSKEY = static_cast<uint16_t>(aDNS::Types::Type::TLSKEY),
     ATTEST = static_cast<uint16_t>(aDNS::Types::Type::ATTEST),
   };
 
@@ -68,7 +68,7 @@ namespace aDNS
     TLSA = static_cast<uint16_t>(RFC7671::Type::TLSA),
     OPT = static_cast<uint16_t>(RFC6891::Type::OPT),
     CAA = static_cast<uint16_t>(RFC8659::Type::CAA),
-    TLSKEY = static_cast<uint16_t>(aDNS::Types::Type::TLSKEY),
+    // TLSKEY = static_cast<uint16_t>(aDNS::Types::Type::TLSKEY),
     ATTEST = static_cast<uint16_t>(aDNS::Types::Type::ATTEST),
 
     ASTERISK = static_cast<uint16_t>(RFC1035::QType::ASTERISK),
@@ -111,14 +111,28 @@ namespace aDNS
   class Resolver
   {
   public:
+    struct NodeAddress
+    {
+      Name name;
+      std::string ip;
+      std::string protocol;
+      uint16_t port;
+    };
+
+    struct NodeInfo
+    {
+      NodeAddress address;
+      std::string attestation;
+    };
+
     struct Configuration
     {
       Name origin;
-      Name name;
-      std::string ip;
+
       std::optional<std::vector<Name>> alternative_names;
       std::optional<std::string> parent_base_url;
       std::vector<std::string> ca_certs;
+      std::vector<std::string> contact;
 
       uint32_t default_ttl = 86400;
       RFC4034::Algorithm signing_algorithm =
@@ -140,16 +154,34 @@ namespace aDNS
       };
 
       ServiceCA service_ca;
+
+      std::map<std::string, NodeAddress> node_addresses;
     };
 
     struct RegistrationInformation
     {
-      std::string protocol;
       std::string public_key;
-      std::string attestation;
       std::vector<uint8_t> csr;
-
+      std::map<std::string, NodeInfo> node_information;
       std::optional<std::vector<aDNS::ResourceRecord>> dnskey_records;
+    };
+
+    struct RegistrationRequest
+    {
+      std::vector<uint8_t> csr;
+      std::vector<std::string> contact;
+      std::map<std::string, NodeInfo> node_information;
+      std::optional<std::string> configuration_receipt;
+    };
+
+    struct DelegationRequest
+    {
+      Name subdomain;
+      std::vector<uint8_t> csr;
+      std::vector<std::string> contact;
+      std::map<std::string, NodeInfo> node_information;
+      std::vector<aDNS::ResourceRecord> dnskey_records;
+      std::optional<std::string> configuration_receipt;
     };
 
     struct Resolution
@@ -158,32 +190,6 @@ namespace aDNS
       RFC4034::CanonicalRRSet answers;
       RFC4034::CanonicalRRSet authorities;
       RFC4034::CanonicalRRSet additionals;
-    };
-
-    struct RegistrationRequest
-    {
-      Name origin;
-      Name name;
-      std::string ip;
-      uint16_t port;
-      std::string protocol;
-      std::string attestation;
-      std::vector<uint8_t> csr;
-      std::vector<std::string> contact;
-    };
-
-    struct DelegationRequest
-    {
-      Name origin;
-      Name subdomain;
-      Name name; // TODO: should be a set of names/ips?
-      std::string ip;
-      uint16_t port;
-      std::string protocol;
-      std::string attestation;
-      std::vector<uint8_t> csr;
-      std::vector<std::string> contact;
-      std::vector<aDNS::ResourceRecord> dnskey_records;
     };
 
     Resolver();
@@ -287,6 +293,8 @@ namespace aDNS
     virtual void save_delegation_registration_request(
       const DelegationRequest& rr) = 0;
 
+    virtual std::map<std::string, NodeInfo> get_node_information() = 0;
+
   protected:
     small_vector<uint8_t> nsec3_salt;
 
@@ -334,6 +342,15 @@ namespace aDNS
 
     void add_fragmented(
       const Name& origin, const Name& name, const ResourceRecord& rr);
+
+    ResourceRecord mk_rr(
+      const Name& name,
+      aDNS::Type type,
+      aDNS::Class class_,
+      uint32_t ttl,
+      const small_vector<uint16_t>& rdata);
+
+    Name find_zone(const Name& name);
   };
 
   uint16_t get_key_tag(const RFC4034::DNSKEY& dnskey_rdata);

@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the Apache 2.0 License.
 
+#include "ccfdns_json.h"
 #include "ccfdns_rpc_types.h"
 #include "formatting.h"
 #include "keys.h"
@@ -16,6 +17,7 @@
 #include <ccf/base_endpoint_registry.h>
 #include <ccf/common_auth_policies.h>
 #include <ccf/crypto/base64.h>
+#include <ccf/crypto/curve.h>
 #include <ccf/crypto/key_pair.h>
 #include <ccf/ds/hex.h>
 #include <ccf/ds/json.h>
@@ -29,18 +31,17 @@
 #include <ccf/node/acme_subsystem_interface.h>
 #include <ccf/node/node_configuration_interface.h>
 #include <ccf/pal/attestation.h>
+#include <ccf/service/acme_client_config.h>
+#include <ccf/service/node_info.h>
 #include <ccf/service/tables/acme_certificates.h>
+#include <ccf/service/tables/nodes.h>
 #include <ccf/version.h>
-#include <charconv>
-#include <crypto/curve.h>
 #include <nlohmann/json.hpp>
-#include <odata_error.h>
 #include <optional>
 #include <quickjs/quickjs-exports.h>
 #include <quickjs/quickjs.h>
 #include <ravl/oe.h>
 #include <ravl/openssl.hpp>
-#include <service/acme_client_config.h>
 #include <stdexcept>
 
 using namespace aDNS;
@@ -146,7 +147,7 @@ namespace ccfdns
           return true;
         },
         config.ca_certs,
-        ccf::ApplicationProtocol::HTTP1,
+        ccf::ApplicationProtocol::HTTP2,
         true);
     }
 
@@ -158,7 +159,7 @@ namespace ccfdns
 
       subsys->make_http_request(
         "POST",
-        node_address + "/app/internal/remove_acme_response",
+        node_address + "/app/internal/remove-acme-response",
         {},
         to_json_bytes(
           RemoveACMEToken::In{origin, config.service_dns_name + "."}),
@@ -167,7 +168,7 @@ namespace ccfdns
           const http::HeaderMap&,
           const std::vector<uint8_t>&) { return true; },
         config.ca_certs,
-        ccf::ApplicationProtocol::HTTP1,
+        ccf::ApplicationProtocol::HTTP2,
         true);
     }
 
@@ -185,7 +186,7 @@ namespace ccfdns
           const http::HeaderMap&,
           const std::vector<uint8_t>&) { return true; },
         config.ca_certs,
-        ccf::ApplicationProtocol::HTTP1,
+        ccf::ApplicationProtocol::HTTP2,
         true);
     }
 
@@ -240,20 +241,49 @@ namespace ccfdns
   {
   public:
     CCFDNS(
+      const std::string& node_id,
       std::shared_ptr<ccf::ACMESubsystemInterface> acme_ss,
       std::shared_ptr<ccf::NetworkIdentitySubsystem> nwid_ss,
-      const std::string& internal_node_address,
-      const std::string& acme_config_name) :
+      std::shared_ptr<ccf::NodeConfigurationInterface> nci_ss) :
       Resolver(),
+      node_id(node_id),
       acme_ss(acme_ss),
       nwid_ss(nwid_ss),
-      internal_node_address(internal_node_address),
-      acme_config_name(acme_config_name)
+      nci_ss(nci_ss)
     {
       acme_account_key_pair = crypto::make_key_pair(crypto::CurveID::SECP384R1);
+
+      auto ncs = nci_ss->get();
+
+      // Interface for internal RPC calls
+      auto interface_id = "primary_rpc_interface";
+
+      auto iit = ncs.node_config.network.rpc_interfaces.find(interface_id);
+      if (iit == ncs.node_config.network.rpc_interfaces.end())
+        CCF_APP_FAIL("Interface '{}' not found", interface_id);
+      else
+        internal_node_address = "https://" + iit->second.published_address;
+
+      for (const auto& iface : ncs.node_config.network.rpc_interfaces)
+      {
+        if (
+          iface.second.endorsement->authority == ccf::Authority::ACME &&
+          iface.second.endorsement->acme_configuration)
+        {
+          acme_config_name = *iface.second.endorsement->acme_configuration;
+          internal_node_address = "https://" + iit->second.published_address;
+          external_interface_name = iface.first;
+          break;
+        }
+      }
     }
 
     virtual ~CCFDNS() {}
+
+    std::string external_interface_name;
+    std::string node_id;
+    std::string my_name;
+    std::vector<uint8_t> my_acme_csr;
 
     using TConfigurationTable =
       ccf::ServiceValue<aDNS::Resolver::Configuration>;
@@ -290,9 +320,7 @@ namespace ccfdns
 
     virtual Configuration get_configuration() const override
     {
-      if (!ctx)
-        std::runtime_error("missing endpoint context");
-
+      check_context();
       auto t = ctx->tx.template ro<CCFDNS::TConfigurationTable>(
         configuration_table_name);
       if (!t)
@@ -305,9 +333,7 @@ namespace ccfdns
 
     virtual void set_configuration(const Configuration& cfg) override
     {
-      if (!ctx)
-        std::runtime_error("missing endpoint context");
-
+      check_context();
       auto t = ctx->tx.template rw<CCFDNS::TConfigurationTable>(
         configuration_table_name);
       t->put(cfg);
@@ -315,19 +341,15 @@ namespace ccfdns
 
     virtual std::shared_ptr<crypto::KeyPair> get_tls_key() override
     {
-      if (!ctx)
-        std::runtime_error("missing endpoint context");
-
+      check_context();
       auto ni = nwid_ss->get().get();
       return crypto::make_key_pair(ni->priv_key);
     }
 
     virtual void add(const Name& origin, const ResourceRecord& rr) override
     {
+      check_context();
       CCF_APP_DEBUG("CCFDNS: Add: {}", string_from_resource_record(rr));
-
-      if (!ctx)
-        std::runtime_error("missing endpoint context");
 
       if (!origin.is_absolute())
         throw std::runtime_error("origin not absolute");
@@ -353,10 +375,8 @@ namespace ccfdns
 
     virtual void remove(const Name& origin, const ResourceRecord& rr)
     {
+      check_context();
       CCF_APP_DEBUG("CCFDNS: Remove: {}", string_from_resource_record(rr));
-
-      if (!ctx)
-        std::runtime_error("missing endpoint context");
 
       if (!origin.is_absolute())
         throw std::runtime_error("origin not absolute");
@@ -386,11 +406,10 @@ namespace ccfdns
       aDNS::Class c,
       aDNS::Type t) override
     {
+      check_context();
+
       CCF_APP_DEBUG(
         "CCFDNS: Remove {} type {} at {}", name, string_from_type(t), origin);
-
-      if (!ctx)
-        std::runtime_error("missing endpoint context");
 
       if (!origin.is_absolute())
         throw std::runtime_error("origin not absolute");
@@ -417,11 +436,10 @@ namespace ccfdns
     virtual void remove(
       const Name& origin, aDNS::Class c, aDNS::Type t) override
     {
+      check_context();
+
       CCF_APP_DEBUG(
         "CCFDNS: Remove type {} at {}", string_from_type(t), origin);
-
-      if (!ctx)
-        std::runtime_error("missing endpoint context");
 
       if (!origin.is_absolute())
         throw std::runtime_error("origin not absolute");
@@ -435,9 +453,7 @@ namespace ccfdns
 
     virtual Message reply(const Message& msg) override
     {
-      if (!ctx)
-        std::runtime_error("missing endpoint context");
-
+      check_context();
       return Resolver::reply(msg);
     }
 
@@ -447,8 +463,7 @@ namespace ccfdns
       aDNS::QType qtype,
       const std::function<bool(const ResourceRecord&)>& f) const override
     {
-      if (!ctx)
-        std::runtime_error("missing endpoint context");
+      check_context();
 
       if (qtype == aDNS::QType::ASTERISK || qclass == aDNS::QClass::ASTERISK)
         throw std::runtime_error("for_each cannot handle wildcards");
@@ -471,11 +486,8 @@ namespace ccfdns
 
     virtual bool origin_exists(const Name& name) const override
     {
+      check_context();
       CCF_APP_DEBUG("Looking for origin: {}", name);
-
-      if (!ctx)
-        std::runtime_error("missing endpoint context");
-
       auto origins = ctx->tx.ro<Origins>(origins_table_name);
       return origins->contains(name.lowered());
     }
@@ -486,8 +498,7 @@ namespace ccfdns
       const small_vector<uint16_t>& public_key,
       bool key_signing) override
     {
-      if (!ctx)
-        std::runtime_error("missing endpoint context");
+      check_context();
 
       auto originl = origin.lowered();
       auto table_name = "private:signing_keys";
@@ -532,8 +543,7 @@ namespace ccfdns
       const crypto::Pem& pem,
       bool key_signing) override
     {
-      if (!ctx)
-        std::runtime_error("missing endpoint context");
+      check_context();
 
       auto origin_lowered = origin.lowered();
       auto table_name = "private:signing_keys";
@@ -555,8 +565,7 @@ namespace ccfdns
 
     virtual std::string service_registration_policy() const override
     {
-      if (!ctx)
-        std::runtime_error("missing endpoint context");
+      check_context();
 
       auto policy_table = ctx->tx.ro<ServiceRegistrationPolicy>(
         service_registration_policy_table_name);
@@ -569,8 +578,7 @@ namespace ccfdns
     virtual void set_service_registration_policy(
       const std::string& new_policy) override
     {
-      if (!ctx)
-        std::runtime_error("missing endpoint context");
+      check_context();
 
       auto policy =
         ctx->tx
@@ -581,8 +589,7 @@ namespace ccfdns
 
     virtual std::string delegation_registration_policy() const override
     {
-      if (!ctx)
-        std::runtime_error("missing endpoint context");
+      check_context();
 
       auto policy_table = ctx->tx.ro<DelegationRegistrationPolicy>(
         delegation_registration_policy_table_name);
@@ -595,8 +602,7 @@ namespace ccfdns
     virtual void set_delegation_registration_policy(
       const std::string& new_policy) override
     {
-      if (!ctx)
-        std::runtime_error("missing endpoint context");
+      check_context();
 
       auto policy = ctx->tx
                       .rw<DelegationRegistrationPolicy>(
@@ -708,15 +714,14 @@ namespace ccfdns
     using Resolver::register_service;
 
     virtual void set_service_certificate(
-      const std::string& service_dns_name,
+      const std::string& service_name,
       const std::string& certificate_pem) override
     {
-      if (!ctx)
-        std::runtime_error("missing endpoint context");
+      check_context();
 
       if (
-        service_dns_name == get_configuration().name ||
-        service_dns_name + "." == get_configuration().name)
+        service_name == get_configuration().origin ||
+        service_name + "." == get_configuration().origin)
       {
         auto tbl = ctx->tx.template rw<ccf::ACMECertificates>(
           ccf::Tables::ACME_CERTIFICATES);
@@ -729,22 +734,22 @@ namespace ccfdns
       {
         auto tbl =
           ctx->tx.rw<ServiceCertificates>(service_certifificates_table_name);
-        tbl->put(service_dns_name, certificate_pem);
-        acme_clients.erase(service_dns_name);
+        tbl->put(service_name, certificate_pem);
+        acme_clients.erase(service_name);
       }
     }
 
     virtual std::string get_service_certificate(
-      const std::string& service_dns_name) override
+      const std::string& service_name) override
     {
-      if (!ctx)
-        std::runtime_error("missing endpoint context");
+      check_context();
 
       const auto& cfg = get_configuration();
 
       if (
-        service_dns_name == get_configuration().name ||
-        service_dns_name + "." == get_configuration().name)
+        service_name == my_name || service_name == cfg.origin ||
+        service_name == my_name + "." ||
+        service_name == cfg.origin.unterminated())
       {
         auto t = ctx->tx.template rw<ccf::ACMECertificates>(
           ccf::Tables::ACME_CERTIFICATES);
@@ -759,35 +764,74 @@ namespace ccfdns
       {
         auto tbl =
           ctx->tx.ro<ServiceCertificates>(service_certifificates_table_name);
-        auto r = tbl->get(service_dns_name);
+        auto r = tbl->get(service_name);
         if (!r)
           throw std::runtime_error("no such certificate");
         return *r;
       }
     }
 
+    virtual std::map<std::string, NodeInfo> get_node_information() override
+    {
+      check_context();
+
+      const auto& cfg = get_configuration();
+
+      std::map<std::string, NodeInfo> r;
+
+      auto nodes_table = ctx->tx.template ro<ccf::Nodes>(ccf::Tables::NODES);
+      if (!nodes_table)
+        throw std::runtime_error("error accessing nodes table");
+
+      for (const auto& [id, addr] : cfg.node_addresses)
+      {
+        auto entry = nodes_table->get(id);
+        auto attestation = ravl::oe::Attestation(
+          entry->quote_info.quote, entry->quote_info.endorsements);
+        r[id] = {.address = addr, .attestation = attestation};
+      }
+
+      return r;
+    }
+
     virtual RegistrationInformation configure(const Configuration& cfg) override
     {
-      if (!ctx)
-        std::runtime_error("missing endpoint context");
-
+      check_context();
       auto reginfo = Resolver::configure(cfg);
+      my_acme_csr = reginfo.csr;
+      // We now wait until start-acme-client is called, before starting the ACME
+      // client. Alternatively, we could also poll via DNS until we see
+      // ourselves.
+      return reginfo;
+    }
 
-      // Note: We may have to wait for some signal from the parent. We could
-      // poll DNS requests until we see ourselves.
+    virtual void start_acme_client()
+    {
+      check_context();
 
-      // TODO: We don't have contacts here.
+      const auto& cfg = get_configuration();
+
+      auto it = cfg.node_addresses.find(node_id);
+      if (it == cfg.node_addresses.end())
+        throw std::runtime_error("bug: own node address not found");
+      my_name = it->second.name;
+      while (my_name.back() == '.')
+        my_name.pop_back();
 
       if (cfg.parent_base_url)
-        start_service_acme(
-          cfg.origin, cfg.name, reginfo.csr, {"mailto:bob@example.com"});
-
-      return reginfo;
+      {
+        std::vector<std::string> acme_contact;
+        for (const auto& c : cfg.contact)
+          acme_contact.push_back("mailto:" + c);
+        start_service_acme(cfg.origin, cfg.origin, my_acme_csr, acme_contact);
+      }
     }
 
     virtual void save_service_registration_request(
       const RegistrationRequest& rr) override
     {
+      check_context();
+
       auto lrr = ctx->tx.template rw<CCFDNS::LatestRegistrationRequest>(
         latest_registration_request_table_name);
       if (!lrr)
@@ -799,6 +843,8 @@ namespace ccfdns
     virtual void save_delegation_registration_request(
       const DelegationRequest& dr) override
     {
+      check_context();
+
       auto lrr = ctx->tx.template rw<CCFDNS::LatestDelegationRequest>(
         latest_delegation_request_table_name);
       if (!lrr)
@@ -878,6 +924,7 @@ namespace ccfdns
 
     std::shared_ptr<ccf::ACMESubsystemInterface> acme_ss;
     std::shared_ptr<ccf::NetworkIdentitySubsystemInterface> nwid_ss;
+    std::shared_ptr<ccf::NodeConfigurationInterface> nci_ss;
 
     crypto::KeyPairPtr acme_account_key_pair;
     std::string internal_node_address = "https://127.0.0.1";
@@ -890,6 +937,12 @@ namespace ccfdns
       return "public:" + (std::string)origin.lowered() + "-" +
         string_from_type(type) + "-" + string_from_class(class_);
     }
+
+    void check_context() const
+    {
+      if (!ctx)
+        std::runtime_error("bug: no endpoint context");
+    }
   };
 
   std::shared_ptr<CCFDNS> ccfdns;
@@ -897,6 +950,8 @@ namespace ccfdns
   class Handlers : public ccf::UserEndpointRegistry
   {
   protected:
+    std::string node_id;
+
     std::string get_param(
       const http::ParsedQuery& parsed_query, const std::string& name)
     {
@@ -914,6 +969,8 @@ namespace ccfdns
       openapi_info.description =
         "This application implements an attested DNS-over-HTTPS server.";
       openapi_info.document_version = "0.0.0";
+
+      node_id = context.get_node_id();
 
       class ContextContext
       {
@@ -937,7 +994,7 @@ namespace ccfdns
         {
           ContextContext cc(ccfdns, ctx);
           const auto in = params.get<Configure::In>();
-          Configure::Out out = {ccfdns->configure(in.configuration)};
+          Configure::Out out = {ccfdns->configure(in)};
           return ccf::make_success(out);
         }
         catch (std::exception& ex)
@@ -953,6 +1010,28 @@ namespace ccfdns
         ccf::json_adapter(configure),
         ccf::no_auth_required)
         .set_auto_schema<Configure::In, Configure::Out>()
+        .install();
+
+      auto start_acme_client = [this](auto& ctx, nlohmann::json&& params) {
+        try
+        {
+          ContextContext cc(ccfdns, ctx);
+          ccfdns->start_acme_client();
+          return ccf::make_success();
+        }
+        catch (std::exception& ex)
+        {
+          return ccf::make_error(
+            HTTP_STATUS_BAD_REQUEST, ccf::errors::InternalError, ex.what());
+        }
+      };
+
+      make_endpoint(
+        "/start-acme-client",
+        HTTP_POST,
+        ccf::json_adapter(start_acme_client),
+        ccf::no_auth_required)
+        .set_auto_schema<void, void>()
         .install();
 
       auto install_acme_response = [this](auto& ctx, nlohmann::json&& params) {
@@ -999,7 +1078,7 @@ namespace ccfdns
       };
 
       make_endpoint(
-        "/internal/remove_acme_response",
+        "/internal/remove-acme-response",
         HTTP_POST,
         ccf::json_adapter(remove_acme_response),
         {std::make_shared<ccf::NodeCertAuthnPolicy>()})
@@ -1196,35 +1275,22 @@ namespace ccfdns
       auto nwid_ss = context.get_subsystem<ccf::NetworkIdentitySubsystem>();
       auto nci_ss = context.get_subsystem<ccf::NodeConfigurationInterface>();
 
-      std::string internal_node_address;
-      std::string acme_config_name;
-
-      auto ncs = nci_ss->get();
-
-      // Interface for internal RPC calls
-      auto interface_id = "primary_rpc_interface";
-
-      auto iit = ncs.node_config.network.rpc_interfaces.find(interface_id);
-      if (iit == ncs.node_config.network.rpc_interfaces.end())
-        CCF_APP_FAIL("Interface '{}' not found", interface_id);
-      else
-        internal_node_address = "https://" + iit->second.published_address;
-
-      for (const auto& iface : ncs.node_config.network.rpc_interfaces)
-      {
-        if (
-          iface.second.endorsement->authority == ccf::Authority::ACME &&
-          iface.second.endorsement->acme_configuration)
-        {
-          acme_config_name = *iface.second.endorsement->acme_configuration;
-          break;
-        }
-      }
-
-      ccfdns = std::make_shared<CCFDNS>(
-        acme_ss, nwid_ss, internal_node_address, acme_config_name);
+      ccfdns = std::make_shared<CCFDNS>(node_id, acme_ss, nwid_ss, nci_ss);
     }
   };
+}
+
+namespace ccfapp
+{
+  std::shared_ptr<ccf::Session> make_custom_server_session(
+    ccf::ApplicationProtocol app_protocol,
+    tls::ConnID id,
+    const ccf::ListenInterfaceID& listen_interface_id,
+    const std::unique_ptr<tls::Context>& ctx,
+    const http::ParserConfiguration& parser_configuration)
+  {
+    return nullptr;
+  }
 }
 
 namespace ccfapp

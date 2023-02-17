@@ -238,6 +238,12 @@ public:
     const std::optional<std::vector<std::string>>& service_ca_certs = {})
     override
   {}
+
+  virtual std::map<std::string, Resolver::NodeInfo> get_node_information()
+    override
+  {
+    return {};
+  }
 };
 
 RFC1035::Message mk_question(const std::string& name, aDNS::QType type)
@@ -649,20 +655,13 @@ TEST_CASE("Service registration")
   REQUIRE((std::string)sans.at(0).string() == "alt.service42.example.com");
 
   s.register_service(
-    {origin,
-     url_name,
-     address,
-     8000,
-     "tcp",
-     dummy_attestation,
-     csr,
-     {"joe@example.com"}});
+    {csr, {"joe@example.com"}, {{"id", {url_name, address, "tcp", 8000}}}});
 
   auto dnskey_rrs =
     s.resolve(origin, aDNS::QType::DNSKEY, aDNS::QClass::IN).answers;
   REQUIRE(RFC4034::verify_rrsigs(dnskey_rrs, dnskey_rrs, type2str));
 
-  auto r = s.resolve(service_name, aDNS::QType::TLSKEY, aDNS::QClass::IN);
+  auto r = s.resolve(service_name, aDNS::QType::TLSA, aDNS::QClass::IN);
   REQUIRE(RFC4034::verify_rrsigs(r.answers, dnskey_rrs, type2str));
 
   r = s.resolve(service_name, aDNS::QType::ATTEST, aDNS::QClass::IN);
@@ -683,32 +682,23 @@ TEST_CASE("Delegation")
 
   Resolver::Configuration main_cfg, sub_cfg;
 
-  main_cfg = {
-    .origin = Name("example.com."),
-    .name = Name("ns1.example.com."),
-    .ip = "192.168.0.1"};
+  main_cfg = {.origin = Name("example.com.")};
+  //. .node_infos = {{Name("ns1.example.com."), "192.168.0.1"}}};
 
   auto main_reginfo = main.configure(main_cfg);
 
-  sub_cfg = {
-    .origin = Name("sub.example.com."),
-    .name = Name("ns1.sub.example.com."),
-    .ip = "192.168.1.1"};
+  sub_cfg = {.origin = Name("sub.example.com.")};
+  // .node_infos = {{Name("ns1.sub.example.com."), "192.168.1.1"}}};
 
   auto sub_reginfo = sub.configure(sub_cfg);
 
   REQUIRE(sub_reginfo.dnskey_records != std::nullopt);
 
   Resolver::DelegationRequest dr = {
-    .origin = main_cfg.origin,
     .subdomain = sub_cfg.origin,
-    .name = sub_cfg.name,
-    .ip = sub_cfg.ip,
-    .port = 53,
-    .protocol = sub_reginfo.protocol,
-    .attestation = sub_reginfo.attestation,
     .csr = sub_reginfo.csr,
     .contact = std::vector<std::string>{"someone@example.com"},
+    .node_information = sub_reginfo.node_information,
     .dnskey_records = *sub_reginfo.dnskey_records};
 
   main.register_delegation(dr);

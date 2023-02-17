@@ -20,6 +20,7 @@ from infra.interfaces import (
     AppProtocol,
     Endorsement,
     EndorsementAuthority,
+    HostSpec,
     PRIMARY_RPC_INTERFACE,
 )
 
@@ -30,23 +31,81 @@ import dns.rdatatype as rdt
 import dns.rdataclass as rdc
 import dns.rdtypes.ANY.SOA as SOA
 
-from cryptography.hazmat.primitives import serialization
-
 from loguru import logger as LOG
 
 import pebble
+import adns_tools
 
 DEFAULT_NODES = ["local://127.0.0.1:8080"]
 
 
-def pk_to_pem(x):
-    return x.public_bytes(
-        serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo
-    ).decode("ascii")
+class ServiceCAConfig(dict):
+    def __init__(self, directory, ca_certificates=[]):
+        dict.__init__(self, directory=directory, ca_certificates=ca_certificates)
+        self.directory = directory
+        self.ca_certificates = ca_certificates
 
 
-def cert_to_pem(x):
-    return x.public_bytes(serialization.Encoding.PEM).decode("ascii")
+class aDNSConfig(dict):
+    """aDNS arguments"""
+
+    def __init__(
+        self,
+        origin,
+        service_name,
+        node_addresses,
+        soa,
+        default_ttl,
+        signing_algorithm,
+        digest_type,
+        use_key_signing_key,
+        use_nsec3,
+        nsec3_hash_algorithm,
+        nsec3_hash_iterations,
+        ca_certs,
+        parent_base_url,
+        service_ca,
+        registration_policy,
+        delegation_policy,
+        fixed_zsk=None,
+    ):
+        dict.__init__(
+            self,
+            origin=origin,
+            service_name=service_name,
+            node_addresses=node_addresses,
+            soa=soa,
+            default_ttl=default_ttl,
+            signing_algorithm=signing_algorithm,
+            digest_type=digest_type,
+            use_key_signing_key=use_key_signing_key,
+            use_nsec3=use_nsec3,
+            nsec3_hash_algorithm=nsec3_hash_algorithm,
+            nsec3_hash_iterations=nsec3_hash_iterations,
+            ca_certs=ca_certs,
+            parent_base_url=parent_base_url,
+            service_ca=service_ca,
+            registration_policy=registration_policy,
+            delegation_policy=delegation_policy,
+            fixed_zsk=fixed_zsk,
+        )
+        self.origin = origin
+        self.service_name = service_name
+        self.node_addresses = node_addresses
+        self.soa = soa
+        self.default_ttl = default_ttl
+        self.signing_algorithm = signing_algorithm
+        self.digest_type = digest_type
+        self.use_key_signing_key = use_key_signing_key
+        self.use_nsec3 = use_nsec3
+        self.nsec3_hash_algorithm = nsec3_hash_algorithm
+        self.nsec3_hash_iterations = nsec3_hash_iterations
+        self.ca_certs = ca_certs
+        self.parent_base_url = parent_base_url
+        self.service_ca = service_ca
+        self.registration_policy = registration_policy
+        self.delegation_policy = delegation_policy
+        self.fixed_zsk = fixed_zsk
 
 
 def add_record(client, origin, name, stype, rdata_obj):
@@ -67,18 +126,23 @@ def add_record(client, origin, name, stype, rdata_obj):
     return r
 
 
-def configure(network, adns_config):
-    """Configure the service"""
+def configure(network, config):
+    """Configure an aDNS service"""
 
     primary, _ = network.find_primary()
     r = None
     with primary.client() as client:
-        r = client.post("/app/configure", adns_config)
+        r = client.post("/app/configure", config)
     assert (
         r.status_code == http.HTTPStatus.OK
         or r.status_code == http.HTTPStatus.NO_CONTENT
     )
-    return json.loads(str(r.body))["registration_info"]
+    reginfo = json.loads(str(r.body))["registration_info"]
+    assert "x-ms-ccf-transaction-id" in r.headers
+    reginfo["configuration_receipt"] = adns_tools.poll_for_receipt(
+        network, r.headers["x-ms-ccf-transaction-id"]
+    )
+    return reginfo
 
 
 def populate(network, args):
@@ -128,6 +192,7 @@ def start_dns_to_http_proxy(binary, host, port, query_url, network_cert):
         "-r",
         query_url,
         "-v",
+        "-v",
         "-l",
         "doh_proxy_" + host + ".log",
         "-C",
@@ -135,14 +200,6 @@ def start_dns_to_http_proxy(binary, host, port, query_url, network_cert):
     ]
 
     return subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-
-
-def public_host_port(listen_addr):
-    prot_host_port = listen_addr.split("//")
-    host_port = prot_host_port[1].split(":")
-    public_host = host_port[0]
-    public_port = host_port[1] if len(host_port) > 1 else "53"
-    return public_host, public_port
 
 
 def set_policy(network, proposal_name, policy):
@@ -191,51 +248,32 @@ def wait_for_endorsed_certs(network, name, num_retries=20):
         raise Exception("Failed to obtain endorsed network certificate")
 
 
-def run(args, adns_config):
-    """Start the network"""
+def make_acme_config(args, service_dns_name):
+    """Build an ACME configuration for CCF"""
 
-    proxy_proc = None
-    service_dns_name = adns_config["configuration"]["name"].strip(".")
-
-    if len(args.node) == 0:
-        args.node = DEFAULT_NODES
-
-    # Proxy is here: https://github.com/aarond10/https_dns_proxy
-    # Note: proxy needs: sudo setcap 'cap_net_bind_service=+ep' https_dns_proxy
-    doh_proxy_binary = "/data/cwinter/https_dns_proxy/build/https_dns_proxy"
-
-    acme_config_name = args.acme_config_name
-    acme_config = {
+    config_name = args.acme_config_name
+    config = {
         "ca_certs": [],
         "directory_url": "",
         "challenge_type": "dns-01",
         "contact": [],
-        "service_dns_name": "",
+        "service_dns_name": service_dns_name,
         "terms_of_service_agreed": True,
+        "alternative_names": [],
     }
 
-    # {
-    # "ca_certs": [            ],
-    # "challenge_server_interface": "acme_challenge_server_if",
-    # "challenge_type": "http-01",
-    # "contact": ["mailto:some-dev@example.com"],
-    # "service_dns_name": "ns1.adns.ccf.dev",
-    # "terms_of_service_agreed": true,
-    # }
-
-    if acme_config_name != "custom":
-        if acme_config_name == "pebble":
+    if config_name != "custom":
+        if config_name == "pebble":
             acme_directory = "https://127.0.0.1:1024/dir"
-            # ca_certs = [open(args.ca_cert_filename, mode="r", encoding="ascii").read()]
             email = args.email
-        elif acme_config_name == "letsencrypt":
+        elif config_name == "letsencrypt":
             if args.acme_http_port != 80:
                 raise Exception(
                     "invalid HTTP port for Let's Encrypt ACME http-01 challenge"
                 )
             # Note: cchost needs: sudo setcap 'cap_net_bind_service=+ep' cchost
             acme_directory = "https://acme-staging-v02.api.letsencrypt.org/directory"
-            adns_config["configuration"]["ca_certs"] += [
+            args.adns["ca_certs"] += [
                 "-----BEGIN CERTIFICATE-----\nMIIFFjCCAv6gAwIBAgIRAJErCErPDBinU/bWLiWnX1owDQYJKoZIhvcNAQELBQAw\nTzELMAkGA1UEBhMCVVMxKTAnBgNVBAoTIEludGVybmV0IFNlY3VyaXR5IFJlc2Vh\ncmNoIEdyb3VwMRUwEwYDVQQDEwxJU1JHIFJvb3QgWDEwHhcNMjAwOTA0MDAwMDAw\nWhcNMjUwOTE1MTYwMDAwWjAyMQswCQYDVQQGEwJVUzEWMBQGA1UEChMNTGV0J3Mg\nRW5jcnlwdDELMAkGA1UEAxMCUjMwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEK\nAoIBAQC7AhUozPaglNMPEuyNVZLD+ILxmaZ6QoinXSaqtSu5xUyxr45r+XXIo9cP\nR5QUVTVXjJ6oojkZ9YI8QqlObvU7wy7bjcCwXPNZOOftz2nwWgsbvsCUJCWH+jdx\nsxPnHKzhm+/b5DtFUkWWqcFTzjTIUu61ru2P3mBw4qVUq7ZtDpelQDRrK9O8Zutm\nNHz6a4uPVymZ+DAXXbpyb/uBxa3Shlg9F8fnCbvxK/eG3MHacV3URuPMrSXBiLxg\nZ3Vms/EY96Jc5lP/Ooi2R6X/ExjqmAl3P51T+c8B5fWmcBcUr2Ok/5mzk53cU6cG\n/kiFHaFpriV1uxPMUgP17VGhi9sVAgMBAAGjggEIMIIBBDAOBgNVHQ8BAf8EBAMC\nAYYwHQYDVR0lBBYwFAYIKwYBBQUHAwIGCCsGAQUFBwMBMBIGA1UdEwEB/wQIMAYB\nAf8CAQAwHQYDVR0OBBYEFBQusxe3WFbLrlAJQOYfr52LFMLGMB8GA1UdIwQYMBaA\nFHm0WeZ7tuXkAXOACIjIGlj26ZtuMDIGCCsGAQUFBwEBBCYwJDAiBggrBgEFBQcw\nAoYWaHR0cDovL3gxLmkubGVuY3Iub3JnLzAnBgNVHR8EIDAeMBygGqAYhhZodHRw\nOi8veDEuYy5sZW5jci5vcmcvMCIGA1UdIAQbMBkwCAYGZ4EMAQIBMA0GCysGAQQB\ngt8TAQEBMA0GCSqGSIb3DQEBCwUAA4ICAQCFyk5HPqP3hUSFvNVneLKYY611TR6W\nPTNlclQtgaDqw+34IL9fzLdwALduO/ZelN7kIJ+m74uyA+eitRY8kc607TkC53wl\nikfmZW4/RvTZ8M6UK+5UzhK8jCdLuMGYL6KvzXGRSgi3yLgjewQtCPkIVz6D2QQz\nCkcheAmCJ8MqyJu5zlzyZMjAvnnAT45tRAxekrsu94sQ4egdRCnbWSDtY7kh+BIm\nlJNXoB1lBMEKIq4QDUOXoRgffuDghje1WrG9ML+Hbisq/yFOGwXD9RiX8F6sw6W4\navAuvDszue5L3sz85K+EC4Y/wFVDNvZo4TYXao6Z0f+lQKc0t8DQYzk1OXVu8rp2\nyJMC6alLbBfODALZvYH7n7do1AZls4I9d1P4jnkDrQoxB3UqQ9hVl3LEKQ73xF1O\nyK5GhDDX8oVfGKF5u+decIsH4YaTw7mP3GFxJSqv3+0lUFJoi5Lc5da149p90Ids\nhCExroL1+7mryIkXPeFM5TgO9r0rvZaBFOvV2z0gp35Z0+L4WPlbuEjN/lxPFin+\nHlUjr8gRsI3qfJOQFy/9rKIJR0Y/8Omwt/8oTWgy1mdeHmmjk7j1nYsvC9JSQ6Zv\nMldlTTKB3zhThV1+XWYp6rjd5JW1zbVWEkLNxE7GJThEUG3szgBVGP7pSWTUTsqX\nnLRbwHOoq7hHwg==\n-----END CERTIFICATE-----\n",
                 "-----BEGIN CERTIFICATE-----\nMIIDCzCCApGgAwIBAgIRALRY4992FVxZJKOJ3bpffWIwCgYIKoZIzj0EAwMwaDEL\nMAkGA1UEBhMCVVMxMzAxBgNVBAoTKihTVEFHSU5HKSBJbnRlcm5ldCBTZWN1cml0\neSBSZXNlYXJjaCBHcm91cDEkMCIGA1UEAxMbKFNUQUdJTkcpIEJvZ3VzIEJyb2Nj\nb2xpIFgyMB4XDTIwMDkwNDAwMDAwMFoXDTI1MDkxNTE2MDAwMFowVTELMAkGA1UE\nBhMCVVMxIDAeBgNVBAoTFyhTVEFHSU5HKSBMZXQncyBFbmNyeXB0MSQwIgYDVQQD\nExsoU1RBR0lORykgRXJzYXR6IEVkYW1hbWUgRTEwdjAQBgcqhkjOPQIBBgUrgQQA\nIgNiAAT9v/PJUtHOTk28nXCXrpP665vI4Z094h8o7R+5E6yNajZa0UubqjpZFoGq\nu785/vGXj6mdfIzc9boITGusZCSWeMj5ySMZGZkS+VSvf8VQqj+3YdEu4PLZEjBA\nivRFpEejggEQMIIBDDAOBgNVHQ8BAf8EBAMCAYYwHQYDVR0lBBYwFAYIKwYBBQUH\nAwIGCCsGAQUFBwMBMBIGA1UdEwEB/wQIMAYBAf8CAQAwHQYDVR0OBBYEFOv5JcKA\nKGbibQiSMvPC4a3D/zVFMB8GA1UdIwQYMBaAFN7Ro1lkDsGaNqNG7rAQdu+ul5Vm\nMDYGCCsGAQUFBwEBBCowKDAmBggrBgEFBQcwAoYaaHR0cDovL3N0Zy14Mi5pLmxl\nbmNyLm9yZy8wKwYDVR0fBCQwIjAgoB6gHIYaaHR0cDovL3N0Zy14Mi5jLmxlbmNy\nLm9yZy8wIgYDVR0gBBswGTAIBgZngQwBAgEwDQYLKwYBBAGC3xMBAQEwCgYIKoZI\nzj0EAwMDaAAwZQIwXcZbdgxcGH9rTErfSTkXfBKKygU0yO7OpbuNeY1id0FZ/hRY\nN5fdLOGuc+aHfCsMAjEA0P/xwKr6NQ9MN7vrfGAzO397PApdqfM7VdFK18aEu1xm\n3HMFKzIR8eEPsMx4smMl\n-----END CERTIFICATE-----\n",
                 "-----BEGIN CERTIFICATE-----\nMIICTjCCAdSgAwIBAgIRAIPgc3k5LlLVLtUUvs4K/QcwCgYIKoZIzj0EAwMwaDEL\nMAkGA1UEBhMCVVMxMzAxBgNVBAoTKihTVEFHSU5HKSBJbnRlcm5ldCBTZWN1cml0\neSBSZXNlYXJjaCBHcm91cDEkMCIGA1UEAxMbKFNUQUdJTkcpIEJvZ3VzIEJyb2Nj\nb2xpIFgyMB4XDTIwMDkwNDAwMDAwMFoXDTQwMDkxNzE2MDAwMFowaDELMAkGA1UE\nBhMCVVMxMzAxBgNVBAoTKihTVEFHSU5HKSBJbnRlcm5ldCBTZWN1cml0eSBSZXNl\nYXJjaCBHcm91cDEkMCIGA1UEAxMbKFNUQUdJTkcpIEJvZ3VzIEJyb2Njb2xpIFgy\nMHYwEAYHKoZIzj0CAQYFK4EEACIDYgAEOvS+w1kCzAxYOJbA06Aw0HFP2tLBLKPo\nFQqR9AMskl1nC2975eQqycR+ACvYelA8rfwFXObMHYXJ23XLB+dAjPJVOJ2OcsjT\nVqO4dcDWu+rQ2VILdnJRYypnV1MMThVxo0IwQDAOBgNVHQ8BAf8EBAMCAQYwDwYD\nVR0TAQH/BAUwAwEB/zAdBgNVHQ4EFgQU3tGjWWQOwZo2o0busBB2766XlWYwCgYI\nKoZIzj0EAwMDaAAwZQIwRcp4ZKBsq9XkUuN8wfX+GEbY1N5nmCRc8e80kUkuAefo\nuc2j3cICeXo1cOybQ1iWAjEA3Ooawl8eQyR4wrjCofUE8h44p0j7Yl/kBlJZT8+9\nvbtH7QiVzeKCOTQPINyRql6P\n-----END CERTIFICATE-----\n",
@@ -247,48 +285,96 @@ def run(args, adns_config):
             acme_directory = args.acme_directory if "acme_directory" in args else ""
             email = args.email
 
-        acme_config = {
+        config = {
             "ca_certs": args.ca_certs,
             "directory_url": acme_directory,
             "service_dns_name": service_dns_name,
             "contact": ["mailto:" + email],
             "terms_of_service_agreed": True,
             "challenge_type": "http-01",
+            "alternative_names": [],
         }
+
+    return config_name, config
+
+
+def assign_node_addresses(network, addr, add_node_id=True):
+    """Assign shortened node IDs as node names"""
+    node_addresses = {}
+    for node in network.nodes:
+        for _, _, ext_name, ext_ip in addr:
+            ext_if = node.host.rpc_interfaces["ext_if"]
+            if ext_if.public_host == ext_name:
+                name = ext_name
+                if add_node_id:
+                    name = node.node_id[:12] + "." + name
+                node_addresses[node.node_id] = {
+                    "name": name + ".",
+                    "protocol": ext_if.transport,
+                    "ip": ext_ip,
+                    "port": ext_if.public_port,
+                }
+    return node_addresses
+
+
+def run(args, wait_for_endorsed_cert=False, with_proxies=True):
+    """Start an aDNS server network"""
+
+    service_dns_name = args.adns.origin.strip(".")
+
+    # Proxy is here: https://github.com/aarond10/https_dns_proxy
+    # Note: proxy needs: sudo setcap 'cap_net_bind_service=+ep' https_dns_proxy
+    doh_proxy_binary = "/data/cwinter/https_dns_proxy/build/https_dns_proxy"
+    proxy_procs = []
+
+    acme_config_name, acme_config = make_acme_config(args, service_dns_name)
 
     args.acme = {"configurations": {acme_config_name: acme_config}}
 
-    public_host, _ = public_host_port(args.node[0])
-
     try:
-        for node in args.nodes:
-            endoed_if = RPCInterface(
-                host=public_host,
-                port=args.service_port,
-                endorsement=Endorsement(
-                    authority=EndorsementAuthority.ACME,
-                    acme_configuration=acme_config_name,
-                ),
-                app_protocol=AppProtocol.HTTP2,
+        nodes = []
+        for internal, external, ext_name, _ in args.node_addresses:
+            host_spec = HostSpec.from_str(internal, http2=True)
+            int_if = host_spec.rpc_interfaces[PRIMARY_RPC_INTERFACE]
+            ext_if = HostSpec.from_str(external, http2=True).rpc_interfaces[
+                PRIMARY_RPC_INTERFACE
+            ]
+            ext_if.endorsement = Endorsement(
+                authority=EndorsementAuthority.ACME, acme_configuration=acme_config_name
             )
-            node.rpc_interfaces["acme_endorsed_interface"] = endoed_if
+            ext_if.public_host = ext_name
+            ext_if.public_port = ext_if.port
+            host_spec.rpc_interfaces["ext_if"] = ext_if
+
             if (
                 acme_config
                 and "challenge_type" in acme_config
                 and acme_config["challenge_type"] == "http-01"
+                # and len(nodes) == 0
             ):
-                node.rpc_interfaces["acme_challenge_server_if"] = RPCInterface(
-                    host=public_host,
+                host_spec.rpc_interfaces["acme_challenge_server_if"] = RPCInterface(
+                    host=int_if.host,
                     port=args.acme_http_port,
+                    # public_host=ext_if.public_host,
+                    # public_port=args.acme_http_port,
                     endorsement=Endorsement(authority=EndorsementAuthority.Unsecured),
                     accepted_endpoints=["/.well-known/acme-challenge/.*"],
+                    app_protocol=AppProtocol.HTTP1,
                 )
-                args.acme["configurations"][acme_config_name][
-                    "challenge_server_interface"
-                ] = "acme_challenge_server_if"
+
+            # tcp_dns_if = RPCInterface(
+            #     host=public_host,
+            #     port=8053,
+            #     transport="tcp",
+            #     endorsement=Endorsement(authority=EndorsementAuthority.Unsecured),
+            #     app_protocol=AppProtocol.Custom,
+            # )
+            # node.rpc_interfaces["tcp_dns_if"] = tcp_dns_if
+
+            nodes += [host_spec]
 
         network = infra.network.Network(
-            args.nodes,
+            nodes,
             args.binary_dir,
             args.debug_nodes,
             args.perf_nodes,
@@ -296,49 +382,61 @@ def run(args, adns_config):
         )
         network.start_and_open(args)
 
-        if args.registration_policy:
-            set_policy(network, "set_registration_policy", args.registration_policy)
-        if args.delegation_policy:
-            set_policy(network, "set_delegation_policy", args.delegation_policy)
+        args.adns.node_addresses = args.adns["node_addresses"] = assign_node_addresses(
+            network, args.node_addresses, False
+        )
 
-        node = network.find_random_node()
-        primary_if = node.host.rpc_interfaces[PRIMARY_RPC_INTERFACE]
-        host, port = primary_if.host, primary_if.port
-        net_cert_path = os.path.join(node.common_dir, "service_cert.pem")
-
-        if args.start_proxy:
-            proxy_proc = start_dns_to_http_proxy(
-                doh_proxy_binary,
-                public_host,
-                "53",
-                "https://" + host + ":" + str(port) + "/app/dns-query",
-                net_cert_path,
+        if args.adns.registration_policy:
+            set_policy(
+                network, "set_registration_policy", args.adns.registration_policy
             )
+        if args.adns.delegation_policy:
+            set_policy(network, "set_delegation_policy", args.adns.delegation_policy)
 
-        reginfo = configure(network, adns_config)
+        if with_proxies:
+            done = []
+            for host_spec in network.nodes:
+                rpif = host_spec.host.rpc_interfaces[PRIMARY_RPC_INTERFACE]
+                rhost, rport = rpif.host, rpif.port
+                if rhost not in done:
+                    net_cert_path = os.path.join(
+                        host_spec.common_dir, "service_cert.pem"
+                    )
+                    proxy_procs += [
+                        start_dns_to_http_proxy(
+                            doh_proxy_binary,
+                            rhost,
+                            "53",
+                            "https://" + rhost + ":" + str(rport) + "/app/dns-query",
+                            net_cert_path,
+                        )
+                    ]
+                    done += [rhost]
+
+        reginfo = configure(network, args.adns)
 
         endorsed_certs = None
-        if args.wait_for_endorsed_cert:
-            endorsed_certs = wait_for_endorsed_certs(network, service_dns_name)
-
-        if args.populate:
-            populate(network, args)
+        if wait_for_endorsed_cert:
+            endorsed_certs = wait_for_endorsed_certs(
+                network, service_dns_name, num_retries=10000
+            )
 
         # TODO: restart the proxy with endorsed_cert?
 
-        LOG.success(f"Server/network for {args.origin} running.")
+        LOG.success("Server/network for {} running.", args.adns["origin"])
 
         if args.wait_forever:
             LOG.info("Waiting forever...")
             while True:
                 time.sleep(1)
         else:
-            return network, proxy_proc, endorsed_certs, reginfo
+            return network, proxy_procs, endorsed_certs, reginfo
 
     except Exception:
         logging.exception("caught exception")
-        if proxy_proc:
-            proxy_proc.kill()
+        if proxy_procs:
+            for p in proxy_procs:
+                p.kill()
 
     return None, None, None, None
 
@@ -383,41 +481,7 @@ if __name__ == "__main__":
 
         parser.add_argument("--wait-forever", help="Wait forever", action="store_true")
 
-    gargs = infra.e2e_args.cli_args(add)
-
-    gargs.nodes = infra.e2e_args.min_nodes(gargs, f=0)
-    gargs.constitution = glob.glob("../tests/constitution/*")
-    gargs.package = "libccfdns"
-
-    gargs.populate = True
-    gargs.registration_policy = """
-        data.claims.sgx_claims.report_body.mr_enclave.length == 32 &&
-        JSON.stringify(data.claims.custom_claims.sgx_report_data) == JSON.stringify([ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
-        """
-    gargs.delegation_policy = """
-        data.claims.sgx_claims.report_body.mr_enclave.length == 32 &&
-        JSON.stringify(data.claims.custom_claims.sgx_report_data) == JSON.stringify([ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
-        """
-
-    gargs.start_proxy = True
-    gargs.wait_for_endorsed_cert = False
-    gargs.fixed_zsk = False
-    gargs.ca_cert_filename = ""
-    gargs.ip = "51.143.161.224"
-
-    gargs.email = "cwinter@microsoft.com"
-    gargs.origin = "adns.ccf.dev."
-    gargs.soa = SOA.SOA(
-        rdc.IN,
-        rdt.SOA,
-        mname="ns1." + gargs.origin,
-        rname="some-dev.my-site.com.",
-        serial=4,
-        refresh=604800,
-        retry=86400,
-        expire=2419200,
-        minimum=0,
-    )
+    procs = []
 
     pebble_args = pebble.Arguments(
         dns_address="ns1.adns.ccf.dev:53",
@@ -427,13 +491,42 @@ if __name__ == "__main__":
         config_filename="pebble.config.json",
     )
 
-    gargs.ca_cert_filename = pebble_args.ca_cert_filename
+    pebble_proc, _, _ = pebble.run_pebble(pebble_args)
+    procs += [pebble_proc]
+    while not os.path.exists(pebble_args.ca_cert_filename):
+        time.sleep(0.25)
+    pebble_certs = pebble.ca_certs(pebble_args.mgmt_address)
+    pebble_certs += pebble.ca_certs_from_file(pebble_args.ca_cert_filename)
 
-    config = {
+    gargs = infra.e2e_args.cli_args(add)
+    gargs.node = ["local://10.1.0.4:8443"]
+    gargs.nodes = infra.e2e_args.min_nodes(gargs, f=0)
+    gargs.constitution = glob.glob("../tests/constitution/*")
+    gargs.package = "libccfdns"
+    gargs.proxy_ip = "10.1.0.4"
+    gargs.wait_for_endorsed_cert = False
+    gargs.fixed_zsk = False
+    gargs.ca_certs = pebble_certs
+    gargs.email = "cwinter@microsoft.com"
+
+    gargs.adns = {
         "configuration": {
+            "origin": "adns.ccf.dev.",
+            "soa": str(
+                SOA.SOA(
+                    rdc.IN,
+                    rdt.SOA,
+                    mname="ns1." + gargs.origin,
+                    rname="some-dev.my-site.com.",
+                    serial=4,
+                    refresh=604800,
+                    retry=86400,
+                    expire=2419200,
+                    minimum=0,
+                )
+            ),
             "name": "ns1.adns.ccf.dev.",
             "ip": "51.143.161.224",
-            "origin": gargs.origin,
             "default_ttl": 86400,
             "signing_algorithm": "ECDSAP384SHA384",
             "digest_type": "SHA384",
@@ -442,6 +535,18 @@ if __name__ == "__main__":
             "nsec3_hash_algorithm": "SHA1",
             "nsec3_hash_iterations": 3,
             "ca_certs": [],
+            "service_ca": {
+                "directory": "https://127.0.0.1:1024/dir",
+                "ca_certificates": pebble_certs,
+            },
+            "registration_policy": """
+                data.claims.sgx_claims.report_body.mr_enclave.length == 32 &&
+                JSON.stringify(data.claims.custom_claims.sgx_report_data) == JSON.stringify([ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+                """,
+            "delegation_policy": """
+                data.claims.sgx_claims.report_body.mr_enclave.length == 32 &&
+                JSON.stringify(data.claims.custom_claims.sgx_report_data) == JSON.stringify([ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+                """,
         }
     }
 

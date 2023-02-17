@@ -11,52 +11,40 @@ import infra.network
 import infra.node
 import infra.checker
 import infra.health_watcher
+from infra.interfaces import (
+    PRIMARY_RPC_INTERFACE,
+    HostSpec,
+    Endorsement,
+    EndorsementAuthority,
+)
 
 from loguru import logger as LOG
 
 import pebble
+from adns_tools import poll_for_receipt
 
 DEFAULT_NODES = ["local://127.0.0.1:8081"]
 
 
-def public_host_port(listen_addr):
-    """Extract public host/port"""
-    prot_host_port = listen_addr.split("//")
-    host_port = prot_host_port[1].split(":")
-    public_host = host_port[0]
-    public_port = host_port[1] if len(host_port) > 1 else "53"
-    return public_host, public_port
-
-
-def configure(network, service_info, adns_base_url, ca_certs):
+def configure(network, service_cfg):
     """Configure the service"""
 
     primary, _ = network.find_primary()
     r = None
     with primary.client() as client:
-        r = client.post(
-            "/app/configure",
-            {
-                "name": service_info["name"],
-                "alternative_names": service_info["alternative_names"],
-                "ip": service_info["ip"],
-                "port": service_info["port"],
-                "adns_base_url": adns_base_url,
-                "ca_certs": ca_certs,
-            },
-        )
+        r = client.post("/app/configure", service_cfg)
 
     assert r.status_code == http.HTTPStatus.OK
-    return json.loads(str(r.body))
+    reginfo = json.loads(str(r.body))
+    assert "x-ms-ccf-transaction-id" in r.headers
+    reginfo["configuration_receipt"] = poll_for_receipt(
+        network, r.headers["x-ms-ccf-transaction-id"]
+    )
+    return reginfo
 
 
 def run(args):
     """Run the demo service"""
-
-    if len(args.node) == 0:
-        args.node = DEFAULT_NODES
-
-    public_host, _ = public_host_port(args.node[0])
 
     acme_config_name = "custom"
     acme_config = None
@@ -89,7 +77,7 @@ def run(args):
         acme_config = {
             "ca_certs": ca_certs,
             "directory_url": acme_directory,
-            "service_dns_name": args.dns_name,
+            "service_dns_name": args.service_name,
             "contact": ["mailto:" + email],
             "terms_of_service_agreed": True,
             "challenge_type": "dns-01",
@@ -101,27 +89,27 @@ def run(args):
     if acme_config:
         args.acme = {"configurations": {acme_config_name: acme_config}}
 
-        for node in args.nodes:
-            endorsed_interface = infra.interfaces.RPCInterface(
-                host=public_host,
-                port=args.service_port,
-                endorsement=infra.interfaces.Endorsement(
-                    authority=infra.interfaces.EndorsementAuthority.ACME,
-                    acme_configuration=acme_config_name,
-                ),
-                transport="tcp",
-                app_protocol=infra.interfaces.AppProtocol.HTTP2,
+        host_specs = []
+        for internal, external, ext_name, _ in args.node_addresses:
+            host_spec = HostSpec.from_str(internal, http2=True)
+            ext_if = HostSpec.from_str(external, http2=True).rpc_interfaces[
+                PRIMARY_RPC_INTERFACE
+            ]
+            ext_if.public_host = ext_name
+            ext_if.public_port = ext_if.port
+            ext_if.endorsement = Endorsement(
+                authority=EndorsementAuthority.ACME, acme_configuration=acme_config_name
             )
-            endorsed_interface.public_host = args.dns_name
-            node.rpc_interfaces["endorsed_interface"] = endorsed_interface
+            host_spec.rpc_interfaces["ext_if"] = ext_if
+            host_specs += [host_spec]
 
     network = infra.network.Network(
-        args.nodes, args.binary_dir, args.debug_nodes, args.perf_nodes
+        host_specs, args.binary_dir, args.debug_nodes, args.perf_nodes
     )
 
     network.start_and_open(args)
 
-    LOG.success("Server/network for service43.adns.ccf.dev running.")
+    LOG.success("Server/network for {} running.", args.service_name)
 
     if args.wait_forever:
         LOG.info("Network open, waiting forever...")
@@ -146,14 +134,6 @@ if __name__ == "__main__":
         )
 
         parser.add_argument(
-            "--service-port",
-            help="Port for service interface",
-            action="store",
-            dest="service_port",
-            default=9443,
-        )
-
-        parser.add_argument(
             "--acme",
             help="ACME configuration name",
             action="store",
@@ -167,7 +147,6 @@ if __name__ == "__main__":
     gargs.nodes = infra.e2e_args.min_nodes(gargs, f=0)
     gargs.constitution = glob.glob("../tests/constitution/*")
     gargs.package = "libccf_demo_service"
-    gargs.http2 = True
 
     gargs.dns_name = "service43.adns.ccf.dev"
 

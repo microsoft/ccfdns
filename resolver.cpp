@@ -21,9 +21,7 @@
 #include <ccf/crypto/san.h>
 #include <ccf/crypto/sha256_hash.h>
 #include <ccf/ds/logger.h>
-#include <ccf/kv/map.h>
 #include <ccf/node/quote.h>
-#include <ccf/tx.h>
 #include <cctype>
 #include <chrono>
 #include <cstddef>
@@ -77,7 +75,7 @@ namespace aDNS
 
     {static_cast<uint16_t>(RFC7671::Type::TLSA), Type::TLSA},
 
-    {static_cast<uint16_t>(aDNS::Types::Type::TLSKEY), Type::TLSKEY},
+    // {static_cast<uint16_t>(aDNS::Types::Type::TLSKEY), Type::TLSKEY},
     {static_cast<uint16_t>(aDNS::Types::Type::ATTEST), Type::ATTEST},
   };
 
@@ -228,7 +226,7 @@ namespace aDNS
 
       case Type::CAA: return std::make_shared<RFC8659::CAA>(rdata); break;
 
-      case Type::TLSKEY: return std::make_shared<aDNS::Types::TLSKEY>(rdata); break;
+      // case Type::TLSKEY: return std::make_shared<aDNS::Types::TLSKEY>(rdata); break;
       case Type::ATTEST: return std::make_shared<aDNS::Types::ATTEST>(rdata); break;
 
       default: throw std::runtime_error("unsupported rdata format");
@@ -1050,49 +1048,73 @@ namespace aDNS
     return get_signing_key(cfg.origin, Class::IN, true).first;
   }
 
+  ResourceRecord Resolver::mk_rr(
+    const Name& name,
+    aDNS::Type type,
+    aDNS::Class class_,
+    uint32_t ttl,
+    const small_vector<uint16_t>& rdata)
+  {
+    return ResourceRecord(
+      name,
+      static_cast<uint16_t>(type),
+      static_cast<uint16_t>(class_),
+      ttl,
+      rdata);
+  }
+
   Resolver::RegistrationInformation Resolver::configure(
     const Configuration& cfg)
   {
     set_configuration(cfg);
 
-    add(
-      cfg.origin,
-      ResourceRecord(
-        cfg.origin,
-        static_cast<uint16_t>(aDNS::Type::NS),
-        static_cast<uint16_t>(aDNS::Class::IN),
-        cfg.default_ttl,
-        NS(cfg.name)));
-
-    add(
-      cfg.origin,
-      ResourceRecord(
-        cfg.name,
-        static_cast<uint16_t>(aDNS::Type::A),
-        static_cast<uint16_t>(aDNS::Class::IN),
-        cfg.default_ttl,
-        A(cfg.ip)));
-
-    sign(cfg.origin);
+    if (cfg.node_addresses.empty())
+      throw std::runtime_error("missing node information");
 
     auto tls_key = get_tls_key();
 
     RegistrationInformation out;
-    out.protocol = "tcp";
-    out.public_key = tls_key->public_key_pem().str();
 
-    auto sn = cfg.name.unterminated();
+    out.public_key = tls_key->public_key_pem().str();
+    out.node_information = get_node_information();
+
+    for (const auto& [id, addr] : cfg.node_addresses)
+    {
+      if (!addr.name.ends_with(cfg.origin))
+        throw std::runtime_error(fmt::format(
+          "invalid node name; '{}' is outside the zone", addr.name));
+
+      add(
+        cfg.origin,
+        mk_rr(cfg.origin, Type::NS, Class::IN, cfg.default_ttl, NS(addr.name)));
+
+      add(
+        cfg.origin,
+        mk_rr(addr.name, Type::A, Class::IN, cfg.default_ttl, A(addr.ip)));
+
+      // A records for origin?
+      add(
+        cfg.origin,
+        mk_rr(
+          cfg.origin, Type::A, Class::IN, /* cfg.default_ttl */ 1, A(addr.ip)));
+    }
+
+    sign(cfg.origin);
+
+    auto sn = cfg.origin.unterminated();
 
     std::vector<crypto::SubjectAltName> sans;
     sans.push_back({sn, false});
     if (cfg.alternative_names)
       for (const auto& san : *cfg.alternative_names)
         sans.push_back({san, false});
+    for (const auto& [id, addr] : cfg.node_addresses)
+      sans.push_back({addr.name.unterminated(), false});
 
     out.csr =
       tls_key->create_csr_der("CN=" + sn, sans, tls_key->public_key_pem());
 
-    auto dnskeys = resolve(cfg.origin, aDNS::QType::DNSKEY, aDNS::QClass::IN);
+    auto dnskeys = resolve(cfg.origin, QType::DNSKEY, QClass::IN);
 
     if (dnskeys.answers.size() > 0)
     {
@@ -1131,62 +1153,78 @@ namespace aDNS
         data[2 + j] = inx >= rsz ? 0 : rr.rdata[inx];
       }
 
-      ResourceRecord frr(
-        name,
-        static_cast<uint16_t>(Type::AAAA),
-        static_cast<uint16_t>(Class::IN),
-        configuration.default_ttl,
-        RFC3596::AAAA(data));
-      add(origin, frr);
+      add(
+        origin,
+        mk_rr(
+          name,
+          Type::AAAA,
+          Class::IN,
+          configuration.default_ttl,
+          RFC3596::AAAA(data)));
     }
+  }
+
+  Name Resolver::find_zone(const Name& name)
+  {
+    for (Name t = name.parent(); !t.is_root(); t = t.parent())
+      if (origin_exists(t))
+        return t;
+    throw std::runtime_error(
+      fmt::format("no suitable zone found for {}", name));
   }
 
   void Resolver::register_service(const RegistrationRequest& rr)
   {
-    auto configuration = get_configuration();
+    using namespace RFC7671;
+    using namespace RFC8659;
 
-    if (!origin_exists(rr.origin))
-      throw std::runtime_error("invalid origin");
+    auto configuration = get_configuration();
 
     OpenSSL::UqX509_REQ req(rr.csr, false);
     auto public_key = req.get_pubkey();
     auto public_key_pem = public_key.pem_pubkey();
 
     auto subject_name = req.get_subject_name().get_common_name();
-    Name name(subject_name);
+    Name service_name(subject_name);
 
-    if (!name.is_absolute())
-      name += std::vector<Label>{Label()};
+    if (!service_name.is_absolute())
+      service_name += std::vector<Label>{Label()};
 
-    CCF_APP_DEBUG("ADNS: Register service {} in {}", name, rr.origin);
+    auto origin = find_zone(service_name);
+
+    CCF_APP_DEBUG("ADNS: Register service {} in {}", service_name, origin);
 
     save_service_registration_request(rr);
-
-    if (!name.ends_with(rr.origin))
-      throw std::runtime_error("name outside of origin");
 
     if (!req.verify(public_key))
       throw std::runtime_error("CSR signature validation failed");
 
     bool policy_ok = false;
-    std::shared_ptr<ravl::Claims> claims = nullptr;
+    std::vector<std::shared_ptr<ravl::Claims>> claims;
 #ifdef QUOTE_VERIFICATION_FAILURE_OK
     try
 #endif
     {
-      std::shared_ptr<ravl::Attestation> att =
-        ravl::parse_attestation(rr.attestation);
-      if (!(claims = ravl::verify_synchronous(att)))
-        throw std::runtime_error("attestation verification failed: no claims");
-      std::string
-        policy_data = // TODO: add select state or JS functions to obtain it.
-        "var data = { claims: " + claims->to_json() + " };";
+      std::string policy_data = "var data = { claims: {";
+
+      for (const auto& [id, info] : rr.node_information)
+      {
+        std::shared_ptr<ravl::Attestation> att =
+          ravl::parse_attestation(info.attestation);
+        auto c = ravl::verify_synchronous(att);
+        if (!c)
+          throw std::runtime_error(
+            "attestation verification failed: no claims");
+        claims.push_back(c);
+        policy_data += (std::string)info.address.name + ": " + c->to_json();
+      }
+
+      policy_data += "  }};";
       policy_ok = evaluate_service_registration_policy(policy_data);
     }
 #ifdef QUOTE_VERIFICATION_FAILURE_OK
     catch (...)
     {
-      claims = std::make_shared<ravl::oe::Claims>();
       policy_ok = true;
     }
 #endif
@@ -1194,79 +1232,121 @@ namespace aDNS
     if (!policy_ok)
       throw std::runtime_error("service registration policy evaluation failed");
 
-    // publish ATTEST, TLSKEY
-    ResourceRecord att_rr(
-      name,
-      static_cast<uint16_t>(aDNS::Types::Type::ATTEST),
-      static_cast<uint16_t>(Class::IN),
-      configuration.default_ttl,
-      aDNS::Types::ATTEST(rr.attestation));
-    remove(rr.origin, name, Class::IN, Type::ATTEST);
-    add(rr.origin, att_rr);
-    add_fragmented(rr.origin, Name("attest") + name, att_rr);
+    // TODO: Check we're not overwriting existing registrations? Part of policy?
 
     uint16_t flags = 0x0000;
     auto pk_der = public_key.der_pubkey();
-    // pk_der is in SubjectPublicKeyInfo format (ASN.1)
-
     small_vector<uint16_t> public_key_sv(pk_der.size(), pk_der.data());
 
-    // TLSKEY: Use TLSA instead; possibly with slight changes.
-    ResourceRecord tlskey_rr(
-      name,
-      static_cast<uint16_t>(aDNS::Types::Type::TLSKEY),
-      static_cast<uint16_t>(Class::IN),
-      configuration.default_ttl,
-      aDNS::Types::TLSKEY(
-        flags, configuration.signing_algorithm, public_key_sv));
-    remove(rr.origin, name, Class::IN, Type::TLSKEY);
-    add(rr.origin, tlskey_rr);
+    for (const auto& [id, info] : rr.node_information)
+    {
+      const auto& name = info.address.name.terminated();
 
-    ResourceRecord address_rr(
-      name,
-      static_cast<uint16_t>(RFC1035::Type::A),
-      static_cast<uint16_t>(Class::IN),
-      configuration.default_ttl,
-      RFC1035::A(rr.ip));
-    add(rr.origin, address_rr);
+      if (!name.ends_with(service_name))
+        throw std::runtime_error(fmt::format(
+          "node name '{}' outside of service sub-zone '{}'",
+          name,
+          service_name));
 
-    // Add TLSA
-    using namespace RFC7671;
-    std::string prolow = rr.protocol;
-    std::transform(prolow.begin(), prolow.end(), prolow.begin(), ::tolower);
-    auto tlsa_name = Name("_" + std::to_string(rr.port)) +
-      Name(std::string("_") + prolow) + name;
+      // ATTEST RR
+      ResourceRecord att_rr = mk_rr(
+        name,
+        Type::ATTEST,
+        Class::IN,
+        configuration.default_ttl,
+        Types::ATTEST(info.attestation));
 
-    ResourceRecord tlsa_rr(
-      tlsa_name,
-      static_cast<uint16_t>(aDNS::Type::TLSA),
-      static_cast<uint16_t>(Class::IN),
-      configuration.default_ttl,
-      TLSA(
-        CertificateUsage::DANE_EE,
-        Selector::CERT,
-        MatchingType::Full,
-        public_key_sv));
+      remove(origin, name, Class::IN, Type::ATTEST);
+      add(origin, att_rr);
 
-    remove(rr.origin, tlsa_name, Class::IN, Type::TLSA);
-    add(rr.origin, tlsa_rr);
+      // Fragmented ATTEST RR
+      remove(origin, Name("attest") + name, Class::IN, Type::ATTEST);
+      add_fragmented(origin, Name("attest") + name, att_rr);
 
-    // Add CAA record(s)
-    using namespace RFC8659;
+      add(
+        origin,
+        mk_rr(
+          name,
+          Type::A,
+          Class::IN,
+          configuration.default_ttl,
+          RFC1035::A(info.address.ip)));
 
-    ResourceRecord caa_rr(
-      name,
-      static_cast<uint16_t>(aDNS::Type::CAA),
-      static_cast<uint16_t>(Class::IN),
-      configuration.default_ttl,
-      CAA(0x42, "tag", "value"));
+      // A records for the service name, one for each node.
+      add(
+        origin,
+        mk_rr(
+          service_name,
+          Type::A,
+          Class::IN,
+          configuration.default_ttl,
+          RFC1035::A(info.address.ip)));
 
-    remove(rr.origin, name, Class::IN, Type::CAA);
-    add(rr.origin, caa_rr);
+      // TLSA RR for node
+      std::string prolow = info.address.protocol;
+      std::transform(prolow.begin(), prolow.end(), prolow.begin(), ::tolower);
+      auto tlsa_name = Name("_" + std::to_string(info.address.port)) +
+        Name(std::string("_") + prolow) + name;
 
-    sign(rr.origin);
+      ResourceRecord tlsa_rr = mk_rr(
+        tlsa_name,
+        Type::TLSA,
+        Class::IN,
+        configuration.default_ttl,
+        TLSA(
+          CertificateUsage::DANE_EE,
+          Selector::CERT,
+          MatchingType::Full,
+          public_key_sv));
 
-    start_service_acme(rr.origin, name, rr.csr, rr.contact);
+      remove(origin, tlsa_name, Class::IN, Type::TLSA);
+      add(origin, tlsa_rr);
+    }
+
+    auto it = rr.node_information.begin();
+    std::string tlsa_prolow = it->second.address.protocol;
+    uint16_t tlsa_port = it->second.address.port;
+    for (it++; it != rr.node_information.end(); it++)
+    {
+      if (it->second.address.protocol != tlsa_prolow)
+        throw std::runtime_error("node protocol mismatch");
+      if (it->second.address.port != tlsa_port)
+        throw std::runtime_error("node port mismatch");
+    }
+
+    // TLSA RR for service
+    std::transform(
+      tlsa_prolow.begin(), tlsa_prolow.end(), tlsa_prolow.begin(), ::tolower);
+    auto tlsa_name = Name("_" + std::to_string(tlsa_port)) +
+      Name(std::string("_") + tlsa_prolow) + service_name;
+    remove(origin, service_name, Class::IN, Type::TLSA);
+    add(
+      origin,
+      mk_rr(
+        service_name,
+        Type::TLSA,
+        Class::IN,
+        configuration.default_ttl,
+        TLSA(
+          CertificateUsage::DANE_EE,
+          Selector::CERT,
+          MatchingType::Full,
+          public_key_sv)));
+
+    // CAA RR
+    remove(origin, service_name, Class::IN, Type::CAA);
+    add(
+      origin,
+      mk_rr(
+        service_name,
+        aDNS::Type::CAA,
+        Class::IN,
+        configuration.default_ttl,
+        CAA(0x42, "tag", "value")));
+
+    sign(origin);
+
+    start_service_acme(origin, service_name, rr.csr, rr.contact);
   }
 
   void Resolver::install_acme_response(
@@ -1286,10 +1366,10 @@ namespace aDNS
 
     add(
       origin,
-      ResourceRecord(
+      mk_rr(
         Name("_acme-challenge") + name,
-        static_cast<uint16_t>(Type::TXT),
-        static_cast<uint16_t>(Class::IN),
+        Type::TXT,
+        Class::IN,
         1,
         TXT(key_authorization)));
 
@@ -1297,10 +1377,10 @@ namespace aDNS
       if (n != name)
         add(
           origin,
-          ResourceRecord(
+          mk_rr(
             Name("_acme-challenge") + n,
-            static_cast<uint16_t>(Type::TXT),
-            static_cast<uint16_t>(Class::IN),
+            Type::TXT,
+            Class::IN,
             1,
             TXT(key_authorization)));
 
@@ -1314,13 +1394,9 @@ namespace aDNS
 
   void Resolver::register_delegation(const DelegationRequest& dr)
   {
-    auto configuration = get_configuration();
+    auto cfg = get_configuration();
 
-    if (!origin_exists(dr.origin))
-      throw std::runtime_error("invalid origin");
-
-    if (!dr.subdomain.ends_with(dr.origin))
-      throw std::runtime_error("subdomain not within origin");
+    auto origin = find_zone(dr.subdomain);
 
     OpenSSL::UqX509_REQ req(dr.csr, false);
     auto public_key = req.get_pubkey();
@@ -1332,35 +1408,42 @@ namespace aDNS
     if (!name.is_absolute())
       name += std::vector<Label>{Label()};
 
-    CCF_APP_DEBUG("ADNS: Register delegation {} in {}", name, dr.origin);
+    CCF_APP_DEBUG("ADNS: Register delegation {} in {}", name, origin);
 
     save_delegation_registration_request(dr);
 
-    if (!name.ends_with(dr.origin))
+    if (!name.ends_with(origin))
       throw std::runtime_error("name outside of origin");
 
     if (!req.verify(public_key))
       throw std::runtime_error("CSR signature validation failed");
 
     bool policy_ok = false;
-    std::shared_ptr<ravl::Claims> claims = nullptr;
+    std::vector<std::shared_ptr<ravl::Claims>> claims;
 #ifdef QUOTE_VERIFICATION_FAILURE_OK
     try
 #endif
     {
-      std::shared_ptr<ravl::Attestation> att =
-        ravl::parse_attestation(dr.attestation);
-      if (!(claims = ravl::verify_synchronous(att)))
-        throw std::runtime_error("attestation verification failed: no claims");
-      std::string
-        policy_data = // TODO: add select state or JS functions to obtain it.
-        "var data = { claims: " + claims->to_json() + " };";
+      std::string policy_data = "var data = { claims: {";
+
+      for (const auto& [id, info] : dr.node_information)
+      {
+        std::shared_ptr<ravl::Attestation> att =
+          ravl::parse_attestation(info.attestation);
+        auto c = ravl::verify_synchronous(att);
+        if (!c)
+          throw std::runtime_error(
+            "attestation verification failed: no claims");
+        claims.push_back(c);
+        policy_data += (std::string)info.address.name + ": " + c->to_json();
+      }
+
+      policy_data += "  }};";
       policy_ok = evaluate_delegation_registration_policy(policy_data);
     }
 #ifdef QUOTE_VERIFICATION_FAILURE_OK
     catch (...)
     {
-      claims = std::make_shared<ravl::oe::Claims>();
       policy_ok = true;
     }
 #endif
@@ -1369,45 +1452,50 @@ namespace aDNS
       throw std::runtime_error(
         "delegation registration policy evaluation failed");
 
-    ResourceRecord ns_rr(
-      dr.subdomain,
-      static_cast<uint16_t>(RFC1035::Type::NS),
-      static_cast<uint16_t>(Class::IN),
-      configuration.default_ttl,
-      RFC1035::NS(dr.name));
-    add(dr.origin, ns_rr);
+    for (const auto& [id, info] : dr.node_information)
+    {
+      add(
+        origin,
+        mk_rr(
+          dr.subdomain,
+          Type::NS,
+          Class::IN,
+          cfg.default_ttl,
+          NS(info.address.name)));
+    }
 
     for (const auto& dnskey_rr : dr.dnskey_records)
     {
       auto tag = get_key_tag(dnskey_rr.rdata);
 
       add(
-        dr.origin,
+        origin,
         RFC4034::DSRR(
           dr.subdomain,
           RFC1035::Class::IN,
-          configuration.default_ttl,
+          cfg.default_ttl,
           tag,
-          configuration.signing_algorithm,
-          configuration.digest_type,
+          cfg.signing_algorithm,
+          cfg.digest_type,
           dnskey_rr.rdata));
     }
 
-    sign(dr.origin);
+    sign(origin);
 
     // Glue records are not signed
     // (https://datatracker.ietf.org/doc/html/rfc4035#section-2.2)
 
     RFC4034::CanonicalRRSet glue_records;
 
-    glue_records += ResourceRecord(
-      dr.name,
-      static_cast<uint16_t>(RFC1035::Type::A),
-      static_cast<uint16_t>(Class::IN),
-      configuration.default_ttl,
-      RFC1035::A(dr.ip));
+    for (const auto& [id, info] : dr.node_information)
+      glue_records += mk_rr(
+        info.address.name,
+        Type::A,
+        Class::IN,
+        cfg.default_ttl,
+        RFC1035::A(info.address.ip));
 
     for (const auto& gr : glue_records)
-      add(dr.origin, gr);
+      add(origin, gr);
   }
 }
