@@ -1466,16 +1466,20 @@ namespace aDNS
 
     for (const auto& dnskey_rr : dr.dnskey_records)
     {
-      auto tag = get_key_tag(dnskey_rr.rdata);
+      if (!dnskey_rr.name.ends_with(origin))
+        throw std::runtime_error("DNSKEY record name not within the zone");
+
+      RFC4034::DNSKEY dnskey(dnskey_rr.rdata);
+      auto key_tag = get_key_tag(dnskey);
 
       add(
         origin,
         RFC4034::DSRR(
-          dr.subdomain,
-          RFC1035::Class::IN,
-          cfg.default_ttl,
-          tag,
-          cfg.signing_algorithm,
+          dnskey_rr.name,
+          static_cast<RFC1035::Class>(dnskey_rr.class_),
+          dnskey_rr.ttl,
+          key_tag,
+          dnskey.algorithm,
           cfg.digest_type,
           dnskey_rr.rdata));
     }

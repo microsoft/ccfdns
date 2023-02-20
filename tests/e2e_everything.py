@@ -217,8 +217,8 @@ def main():
         (
             "local://10.1.0.4:1443",  # primary/internal
             "local://10.1.0.4:8443",  # external/endorsed
-            "ns1.adns.ccf.dev",  # global
-            "51.143.161.224",
+            "ns1.adns.ccf.dev",  # public name
+            "51.143.161.224",  # public IP
         ),
         # (
         #     "local://10.1.0.5:1443",
@@ -314,7 +314,6 @@ XIiPf1pGst9TyaEfzTi/XxVqK/CGdZFct9r9eYMjWm01P6HLQi22SjI=
     service_args.email = "bill@example.com"
     service_args.acme_config_name = "custom"
     service_args.wait_forever = False
-    service_args.alternative_names = ["www." + service_args.service_name]
     service_args.http2 = True
     service_args.adns_base_url = "https://ns1.adns.ccf.dev:8443"
 
@@ -414,7 +413,6 @@ XIiPf1pGst9TyaEfzTi/XxVqK/CGdZFct9r9eYMjWm01P6HLQi22SjI=
     sub_service_args.acme_config_name = "custom"
     sub_service_args.acme_directory = ""
     sub_service_args.wait_forever = False
-    sub_service_args.alternative_names = ["www." + sub_service_args.service_name]
     sub_service_args.email = "joe@example.com"
     sub_service_args.http2 = True
     sub_service_args.adns_base_url = "https://ns4.sub.adns.ccf.dev:8443"

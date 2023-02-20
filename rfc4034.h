@@ -296,26 +296,6 @@ namespace RFC4034 // https://datatracker.ietf.org/doc/html/rfc4034
     uint16_t type;
     uint32_t ttl;
     std::set<small_vector<uint16_t>> rdata;
-
-    // bool operator<(const CRRS& other) const
-    // {
-    //   if (name != other.name)
-    //     return name < other.name;
-    //   if (class_ != other.class_)
-    //     return class_ < other.class_;
-    //   if (type != other.type)
-    //     return type < other.type;
-    //   if (ttl != other.ttl)
-    //     return ttl < other.ttl;
-    //   for (size_t i = 0; i < rdata.size(); i++)
-    //   {
-    //     if (i >= other.rdata.size())
-    //       return false;
-    //     if (rdata[i] != other.rdata[i])
-    //       return rdata[i] < other.rdata[i];
-    //   }
-    //   return true;
-    // }
   };
 
   // https://datatracker.ietf.org/doc/html/rfc4034#section-2

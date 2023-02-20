@@ -802,6 +802,34 @@ namespace ccfdns
       // We now wait until start-acme-client is called, before starting the ACME
       // client. Alternatively, we could also poll via DNS until we see
       // ourselves.
+
+#ifndef NDEBUG
+      if (reginfo.dnskey_records)
+      {
+        CCF_APP_INFO("ADNS: Our DNSKEY records: ");
+        for (const auto& dnskey_rr : *reginfo.dnskey_records)
+          CCF_APP_INFO("ADNS: - {}", string_from_resource_record(dnskey_rr));
+
+        CCF_APP_INFO("ADNS: Our proposed DS records: ");
+        for (const auto& dnskey_rr : *reginfo.dnskey_records)
+        {
+          auto key_tag = get_key_tag(dnskey_rr.rdata);
+          RFC4034::DNSKEY dnskey_rdata(dnskey_rr.rdata);
+
+          RFC4034::DSRR ds(
+            dnskey_rr.name,
+            static_cast<RFC1035::Class>(dnskey_rr.class_),
+            dnskey_rr.ttl,
+            key_tag,
+            dnskey_rdata.algorithm,
+            cfg.digest_type,
+            dnskey_rdata);
+
+          CCF_APP_INFO("ADNS: - {}", string_from_resource_record(ds));
+        }
+      }
+#endif
+
       return reginfo;
     }
 
@@ -1010,6 +1038,7 @@ namespace ccfdns
         ccf::json_adapter(configure),
         ccf::no_auth_required)
         .set_auto_schema<Configure::In, Configure::Out>()
+        .set_forwarding_required(ccf::endpoints::ForwardingRequired::Always)
         .install();
 
       auto start_acme_client = [this](auto& ctx, nlohmann::json&& params) {
@@ -1032,6 +1061,7 @@ namespace ccfdns
         ccf::json_adapter(start_acme_client),
         ccf::no_auth_required)
         .set_auto_schema<void, void>()
+        .set_forwarding_required(ccf::endpoints::ForwardingRequired::Always)
         .install();
 
       auto install_acme_response = [this](auto& ctx, nlohmann::json&& params) {
@@ -1060,6 +1090,7 @@ namespace ccfdns
         ccf::json_adapter(install_acme_response),
         {std::make_shared<ccf::NodeCertAuthnPolicy>()})
         .set_auto_schema<InstallACMEResponse::In, InstallACMEResponse::Out>()
+        .set_forwarding_required(ccf::endpoints::ForwardingRequired::Always)
         .install();
 
       auto remove_acme_response = [this](auto& ctx, nlohmann::json&& params) {
@@ -1106,6 +1137,7 @@ namespace ccfdns
         ccf::json_adapter(add),
         {std::make_shared<ccf::NodeCertAuthnPolicy>()})
         .set_auto_schema<AddRecord::In, AddRecord::Out>()
+        .set_forwarding_required(ccf::endpoints::ForwardingRequired::Always)
         .install();
 
       auto dns_query = [this](auto& ctx) {
@@ -1164,10 +1196,12 @@ namespace ccfdns
 
       make_endpoint("/dns-query", HTTP_GET, dns_query, ccf::no_auth_required)
         .set_auto_schema<void, std::vector<uint8_t>>()
+        .set_forwarding_required(ccf::endpoints::ForwardingRequired::Never)
         .install();
 
       make_endpoint("/dns-query", HTTP_POST, dns_query, ccf::no_auth_required)
         .set_auto_schema<void, std::vector<uint8_t>>()
+        .set_forwarding_required(ccf::endpoints::ForwardingRequired::Never)
         .install();
 
       auto register_service = [this](auto& ctx, nlohmann::json&& params) {
@@ -1192,6 +1226,7 @@ namespace ccfdns
         ccf::json_adapter(register_service),
         ccf::no_auth_required)
         .set_auto_schema<RegisterService::In, RegisterService::Out>()
+        .set_forwarding_required(ccf::endpoints::ForwardingRequired::Always)
         .install();
 
       auto register_delegation = [this](auto& ctx, nlohmann::json&& params) {
@@ -1216,6 +1251,7 @@ namespace ccfdns
         ccf::json_adapter(register_delegation),
         ccf::no_auth_required)
         .set_auto_schema<RegisterDelegation::In, RegisterDelegation::Out>()
+        .set_forwarding_required(ccf::endpoints::ForwardingRequired::Always)
         .install();
 
       auto set_certificate = [this](auto& ctx, nlohmann::json&& params) {
@@ -1239,6 +1275,7 @@ namespace ccfdns
         ccf::json_adapter(set_certificate),
         {std::make_shared<ccf::NodeCertAuthnPolicy>()})
         .set_auto_schema<SetCertificate::In, SetCertificate::Out>()
+        .set_forwarding_required(ccf::endpoints::ForwardingRequired::Always)
         .install();
 
       auto get_certificate = [this](auto& ctx, nlohmann::json&& params) {
@@ -1264,6 +1301,7 @@ namespace ccfdns
         ccf::json_adapter(get_certificate),
         ccf::no_auth_required)
         .set_auto_schema<GetCertificate::In, GetCertificate::Out>()
+        .set_forwarding_required(ccf::endpoints::ForwardingRequired::Never)
         .install();
     }
 

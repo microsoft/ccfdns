@@ -46,7 +46,12 @@ namespace RFC1035 // https://datatracker.ietf.org/doc/html/rfc1035
 
       data = small_vector<uint8_t>(bytes[pos]);
       for (size_t i = 0; i < bytes[pos]; i++)
-        data[i] = bytes[pos + 1 + i];
+      {
+        auto index = pos + 1 + i;
+        if (index >= bytes.size())
+          throw std::runtime_error("not enough label data");
+        data[i] = bytes.at(index);
+      }
       pos += data.size() + 1;
     }
 
@@ -64,7 +69,13 @@ namespace RFC1035 // https://datatracker.ietf.org/doc/html/rfc1035
 
       data = small_vector<uint8_t>(bytes[pos]);
       for (size_t i = 0; i < bytes[pos]; i++)
-        data[i] = bytes[pos + 1 + i];
+      {
+        auto index = pos + 1 + i;
+        if (index >= bytes.size())
+          throw std::runtime_error("not enough label data");
+        data[i] = bytes.at(index);
+      }
+
       pos += data.size() + 1;
     }
 
