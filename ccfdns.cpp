@@ -36,6 +36,7 @@
 #include <ccf/service/tables/acme_certificates.h>
 #include <ccf/service/tables/nodes.h>
 #include <ccf/version.h>
+#include <memory>
 #include <nlohmann/json.hpp>
 #include <optional>
 #include <quickjs/quickjs-exports.h>
@@ -1051,6 +1052,7 @@ namespace ccfdns
           throw std::runtime_error("node initialization failed");
         ccfdns->set_endpoint_context(&ctx);
       }
+
       ~ContextContext()
       {
         if (ccfdns)
@@ -1369,19 +1371,6 @@ namespace ccfdns
       ccfdns->find_internal_interface();
     }
   };
-}
-
-namespace ccfapp
-{
-  std::shared_ptr<ccf::Session> make_custom_server_session(
-    ccf::ApplicationProtocol app_protocol,
-    tls::ConnID id,
-    const ccf::ListenInterfaceID& listen_interface_id,
-    const std::unique_ptr<tls::Context>& ctx,
-    const http::ParserConfiguration& parser_configuration)
-  {
-    return nullptr;
-  }
 }
 
 namespace ccfapp
