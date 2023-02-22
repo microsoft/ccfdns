@@ -266,6 +266,11 @@ def make_acme_config(args, service_dns_name):
         if config_name == "pebble":
             acme_directory = "https://127.0.0.1:1024/dir"
             email = args.email
+            challenge_type = "http-01"
+        elif config_name == "pebble-dns":
+            acme_directory = "https://127.0.0.1:1024/dir"
+            email = args.email
+            challenge_type = "dns-01"
         elif config_name == "letsencrypt":
             if args.acme_http_port != 80:
                 raise Exception(
@@ -281,9 +286,11 @@ def make_acme_config(args, service_dns_name):
             if not args.email:
                 raise Exception("Valid e-mail address is required for Let's Encrypt")
             email = args.email
+            challenge_type = "http-01"
         else:
             acme_directory = args.acme_directory if "acme_directory" in args else ""
             email = args.email
+            challenge_type = "http-01"
 
         config = {
             "ca_certs": args.ca_certs,
@@ -291,7 +298,7 @@ def make_acme_config(args, service_dns_name):
             "service_dns_name": service_dns_name,
             "contact": ["mailto:" + email],
             "terms_of_service_agreed": True,
-            "challenge_type": "http-01",
+            "challenge_type": challenge_type,
             "alternative_names": [],
         }
 
@@ -322,7 +329,7 @@ def run(args, wait_for_endorsed_cert=False, with_proxies=True):
 
     service_dns_name = args.adns.origin.strip(".")
 
-    # Proxy is here: https://github.com/aarond10/https_dns_proxy
+    # DoH Proxy is here: https://github.com/aarond10/https_dns_proxy
     # Note: proxy needs: sudo setcap 'cap_net_bind_service=+ep' https_dns_proxy
     doh_proxy_binary = "/data/cwinter/https_dns_proxy/build/https_dns_proxy"
     proxy_procs = []
@@ -335,7 +342,7 @@ def run(args, wait_for_endorsed_cert=False, with_proxies=True):
         nodes = []
         for internal, external, ext_name, _ in args.node_addresses:
             host_spec = HostSpec.from_str(internal, http2=True)
-            int_if = host_spec.rpc_interfaces[PRIMARY_RPC_INTERFACE]
+            # int_if = host_spec.rpc_interfaces[PRIMARY_RPC_INTERFACE]
             ext_if = HostSpec.from_str(external, http2=True).rpc_interfaces[
                 PRIMARY_RPC_INTERFACE
             ]
@@ -345,22 +352,6 @@ def run(args, wait_for_endorsed_cert=False, with_proxies=True):
             ext_if.public_host = ext_name
             ext_if.public_port = ext_if.port
             host_spec.rpc_interfaces["ext_if"] = ext_if
-
-            if (
-                acme_config
-                and "challenge_type" in acme_config
-                and acme_config["challenge_type"] == "http-01"
-                # and len(nodes) == 0
-            ):
-                host_spec.rpc_interfaces["acme_challenge_server_if"] = RPCInterface(
-                    host=int_if.host,
-                    port=args.acme_http_port,
-                    # public_host=ext_if.public_host,
-                    # public_port=args.acme_http_port,
-                    endorsement=Endorsement(authority=EndorsementAuthority.Unsecured),
-                    accepted_endpoints=["/.well-known/acme-challenge/.*"],
-                    app_protocol=AppProtocol.HTTP1,
-                )
 
             # tcp_dns_if = RPCInterface(
             #     host=public_host,
@@ -553,7 +544,7 @@ if __name__ == "__main__":
     nw = None
     procs = []
     try:
-        nw, p, _, _ = run(gargs, config)
+        nw, p, _, _ = run(gargs)
         procs += [p]
     finally:
         if nw:

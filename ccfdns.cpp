@@ -101,10 +101,10 @@ namespace ccfdns
       const ACME::ClientConfig& config,
       const std::vector<uint8_t>& service_csr,
       const std::string& node_address,
-      std::shared_ptr<ccf::ACMESubsystemInterface> subsys,
+      std::shared_ptr<ccf::ACMESubsystemInterface> acme_ss,
       std::shared_ptr<crypto::KeyPair> account_key_pair = nullptr) :
       ACME::Client(config, account_key_pair),
-      subsys(subsys),
+      acme_ss(acme_ss),
       resolver(resolver),
       node_address(node_address),
       origin(origin),
@@ -113,22 +113,28 @@ namespace ccfdns
 
     virtual ~ACMEClient() = default;
 
+    std::string key_authorization_digest(
+      const std::string& token, const std::string& response)
+    {
+      auto key_authorization = token + "." + response;
+      auto digest = crypto::sha256(
+        (uint8_t*)key_authorization.data(), key_authorization.size());
+      return crypto::b64url_from_raw(
+        (uint8_t*)digest.data(), digest.size(), false);
+    }
+
     virtual void on_challenge(
       const std::string& token, const std::string& response) override
     {
       CCF_APP_DEBUG("ADNS ACME: on_challenge for {}", config.service_dns_name);
 
-      auto key_authorization = token + "." + response;
-      auto digest = crypto::sha256(
-        (uint8_t*)key_authorization.data(), key_authorization.size());
-      auto digest_b64 =
-        crypto::b64url_from_raw((uint8_t*)digest.data(), digest.size(), false);
+      auto digest_b64 = key_authorization_digest(token, response);
 
       std::vector<Name> sans;
       for (const auto& n : config.alternative_names)
         sans.push_back(n + ".");
 
-      subsys->make_http_request(
+      acme_ss->make_http_request(
         "POST",
         node_address + "/app/internal/install-acme-response",
         {},
@@ -157,7 +163,7 @@ namespace ccfdns
 
       return;
 
-      subsys->make_http_request(
+      acme_ss->make_http_request(
         "POST",
         node_address + "/app/internal/remove-acme-response",
         {},
@@ -176,7 +182,7 @@ namespace ccfdns
     {
       CCF_APP_DEBUG("ADNS ACME: on_certificate");
 
-      subsys->make_http_request(
+      acme_ss->make_http_request(
         "POST",
         node_address + "/app/internal/set-certificate",
         {},
@@ -213,7 +219,7 @@ namespace ccfdns
         req.get_content_data(),
         req.get_content_data() + req.get_content_length());
 
-      subsys->make_http_request(
+      acme_ss->make_http_request(
         method,
         url_str,
         req.get_headers(),
@@ -230,7 +236,7 @@ namespace ccfdns
     }
 
   private:
-    std::shared_ptr<ccf::ACMESubsystemInterface> subsys;
+    std::shared_ptr<ccf::ACMESubsystemInterface> acme_ss;
     Resolver& resolver;
     std::string node_address;
     std::string origin;
@@ -252,35 +258,25 @@ namespace ccfdns
       nci_ss(nci_ss)
     {
       acme_account_key_pair = crypto::make_key_pair(crypto::CurveID::SECP384R1);
-
-      auto ncs = nci_ss->get();
-
-      // Interface for internal RPC calls
-      auto interface_id = "primary_rpc_interface";
-
-      auto iit = ncs.node_config.network.rpc_interfaces.find(interface_id);
-      if (iit == ncs.node_config.network.rpc_interfaces.end())
-        CCF_APP_FAIL("Interface '{}' not found", interface_id);
-      else
-        internal_node_address = "https://" + iit->second.published_address;
-
-      for (const auto& iface : ncs.node_config.network.rpc_interfaces)
-      {
-        if (
-          iface.second.endorsement->authority == ccf::Authority::ACME &&
-          iface.second.endorsement->acme_configuration)
-        {
-          acme_config_name = *iface.second.endorsement->acme_configuration;
-          internal_node_address = "https://" + iit->second.published_address;
-          external_interface_name = iface.first;
-          break;
-        }
-      }
     }
 
     virtual ~CCFDNS() {}
 
-    std::string external_interface_name;
+    void find_internal_interface()
+    {
+      // Find an interface for internal RPC calls and the ACME config name
+      auto ncs = nci_ss->get();
+
+      for (const auto& iface : ncs.node_config.network.rpc_interfaces)
+      {
+        const auto& e = iface.second.endorsement;
+        if (e->authority == ccf::Authority::ACME && e->acme_configuration)
+          acme_config_name = *iface.second.endorsement->acme_configuration;
+        else
+          internal_node_address = "https://" + iface.second.published_address;
+      }
+    }
+
     std::string node_id;
     std::string my_name;
     std::vector<uint8_t> my_acme_csr;
@@ -727,7 +723,7 @@ namespace ccfdns
           ccf::Tables::ACME_CERTIFICATES);
         if (!tbl)
           throw std::runtime_error("missing ACME certificate table");
-        tbl->put("custom", certificate_pem);
+        tbl->put(acme_config_name, certificate_pem);
         service_cert_ok = true;
       }
       else
@@ -799,9 +795,6 @@ namespace ccfdns
       check_context();
       auto reginfo = Resolver::configure(cfg);
       my_acme_csr = reginfo.csr;
-      // We now wait until start-acme-client is called, before starting the ACME
-      // client. Alternatively, we could also poll via DNS until we see
-      // ourselves.
 
 #ifndef NDEBUG
       if (reginfo.dnskey_records)
@@ -830,21 +823,80 @@ namespace ccfdns
       }
 #endif
 
+      if (my_name.empty())
+      {
+        auto it = cfg.node_addresses.find(node_id);
+        if (it == cfg.node_addresses.end())
+          throw std::runtime_error("bug: own node address not found");
+        my_name = it->second.name;
+        while (my_name.back() == '.')
+          my_name.pop_back();
+        CCF_APP_DEBUG("MY NAME: {}", my_name);
+      }
+
+      if (cfg.parent_base_url)
+      {
+        // When delegating, we now wait until start-delegation-acme-client is
+        // called, before starting the ACME client. Alternatively, we could also
+        // poll via DNS until we see ourselves.
+      }
+      else
+      {
+        // No parent, i.e. we are a TLD and need to get our TLS certificate
+        // directly from the CA, instead of another aDNS instance.
+
+        auto cn = cfg.origin.unterminated();
+
+        ACME::ClientConfig acme_client_config = {
+          .ca_certs = cfg.service_ca.ca_certificates,
+          .directory_url = cfg.service_ca.directory,
+          .service_dns_name = cn,
+          .alternative_names = {cn},
+          .contact = cfg.contact,
+          .terms_of_service_agreed = true,
+          .challenge_type = "dns-01"};
+
+        acme_client_config.ca_certs.push_back(nwid_ss->get()->cert.str());
+
+        for (const auto& c : cfg.ca_certs)
+          acme_client_config.ca_certs.push_back(c);
+
+        std::vector<crypto::SubjectAltName> sans;
+        sans.push_back({cn, false});
+
+        for (const auto& [id, addr] : cfg.node_addresses)
+        {
+          auto name = addr.name.unterminated();
+          acme_client_config.alternative_names.push_back(name);
+          sans.push_back({name, false});
+        }
+
+        auto tls_key = get_tls_key();
+        auto csr =
+          tls_key->create_csr_der("CN=" + cn, sans, tls_key->public_key_pem());
+
+        auto acme_client = std::make_shared<ccfdns::ACMEClient>(
+          *this,
+          cfg.origin,
+          acme_client_config,
+          csr,
+          internal_node_address,
+          acme_ss,
+          acme_account_key_pair);
+
+        acme_client->get_certificate(acme_account_key_pair);
+
+        acme_clients[cn] = acme_client;
+      }
+
       return reginfo;
     }
 
-    virtual void start_acme_client()
+    virtual void start_delegation_acme_client()
     {
       check_context();
 
       const auto& cfg = get_configuration();
-
-      auto it = cfg.node_addresses.find(node_id);
-      if (it == cfg.node_addresses.end())
-        throw std::runtime_error("bug: own node address not found");
-      my_name = it->second.name;
-      while (my_name.back() == '.')
-        my_name.pop_back();
 
       if (cfg.parent_base_url)
       {
@@ -989,6 +1041,23 @@ namespace ccfdns
       return r;
     }
 
+    class ContextContext
+    {
+    public:
+      ContextContext(
+        std::shared_ptr<CCFDNS> ccfdns, ccf::endpoints::EndpointContext& ctx)
+      {
+        if (!ccfdns)
+          throw std::runtime_error("node initialization failed");
+        ccfdns->set_endpoint_context(&ctx);
+      }
+      ~ContextContext()
+      {
+        if (ccfdns)
+          ccfdns->set_endpoint_context(nullptr);
+      }
+    };
+
   public:
     Handlers(ccfapp::AbstractNodeContext& context) :
       ccf::UserEndpointRegistry(context)
@@ -1000,22 +1069,11 @@ namespace ccfdns
 
       node_id = context.get_node_id();
 
-      class ContextContext
-      {
-      public:
-        ContextContext(
-          std::shared_ptr<CCFDNS> ccfdns, ccf::endpoints::EndpointContext& ctx)
-        {
-          if (!ccfdns)
-            throw std::runtime_error("node initialization failed");
-          ccfdns->set_endpoint_context(&ctx);
-        }
-        ~ContextContext()
-        {
-          if (ccfdns)
-            ccfdns->set_endpoint_context(nullptr);
-        }
-      };
+      auto acme_ss = context.get_subsystem<ccf::ACMESubsystemInterface>();
+      auto nwid_ss = context.get_subsystem<ccf::NetworkIdentitySubsystem>();
+      auto nci_ss = context.get_subsystem<ccf::NodeConfigurationInterface>();
+
+      ccfdns = std::make_shared<CCFDNS>(node_id, acme_ss, nwid_ss, nci_ss);
 
       auto configure = [this](auto& ctx, nlohmann::json&& params) {
         try
@@ -1045,7 +1103,7 @@ namespace ccfdns
         try
         {
           ContextContext cc(ccfdns, ctx);
-          ccfdns->start_acme_client();
+          ccfdns->start_delegation_acme_client();
           return ccf::make_success();
         }
         catch (std::exception& ex)
@@ -1056,7 +1114,7 @@ namespace ccfdns
       };
 
       make_endpoint(
-        "/start-acme-client",
+        "/start-delegation-acme-client",
         HTTP_POST,
         ccf::json_adapter(start_acme_client),
         ccf::no_auth_required)
@@ -1308,12 +1366,7 @@ namespace ccfdns
     virtual void init_handlers() override
     {
       ccf::UserEndpointRegistry::init_handlers();
-
-      auto acme_ss = context.get_subsystem<ccf::ACMESubsystemInterface>();
-      auto nwid_ss = context.get_subsystem<ccf::NetworkIdentitySubsystem>();
-      auto nci_ss = context.get_subsystem<ccf::NodeConfigurationInterface>();
-
-      ccfdns = std::make_shared<CCFDNS>(node_id, acme_ss, nwid_ss, nci_ss);
+      ccfdns->find_internal_interface();
     }
   };
 }

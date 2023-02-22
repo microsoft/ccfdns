@@ -80,7 +80,7 @@ def register_delegation(
 
     sub_primary, _ = sub_adns_network.find_primary()
     with sub_primary.client() as client:
-        r = client.post("/app/start-acme-client", {})
+        r = client.post("/app/start-delegation-acme-client", {})
 
     return receipt
 
@@ -220,24 +220,23 @@ def main():
             "ns1.adns.ccf.dev",  # public name
             "51.143.161.224",  # public IP
         ),
-        # (
-        #     "local://10.1.0.5:1443",
-        #     "local://10.1.0.5:8443",
-        #     "ns2.adns.ccf.dev",
-        #     "20.108.155.64",
-        # ),
-        # (
-        #     "local://10.1.0.6:1443",
-        #     "local://10.1.0.6:8443",
-        #     "ns3.adns.ccf.dev",
-        #     "20.0.255.182",
-        # ),
+        (
+            "local://10.1.0.5:1443",
+            "local://10.1.0.5:8443",
+            "ns2.adns.ccf.dev",
+            "20.108.155.64",
+        ),
+        (
+            "local://10.1.0.6:1443",
+            "local://10.1.0.6:8443",
+            "ns3.adns.ccf.dev",
+            "20.0.255.182",
+        ),
     ]
     adns_args.constitution = glob.glob("../tests/constitution/*")
     adns_args.package = "libccfdns"
     adns_args.label = "demo_adns"
-    adns_args.acme_config_name = "pebble"  # CA for TLD aDNS server
-    adns_args.acme_http_port = pebble_args.http_port
+    adns_args.acme_config_name = "custom"
     adns_args.email = "some-dev@example.com"
     adns_args.wait_forever = False
     adns_args.http2 = True
@@ -245,7 +244,7 @@ def main():
 
     adns_args.adns = aDNSConfig(
         origin="adns.ccf.dev.",
-        service_name="ns1.adns.ccf.dev.",
+        service_name="adns.ccf.dev.",
         node_addresses={},
         soa=str(
             SOA.SOA(
@@ -346,13 +345,12 @@ XIiPf1pGst9TyaEfzTi/XxVqK/CGdZFct9r9eYMjWm01P6HLQi22SjI=
     sub_adns_args.email = "some-dev@sub.example.com"
     sub_adns_args.acme_config_name = "custom"
     sub_adns_args.wait_forever = False
-    sub_adns_args.acme_http_port = None
     sub_adns_args.http2 = True
     sub_adns_args.ca_certs = []
 
     sub_adns_args.adns = aDNSConfig(
         origin="sub.adns.ccf.dev.",
-        service_name="ns1.sub.adns.ccf.dev.",
+        service_name="sub.adns.ccf.dev.",
         node_addresses=[],
         soa=str(
             SOA.SOA(
@@ -411,7 +409,6 @@ XIiPf1pGst9TyaEfzTi/XxVqK/CGdZFct9r9eYMjWm01P6HLQi22SjI=
     sub_service_args.package = "libccf_demo_service"
     sub_service_args.label = "demo_sub_service"
     sub_service_args.acme_config_name = "custom"
-    sub_service_args.acme_directory = ""
     sub_service_args.wait_forever = False
     sub_service_args.email = "joe@example.com"
     sub_service_args.http2 = True

@@ -59,7 +59,7 @@ endif()
 
 if (VIRTUAL)  
   if (CMAKE_BUILD_TYPE MATCHES Debug)
-    target_compile_definitions(${ENCLAVE_TARGET} PRIVATE QUOTE_VERIFICATION_FAILURE_OK)
+    target_compile_definitions(${ENCLAVE_TARGET} PRIVATE ATTESTATION_VERIFICATION_FAILURE_OK)
     target_compile_options(${ENCLAVE_TARGET} PRIVATE -fstandalone-debug)
     set(ASAN_BLACKLIST -fsanitize-blacklist=${CMAKE_CURRENT_SOURCE_DIR}/asan_blacklist.txt)
     target_compile_options(${ENCLAVE_TARGET} PUBLIC -O1 -g -fsanitize=address ${ASAN_BLACKLIST} -fno-omit-frame-pointer)
@@ -112,7 +112,7 @@ endfunction()
 
 if (VIRTUAL)
   add_unit_test(resolver_tests ../tests/resolver_tests.cpp resolver.cpp rfc4034.cpp rfc5155.cpp base32.cpp)
-  target_compile_definitions(resolver_tests PRIVATE QUOTE_VERIFICATION_FAILURE_OK)  
+  target_compile_definitions(resolver_tests PRIVATE ATTESTATION_VERIFICATION_FAILURE_OK)  
 endif()
 
 add_ccf_app(ccf_demo_service
@@ -124,7 +124,7 @@ if (VERBOSE_LOGGING)
   target_compile_definitions(${DEMO_ENCLAVE_TARGET} PRIVATE -DVERBOSE_LOGGING)
 endif()
 if (CMAKE_BUILD_TYPE MATCHES Debug)
-  target_compile_definitions(${DEMO_ENCLAVE_TARGET} PRIVATE QUOTE_VERIFICATION_FAILURE_OK)
+  target_compile_definitions(${DEMO_ENCLAVE_TARGET} PRIVATE ATTESTATION_VERIFICATION_FAILURE_OK)
   target_compile_options(${DEMO_ENCLAVE_TARGET} PRIVATE -fstandalone-debug)
 endif()
 
@@ -134,5 +134,3 @@ sign_app_library(
   ${CMAKE_CURRENT_BINARY_DIR}/signing_key.pem
 )
 endif()
-
-# add_test(NAME e2e_everything COMMAND ${CMAKE_COMMAND} -E env PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}/tests:${CCF_PKG_DIR}/../bin python ../tests/e2e_everything.py -b "${CCF_PKG_DIR}/../bin" ${TEST_PLATFORM_ARGS} --library-dir .)

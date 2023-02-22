@@ -21,7 +21,6 @@
 #include <ccf/crypto/san.h>
 #include <ccf/crypto/sha256_hash.h>
 #include <ccf/ds/logger.h>
-#include <ccf/node/quote.h>
 #include <cctype>
 #include <chrono>
 #include <cstddef>
@@ -1092,27 +1091,25 @@ namespace aDNS
         cfg.origin,
         mk_rr(addr.name, Type::A, Class::IN, cfg.default_ttl, A(addr.ip)));
 
-      // A records for origin?
-      add(
-        cfg.origin,
-        mk_rr(
-          cfg.origin, Type::A, Class::IN, /* cfg.default_ttl */ 1, A(addr.ip)));
+      add(cfg.origin, mk_rr(cfg.origin, Type::A, Class::IN, 1, A(addr.ip)));
     }
 
     sign(cfg.origin);
 
-    auto sn = cfg.origin.unterminated();
-
+    std::string cn;
     std::vector<crypto::SubjectAltName> sans;
-    sans.push_back({sn, false});
-    if (cfg.alternative_names)
-      for (const auto& san : *cfg.alternative_names)
-        sans.push_back({san, false});
+
+    cn = cfg.origin.unterminated();
+    sans.push_back({cn, false});
     for (const auto& [id, addr] : cfg.node_addresses)
       sans.push_back({addr.name.unterminated(), false});
 
+    if (cfg.alternative_names)
+      for (const auto& san : *cfg.alternative_names)
+        sans.push_back({san, false});
+
     out.csr =
-      tls_key->create_csr_der("CN=" + sn, sans, tls_key->public_key_pem());
+      tls_key->create_csr_der("CN=" + cn, sans, tls_key->public_key_pem());
 
     auto dnskeys = resolve(cfg.origin, QType::DNSKEY, QClass::IN);
 
@@ -1201,7 +1198,7 @@ namespace aDNS
 
     bool policy_ok = false;
     std::vector<std::shared_ptr<ravl::Claims>> claims;
-#ifdef QUOTE_VERIFICATION_FAILURE_OK
+#ifdef ATTESTATION_VERIFICATION_FAILURE_OK
     try
 #endif
     {
@@ -1222,7 +1219,7 @@ namespace aDNS
       policy_data += "  }};";
       policy_ok = evaluate_service_registration_policy(policy_data);
     }
-#ifdef QUOTE_VERIFICATION_FAILURE_OK
+#ifdef ATTESTATION_VERIFICATION_FAILURE_OK
     catch (...)
     {
       policy_ok = true;
@@ -1360,6 +1357,9 @@ namespace aDNS
     if (!origin_exists(origin))
       throw std::runtime_error("invalid origin");
 
+    if (!name.ends_with(origin))
+      throw std::runtime_error("name outside of zone");
+
     // Note: does not necessarily have to be installed on the same DNS server;
     // we can delegate the challenge to someone else, e.g. a non-DNSSEC
     // server.
@@ -1389,6 +1389,12 @@ namespace aDNS
 
   void Resolver::remove_acme_response(const Name& origin, const Name& name)
   {
+    if (!origin_exists(origin))
+      throw std::runtime_error("invalid origin");
+
+    if (!name.ends_with(origin))
+      throw std::runtime_error("name outside of zone");
+
     remove(origin, Name("_acme-challenge") + name, Class::IN, Type::TXT);
   }
 
@@ -1420,7 +1426,7 @@ namespace aDNS
 
     bool policy_ok = false;
     std::vector<std::shared_ptr<ravl::Claims>> claims;
-#ifdef QUOTE_VERIFICATION_FAILURE_OK
+#ifdef ATTESTATION_VERIFICATION_FAILURE_OK
     try
 #endif
     {
@@ -1441,7 +1447,7 @@ namespace aDNS
       policy_data += "  }};";
       policy_ok = evaluate_delegation_registration_policy(policy_data);
     }
-#ifdef QUOTE_VERIFICATION_FAILURE_OK
+#ifdef ATTESTATION_VERIFICATION_FAILURE_OK
     catch (...)
     {
       policy_ok = true;

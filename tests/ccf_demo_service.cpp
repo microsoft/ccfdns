@@ -192,7 +192,9 @@ namespace service
         }
       };
 
-      make_endpoint("/", HTTP_GET, index, ccf::no_auth_required).install();
+      make_endpoint("/", HTTP_GET, index, ccf::no_auth_required)
+        .set_forwarding_required(ccf::endpoints::ForwardingRequired::Never)
+        .install();
 
       auto configure = [this](auto& ctx, nlohmann::json&& params) {
         try
