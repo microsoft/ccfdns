@@ -355,7 +355,7 @@ def run(args, wait_for_endorsed_cert=False, with_proxies=True, tcp_port=None):
 
             if tcp_port:
                 tcp_dns_if = RPCInterface(
-                    host=ext_if.public_host,
+                    host=ext_if.host,
                     port=tcp_port,
                     transport="tcp",
                     endorsement=Endorsement(authority=EndorsementAuthority.Unsecured),
