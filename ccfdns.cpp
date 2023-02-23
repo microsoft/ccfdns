@@ -114,6 +114,26 @@ namespace ccfdns
 
     virtual ~ACMEClient() = default;
 
+    void reconfigure(
+      const std::string& origin,
+      const ACME::ClientConfig& config,
+      const std::vector<uint8_t>& service_csr,
+      const std::string& node_address,
+      std::shared_ptr<ccf::ACMESubsystemInterface> acme_ss,
+      std::shared_ptr<crypto::KeyPair> account_key_pair = nullptr)
+    {
+      this->origin = origin;
+      this->service_csr = service_csr;
+      this->node_address = node_address;
+      this->acme_ss = acme_ss;
+
+      this->config = config;
+      this->account_key_pair = account_key_pair;
+
+      active_orders.clear();
+      num_failed_attempts = 0;
+    }
+
     std::string key_authorization_digest(
       const std::string& token, const std::string& response)
     {

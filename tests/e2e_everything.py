@@ -37,7 +37,7 @@ nonzero_mrenclave_policy = """
 """
 
 
-def register_service(network, service_info, registration_info, num_retries=3):
+def register_service(network, service_info, registration_info, num_retries=10):
     """Register the service"""
     while num_retries > 0:
         try:
@@ -65,11 +65,13 @@ def register_service(network, service_info, registration_info, num_retries=3):
             if num_retries == 0:
                 raise ex
             else:
-                LOG.error("Registration failed; retrying.")
+                n = 5
+                LOG.error(f"Registration failed; retrying in {n} seconds.")
+                time.sleep(n)
 
 
 def register_delegation(
-    adns_network, sub_adns_network, delegation_info, registration_info, num_retries=3
+    adns_network, sub_adns_network, delegation_info, registration_info, num_retries=10
 ):
     """Register delegation of a subdomain"""
 
@@ -111,7 +113,9 @@ def register_delegation(
             if num_retries == 0:
                 raise ex
             else:
-                LOG.error("Registration failed; retrying.")
+                n = 5
+                LOG.error(f"Registration failed; retrying in {n} seconds.")
+                time.sleep(n)
 
 
 def run_server(args, wait_for_endorsed_cert=False, with_proxies=True):
@@ -155,7 +159,11 @@ def start_and_register_service(adns_nw, service_args, adns_endorsed_certs):
             registration_receipt = register_service(adns_nw, service_cfg, reginfo)
             registered = True
         except Exception as ex:
-            LOG.info(f"ex: {ex}")
+            if hasattr(ex, "message"):
+                LOG.info(f"Exception: {ex.message}")
+            else:
+                LOG.info(f"Exception: {ex}")
+            logging.exception("caught exception")
 
     assert registration_receipt is not None
 
@@ -215,7 +223,11 @@ def run(pebble_args, adns_args, service_args, sub_adns_args, sub_service_args):
         while True:
             pass
 
-    except Exception:
+    except Exception as ex:
+        if hasattr(ex, "message"):
+            LOG.info(f"Exception: {ex.message}")
+        else:
+            LOG.info(f"Exception: {ex}")
         logging.exception("caught exception")
     finally:
         if service_nw:
