@@ -91,8 +91,8 @@ def run(args):
 
         host_specs = []
         for internal, external, ext_name, _ in args.node_addresses:
-            host_spec = HostSpec.from_str(internal, http2=True)
-            ext_if = HostSpec.from_str(external, http2=True).rpc_interfaces[
+            host_spec = HostSpec.from_str(internal, http2=False)
+            ext_if = HostSpec.from_str(external, http2=False).rpc_interfaces[
                 PRIMARY_RPC_INTERFACE
             ]
             ext_if.public_host = ext_name

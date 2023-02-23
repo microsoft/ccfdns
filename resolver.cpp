@@ -295,13 +295,13 @@ namespace aDNS
         throw std::runtime_error(
           fmt::format("algorithm {} not supported", algorithm));
       auto coords = signing_key->coordinates();
-      CCF_APP_DEBUG(
+      CCF_APP_TRACE(
         "ADNS: SIGN: key x/y {}{}", ds::to_hex(coords.x), ds::to_hex(coords.y));
-      CCF_APP_DEBUG("SIGN: data={}", ds::to_hex(data_to_sign));
+      CCF_APP_TRACE("SIGN: data={}", ds::to_hex(data_to_sign));
       auto sig = signing_key->sign(data_to_sign, crypto::MDType::SHA384);
-      CCF_APP_DEBUG("ADNS: SIGN: sig={}", ds::to_hex(sig));
+      CCF_APP_TRACE("ADNS: SIGN: sig={}", ds::to_hex(sig));
       convert_ec_signature_to_ieee_p1363(sig, signing_key);
-      CCF_APP_DEBUG("ADNS: SIGN: r/s sig={}", ds::to_hex(sig));
+      CCF_APP_TRACE("ADNS: SIGN: r/s sig={}", ds::to_hex(sig));
       return sig;
     };
     return r;
@@ -368,7 +368,7 @@ namespace aDNS
         bool have_opt = false;
         if (rr.type == static_cast<uint16_t>(Type::OPT))
         {
-          CCF_APP_DEBUG("ADNS: EDNS(0): {}", string_from_resource_record(rr));
+          CCF_APP_TRACE("ADNS: EDNS(0): {}", string_from_resource_record(rr));
           if (have_opt)
           {
             // https://datatracker.ietf.org/doc/html/rfc6891#section-6.1.1
@@ -389,7 +389,7 @@ namespace aDNS
             udp_payload_size,
             (uint32_t)ttl,
             {});
-          CCF_APP_DEBUG(
+          CCF_APP_TRACE(
             "ADNS: EDNS(0) reply: {}", string_from_resource_record(opt_reply));
           r.additionals.push_back(opt_reply);
           have_opt = true;
@@ -407,11 +407,11 @@ namespace aDNS
     }
     catch (std::exception& ex)
     {
-      CCF_APP_DEBUG("ADNS: Exception: {}", ex.what());
+      CCF_APP_FAIL("ADNS: Exception: {}", ex.what());
     }
     catch (...)
     {
-      CCF_APP_DEBUG("ADNS: Unknown exception");
+      CCF_APP_FAIL("ADNS: Unknown exception");
     }
 
     Message r;
@@ -428,7 +428,7 @@ namespace aDNS
     QClass qclass,
     std::optional<std::function<bool(const ResourceRecord&)>> condition)
   {
-    CCF_APP_DEBUG(
+    CCF_APP_TRACE(
       "ADNS: Find: {} {} {} {}",
       origin,
       name,
@@ -440,7 +440,7 @@ namespace aDNS
       qclass,
       qtype,
       [this, &origin, &name, &qclass, &records, &condition](const auto& rr) {
-        CCF_APP_DEBUG("ADNS:  - {}", string_from_resource_record(rr));
+        CCF_APP_TRACE("ADNS:  - {}", string_from_resource_record(rr));
         if (rr.name == name && (!condition || (*condition)(rr)))
           records.insert(rr);
         return true;
@@ -817,9 +817,9 @@ namespace aDNS
 
       auto [crecords, names] = order_records(origin, static_cast<QClass>(c));
 
-      CCF_APP_DEBUG("ADNS: Records to sign at {}:", origin);
+      CCF_APP_TRACE("ADNS: Records to sign at {}:", origin);
       for (const auto& rr : crecords)
-        CCF_APP_DEBUG("ADNS:  {}", string_from_resource_record(rr));
+        CCF_APP_TRACE("ADNS:  {}", string_from_resource_record(rr));
 
       {
         // Remove existing RRSIGs and NSECs (could be avoided)
@@ -927,10 +927,10 @@ namespace aDNS
         for (auto it = hashed_names_map.begin(); it != hashed_names_map.end();
              it++)
         {
-          CCF_APP_DEBUG("ADNS:  - {}: ", ds::to_hex(it->first));
+          CCF_APP_TRACE("ADNS:  - {}: ", ds::to_hex(it->first));
           for (size_t i = 0; i < it->second.size(); i++)
           {
-            CCF_APP_DEBUG(
+            CCF_APP_TRACE(
               "ADNS:    - {}", string_from_resource_record(*(it->second)[i]));
           }
         }
@@ -1189,7 +1189,7 @@ namespace aDNS
 
     auto origin = find_zone(service_name);
 
-    CCF_APP_DEBUG("ADNS: Register service {} in {}", service_name, origin);
+    CCF_APP_INFO("ADNS: Register service {} in {}", service_name, origin);
 
     save_service_registration_request(rr);
 
@@ -1213,7 +1213,8 @@ namespace aDNS
           throw std::runtime_error(
             "attestation verification failed: no claims");
         claims.push_back(c);
-        policy_data += (std::string)info.address.name + ": " + c->to_json();
+        policy_data +=
+          "\"" + (std::string)info.address.name + "\": " + c->to_json() + ",";
       }
 
       policy_data += "  }};";
@@ -1414,7 +1415,7 @@ namespace aDNS
     if (!name.is_absolute())
       name += std::vector<Label>{Label()};
 
-    CCF_APP_DEBUG("ADNS: Register delegation {} in {}", name, origin);
+    CCF_APP_INFO("ADNS: Register delegation {} in {}", name, origin);
 
     save_delegation_registration_request(dr);
 
@@ -1441,7 +1442,8 @@ namespace aDNS
           throw std::runtime_error(
             "attestation verification failed: no claims");
         claims.push_back(c);
-        policy_data += (std::string)info.address.name + ": " + c->to_json();
+        policy_data +=
+          "\"" + (std::string)info.address.name + "\": " + c->to_json() + ",";
       }
 
       policy_data += "  }};";

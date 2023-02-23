@@ -150,11 +150,15 @@ namespace ccfdns
             http_status == HTTP_STATUS_NO_CONTENT)
             start_challenge(token);
           else
-            CCF_APP_FAIL("ADNS ACME: error http_status={}", http_status);
+          {
+            std::string sbody(body.begin(), body.end());
+            CCF_APP_FAIL(
+              "ADNS ACME: error http_status={} body:\n{}", http_status, sbody);
+          }
           return true;
         },
         config.ca_certs,
-        ccf::ApplicationProtocol::HTTP2,
+        ccf::ApplicationProtocol::HTTP1,
         true);
     }
 
@@ -175,7 +179,7 @@ namespace ccfdns
           const http::HeaderMap&,
           const std::vector<uint8_t>&) { return true; },
         config.ca_certs,
-        ccf::ApplicationProtocol::HTTP2,
+        ccf::ApplicationProtocol::HTTP1,
         true);
     }
 
@@ -193,7 +197,7 @@ namespace ccfdns
           const http::HeaderMap&,
           const std::vector<uint8_t>&) { return true; },
         config.ca_certs,
-        ccf::ApplicationProtocol::HTTP2,
+        ccf::ApplicationProtocol::HTTP1,
         true);
     }
 
@@ -944,7 +948,10 @@ namespace ccfdns
       override
     {
       if (have_acme_client(name))
-        throw std::runtime_error("registration in process");
+      {
+        CCF_APP_DEBUG("CCFDNS: erasing previous ACME client for {}", name);
+        acme_clients.erase(name);
+      }
 
       const auto& cfg = get_configuration();
 
@@ -1378,7 +1385,13 @@ namespace ccfapp
   std::unique_ptr<ccf::endpoints::EndpointRegistry> make_user_endpoints(
     ccfapp::AbstractNodeContext& context)
   {
+#if defined(TRACE_LOGGING)
     logger::config::level() = logger::TRACE;
+#elif defined(VERBOSE_LOGGING)
+    logger::config::level() = logger::DEBUG;
+#else
+    logger::config::level() = logger::INFO;
+#endif
     return std::make_unique<ccfdns::Handlers>(context);
   }
 }

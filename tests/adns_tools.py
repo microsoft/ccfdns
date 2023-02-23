@@ -28,6 +28,10 @@ def cert_to_pem(x):
     return x.public_bytes(serialization.Encoding.PEM).decode("ascii")
 
 
+class NoReceiptException(Exception):
+    pass
+
+
 def poll_for_receipt(network: infra.network.Network, txid):
     """Poll for a receipt of a transaction"""
     primary, _ = network.find_primary()
@@ -38,6 +42,14 @@ def poll_for_receipt(network: infra.network.Network, txid):
             r.status_code == http.HTTPStatus.ACCEPTED
             or r.status_code == http.HTTPStatus.NOT_FOUND
         ):
+            if r.status_code == http.HTTPStatus.NOT_FOUND:
+                b = json.loads(str(r.body))
+                if (
+                    "error" in b
+                    and "code" in b["error"]
+                    and b["error"]["code"] != "TransactionPendingOrUnknown"
+                ):
+                    raise NoReceiptException()
             d = int(r.headers["retry-after"] if "retry-after" in r.headers else 3)
             LOG.info(f"waiting {d} seconds before retrying...")
             time.sleep(d)

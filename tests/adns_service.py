@@ -341,9 +341,9 @@ def run(args, wait_for_endorsed_cert=False, with_proxies=True):
     try:
         nodes = []
         for internal, external, ext_name, _ in args.node_addresses:
-            host_spec = HostSpec.from_str(internal, http2=True)
+            host_spec = HostSpec.from_str(internal, http2=False)
             # int_if = host_spec.rpc_interfaces[PRIMARY_RPC_INTERFACE]
-            ext_if = HostSpec.from_str(external, http2=True).rpc_interfaces[
+            ext_if = HostSpec.from_str(external, http2=False).rpc_interfaces[
                 PRIMARY_RPC_INTERFACE
             ]
             ext_if.endorsement = Endorsement(

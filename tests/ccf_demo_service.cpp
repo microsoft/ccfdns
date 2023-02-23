@@ -339,7 +339,7 @@ namespace service
                             return true;
                           },
                           data.ca_certs,
-                          ccf::ApplicationProtocol::HTTP2,
+                          ccf::ApplicationProtocol::HTTP1,
                           true);
                       }
                       catch (...)
@@ -350,7 +350,7 @@ namespace service
                     }
                   },
                   msg->data.ca_certs,
-                  ccf::ApplicationProtocol::HTTP2);
+                  ccf::ApplicationProtocol::HTTP1);
 
                 threading::ThreadMessaging::instance().add_task_after(
                   std::move(msg), std::chrono::seconds(1));

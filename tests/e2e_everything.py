@@ -24,65 +24,94 @@ import adns_service
 from adns_service import aDNSConfig, ServiceCAConfig
 import ccf_demo_service
 import pebble
-from adns_tools import cert_to_pem, poll_for_receipt
+from adns_tools import cert_to_pem, poll_for_receipt, NoReceiptException
 
 
-def register_service(network, service_info, registration_info):
+nonzero_mrenclave_policy = """
+    let r = true;
+    for (const [name, claims] of Object.entries(data.claims)) {
+        r &= claims.sgx_claims.report_body.mr_enclave.length == 32 &&
+            JSON.stringify(claims.custom_claims.sgx_report_data) != JSON.stringify([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    }
+    r == true
+"""
+
+
+def register_service(network, service_info, registration_info, num_retries=3):
     """Register the service"""
-    primary, _ = network.find_primary()
-    with primary.client() as client:
-        r = client.post(
-            "/app/register-service",
-            {
-                "contact": service_info["contact"],
-                "csr": registration_info["csr"],
-                "node_information": registration_info["node_information"],
-                "configuration_receipt": str(
-                    registration_info["configuration_receipt"]
-                ),
-            },
-        )
-        assert (
-            r.status_code == http.HTTPStatus.OK
-            or r.status_code == http.HTTPStatus.NO_CONTENT
-        )
-        assert "x-ms-ccf-transaction-id" in r.headers
-        return poll_for_receipt(network, r.headers["x-ms-ccf-transaction-id"])
+    while num_retries > 0:
+        try:
+            primary, _ = network.find_primary()
+            with primary.client() as client:
+                r = client.post(
+                    "/app/register-service",
+                    {
+                        "contact": service_info["contact"],
+                        "csr": registration_info["csr"],
+                        "node_information": registration_info["node_information"],
+                        "configuration_receipt": str(
+                            registration_info["configuration_receipt"]
+                        ),
+                    },
+                )
+                assert (
+                    r.status_code == http.HTTPStatus.OK
+                    or r.status_code == http.HTTPStatus.NO_CONTENT
+                )
+                assert "x-ms-ccf-transaction-id" in r.headers
+                return poll_for_receipt(network, r.headers["x-ms-ccf-transaction-id"])
+        except Exception as ex:
+            num_retries = num_retries - 1
+            if num_retries == 0:
+                raise ex
+            else:
+                LOG.error("Registration failed; retrying.")
 
 
 def register_delegation(
-    adns_network, sub_adns_network, delegation_info, registration_info
+    adns_network, sub_adns_network, delegation_info, registration_info, num_retries=3
 ):
     """Register delegation of a subdomain"""
-    primary, _ = adns_network.find_primary()
-    r = None
-    with primary.client() as client:
-        r = client.post(
-            "/app/register-delegation",
-            {
-                "subdomain": delegation_info["subdomain"],
-                "contact": delegation_info["contact"],
-                #
-                "csr": registration_info["csr"],
-                "dnskey_records": registration_info["dnskey_records"],
-                "node_information": registration_info["node_information"],
-                "configuration_receipt": str(
-                    registration_info["configuration_receipt"]
-                ),
-            },
-        )
-    assert (
-        r.status_code == http.HTTPStatus.OK
-        or r.status_code == http.HTTPStatus.NO_CONTENT
-    )
-    assert "x-ms-ccf-transaction-id" in r.headers
-    receipt = poll_for_receipt(adns_network, r.headers["x-ms-ccf-transaction-id"])
 
-    sub_primary, _ = sub_adns_network.find_primary()
-    with sub_primary.client() as client:
-        r = client.post("/app/start-delegation-acme-client", {})
+    while num_retries > 0:
+        try:
+            primary, _ = adns_network.find_primary()
+            r = None
+            with primary.client() as client:
+                r = client.post(
+                    "/app/register-delegation",
+                    {
+                        "subdomain": delegation_info["subdomain"],
+                        "contact": delegation_info["contact"],
+                        #
+                        "csr": registration_info["csr"],
+                        "dnskey_records": registration_info["dnskey_records"],
+                        "node_information": registration_info["node_information"],
+                        "configuration_receipt": str(
+                            registration_info["configuration_receipt"]
+                        ),
+                    },
+                )
+            assert (
+                r.status_code == http.HTTPStatus.OK
+                or r.status_code == http.HTTPStatus.NO_CONTENT
+            )
+            assert "x-ms-ccf-transaction-id" in r.headers
+            receipt = poll_for_receipt(
+                adns_network, r.headers["x-ms-ccf-transaction-id"]
+            )
 
-    return receipt
+            sub_primary, _ = sub_adns_network.find_primary()
+            with sub_primary.client() as client:
+                r = client.post("/app/start-delegation-acme-client", {})
+
+            return receipt
+        except Exception as ex:
+            num_retries = num_retries - 1
+            if num_retries == 0:
+                raise ex
+            else:
+                LOG.error("Registration failed; retrying.")
 
 
 def run_server(args, wait_for_endorsed_cert=False, with_proxies=True):
@@ -94,7 +123,7 @@ def run_server(args, wait_for_endorsed_cert=False, with_proxies=True):
     )
 
     if not adns_nw:
-        raise Exception("Failed to start aD NS network")
+        raise Exception("Failed to start aDNS network")
 
     return adns_nw, procs, adns_endorsed_certs, reginfo
 
@@ -119,9 +148,14 @@ def start_and_register_service(adns_nw, service_args, adns_endorsed_certs):
         "node_addresses": node_addr,
     }
 
-    reginfo = ccf_demo_service.configure(service_nw, service_cfg)
-
-    registration_receipt = register_service(adns_nw, service_cfg, reginfo)
+    registered = False
+    while not registered:
+        try:
+            reginfo = ccf_demo_service.configure(service_nw, service_cfg)
+            registration_receipt = register_service(adns_nw, service_cfg, reginfo)
+            registered = True
+        except Exception as ex:
+            LOG.info(f"ex: {ex}")
 
     assert registration_receipt is not None
 
@@ -239,7 +273,7 @@ def main():
     adns_args.acme_config_name = "custom"
     adns_args.email = "some-dev@example.com"
     adns_args.wait_forever = False
-    adns_args.http2 = True
+    adns_args.http2 = False
     adns_args.ca_certs = []
 
     adns_args.adns = aDNSConfig(
@@ -272,14 +306,8 @@ def main():
             directory="https://127.0.0.1:1024/dir",
             ca_certificates=[],
         ),
-        registration_policy="""
-            data.claims.sgx_claims.report_body.mr_enclave.length == 32 &&
-            JSON.stringify(data.claims.custom_claims.sgx_report_data) == JSON.stringify([ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
-        """,
-        delegation_policy="""
-            data.claims.sgx_claims.report_body.mr_enclave.length == 32 &&
-            JSON.stringify(data.claims.custom_claims.sgx_report_data) == JSON.stringify([ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
-        """,
+        registration_policy=nonzero_mrenclave_policy,
+        delegation_policy=nonzero_mrenclave_policy,
         fixed_zsk="""-----BEGIN PRIVATE KEY-----
 MIG2AgEAMBAGByqGSM49AgEGBSuBBAAiBIGeMIGbAgEBBDApoJlA4ykORqLIJQNq
 rpE/KtX8WlGRmFj13deg1pLu2uazeeMKf4ccPOa4sH7oQWqhZANiAATe2J/4MjjS
@@ -313,7 +341,7 @@ XIiPf1pGst9TyaEfzTi/XxVqK/CGdZFct9r9eYMjWm01P6HLQi22SjI=
     service_args.email = "bill@example.com"
     service_args.acme_config_name = "custom"
     service_args.wait_forever = False
-    service_args.http2 = True
+    service_args.http2 = False
     service_args.adns_base_url = "https://ns1.adns.ccf.dev:8443"
 
     # Then, a second aDNS server for sub.adns.ccf.dev.
@@ -345,7 +373,7 @@ XIiPf1pGst9TyaEfzTi/XxVqK/CGdZFct9r9eYMjWm01P6HLQi22SjI=
     sub_adns_args.email = "some-dev@sub.example.com"
     sub_adns_args.acme_config_name = "custom"
     sub_adns_args.wait_forever = False
-    sub_adns_args.http2 = True
+    sub_adns_args.http2 = False
     sub_adns_args.ca_certs = []
 
     sub_adns_args.adns = aDNSConfig(
@@ -377,14 +405,8 @@ XIiPf1pGst9TyaEfzTi/XxVqK/CGdZFct9r9eYMjWm01P6HLQi22SjI=
         service_ca=ServiceCAConfig(
             directory="https://127.0.0.1:1024/dir", ca_certificates=[]
         ),
-        registration_policy="""
-            data.claims.sgx_claims.report_body.mr_enclave.length == 32 &&
-            JSON.stringify(data.claims.custom_claims.sgx_report_data) == JSON.stringify([ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
-        """,
-        delegation_policy="""
-            data.claims.sgx_claims.report_body.mr_enclave.length == 32 &&
-            JSON.stringify(data.claims.custom_claims.sgx_report_data) == JSON.stringify([ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
-        """,
+        registration_policy=nonzero_mrenclave_policy,
+        delegation_policy=nonzero_mrenclave_policy,
     )
 
     # A service that registers for sub.adns.ccf.dev.
@@ -411,7 +433,7 @@ XIiPf1pGst9TyaEfzTi/XxVqK/CGdZFct9r9eYMjWm01P6HLQi22SjI=
     sub_service_args.acme_config_name = "custom"
     sub_service_args.wait_forever = False
     sub_service_args.email = "joe@example.com"
-    sub_service_args.http2 = True
+    sub_service_args.http2 = False
     sub_service_args.adns_base_url = "https://ns4.sub.adns.ccf.dev:8443"
 
     run(pebble_args, adns_args, service_args, sub_adns_args, sub_service_args)
