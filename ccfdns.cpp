@@ -821,7 +821,6 @@ namespace ccfdns
       auto reginfo = Resolver::configure(cfg);
       my_acme_csr = reginfo.csr;
 
-#ifndef NDEBUG
       if (reginfo.dnskey_records)
       {
         CCF_APP_INFO("ADNS: Our DNSKEY records: ");
@@ -846,7 +845,6 @@ namespace ccfdns
           CCF_APP_INFO("ADNS: - {}", string_from_resource_record(ds));
         }
       }
-#endif
 
       if (my_name.empty())
       {

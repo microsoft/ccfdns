@@ -331,7 +331,7 @@ def run(args, wait_for_endorsed_cert=False, with_proxies=True, tcp_port=None):
 
     # DoH Proxy is here: https://github.com/aarond10/https_dns_proxy
     # Note: proxy needs: sudo setcap 'cap_net_bind_service=+ep' https_dns_proxy
-    doh_proxy_binary = "/data/cwinter/https_dns_proxy/build/https_dns_proxy"
+    doh_proxy_binary = "https_dns_proxy"
     proxy_procs = []
 
     acme_config_name, acme_config = make_acme_config(args, service_dns_name)
