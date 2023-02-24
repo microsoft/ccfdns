@@ -4,12 +4,8 @@
 import http
 import time
 import json
-
-import infra.network
-import infra.node
-import infra.checker
-import infra.health_watcher
-import infra.interfaces
+import requests
+import tempfile
 
 from cryptography.hazmat.primitives import serialization
 
@@ -32,30 +28,37 @@ class NoReceiptException(Exception):
     pass
 
 
-def poll_for_receipt(network: infra.network.Network, txid):
+def write_ca_bundle(certs):
+    r = tempfile.NamedTemporaryFile(delete=False)
+    for cert in certs:
+        r.write(cert.encode("ascii"))
+    r.close()
+    return r.name
+
+
+def poll_for_receipt(base_url, cabundle, txid):
     """Poll for a receipt of a transaction"""
-    primary, _ = network.find_primary()
-    with primary.client() as client:
-        receipt_url = f"/app/receipt?transaction_id={txid}"
-        r = client.get(receipt_url)
-        while (
-            r.status_code == http.HTTPStatus.ACCEPTED
-            or r.status_code == http.HTTPStatus.NOT_FOUND
-        ):
-            if r.status_code == http.HTTPStatus.NOT_FOUND:
-                b = json.loads(str(r.body))
-                if (
-                    "error" in b
-                    and "code" in b["error"]
-                    and b["error"]["code"] != "TransactionPendingOrUnknown"
-                ):
-                    raise NoReceiptException()
-            d = int(r.headers["retry-after"] if "retry-after" in r.headers else 3)
-            LOG.info(f"waiting {d} seconds before retrying...")
-            time.sleep(d)
-            r = client.get(receipt_url)
-        assert (
-            r.status_code == http.HTTPStatus.OK
-            or r.status_code == http.HTTPStatus.NO_CONTENT
-        )
-        return json.loads(str(r.body))
+
+    receipt_url = f"{base_url}/app/receipt?transaction_id={txid}"
+    r = requests.get(receipt_url, timeout=10, verify=cabundle)
+    while (
+        r.status_code == http.HTTPStatus.ACCEPTED
+        or r.status_code == http.HTTPStatus.NOT_FOUND
+    ):
+        if r.status_code == http.HTTPStatus.NOT_FOUND:
+            b = r.json()
+            if (
+                "error" in b
+                and "code" in b["error"]
+                and b["error"]["code"] != "TransactionPendingOrUnknown"
+            ):
+                raise NoReceiptException()
+        d = int(r.headers["retry-after"] if "retry-after" in r.headers else 3)
+        LOG.info(f"waiting {d} seconds before retrying...")
+        time.sleep(d)
+        r = requests.get(receipt_url, timeout=10, verify=cabundle)
+    assert (
+        r.status_code == http.HTTPStatus.OK
+        or r.status_code == http.HTTPStatus.NO_CONTENT
+    )
+    return r.json()

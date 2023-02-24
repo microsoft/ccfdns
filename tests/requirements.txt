@@ -18,3 +18,4 @@ locust
 pyOpenSSL
 dnspython[doh]
 dnsstamps
+requests

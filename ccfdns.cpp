@@ -965,12 +965,6 @@ namespace ccfdns
       const std::optional<std::vector<std::string>>& service_ca_certs = {})
       override
     {
-      if (have_acme_client(name))
-      {
-        CCF_APP_DEBUG("CCFDNS: erasing previous ACME client for {}", name);
-        acme_clients.erase(name);
-      }
-
       const auto& cfg = get_configuration();
 
       CCF_APP_DEBUG("Set up ACME client for {}", name);
@@ -1005,18 +999,35 @@ namespace ccfdns
         for (const auto& c : *service_ca_certs)
           acme_client_config.ca_certs.push_back(c);
 
-      auto acme_client = std::make_shared<ccfdns::ACMEClient>(
-        *this,
-        origin,
-        acme_client_config,
-        csr,
-        service_url.value_or(internal_node_address),
-        acme_ss,
-        acme_account_key_pair);
+      std::shared_ptr<ccfdns::ACMEClient> acme_client;
+
+      auto ait = acme_clients.find(name);
+      if (ait != acme_clients.end())
+      {
+        CCF_APP_DEBUG("CCFDNS: re-using existing ACME client");
+        acme_client = ait->second;
+        acme_client->reconfigure(
+          origin,
+          acme_client_config,
+          csr,
+          service_url.value_or(internal_node_address),
+          acme_ss,
+          acme_account_key_pair);
+      }
+      else
+      {
+        acme_client = std::make_shared<ccfdns::ACMEClient>(
+          *this,
+          origin,
+          acme_client_config,
+          csr,
+          service_url.value_or(internal_node_address),
+          acme_ss,
+          acme_account_key_pair);
+        acme_clients[name] = acme_client;
+      }
 
       acme_client->get_certificate(acme_account_key_pair);
-
-      acme_clients[name] = acme_client;
     }
 
     bool have_acme_client(const std::string& name) const

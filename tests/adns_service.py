@@ -9,6 +9,8 @@ import base64
 import subprocess
 import json
 import logging
+import requests
+import tempfile
 
 import infra.e2e_args
 import infra.network
@@ -126,21 +128,26 @@ def add_record(client, origin, name, stype, rdata_obj):
     return r
 
 
-def configure(network, config):
+def configure(base_url, cabundle, config):
     """Configure an aDNS service"""
 
-    primary, _ = network.find_primary()
-    r = None
-    with primary.client() as client:
-        r = client.post("/app/configure", config)
+    url = base_url + "/app/configure"
+    r = requests.post(
+        url,
+        json.dumps(config),
+        timeout=10,
+        verify=cabundle,
+        headers={"Content-Type": "application/json"},
+    )
     assert (
         r.status_code == http.HTTPStatus.OK
         or r.status_code == http.HTTPStatus.NO_CONTENT
     )
-    reginfo = json.loads(str(r.body))["registration_info"]
+    reginfo = r.json()["registration_info"]
     assert "x-ms-ccf-transaction-id" in r.headers
+
     reginfo["configuration_receipt"] = adns_tools.poll_for_receipt(
-        network, r.headers["x-ms-ccf-transaction-id"]
+        base_url, cabundle, r.headers["x-ms-ccf-transaction-id"]
     )
     return reginfo
 
@@ -405,7 +412,10 @@ def run(args, wait_for_endorsed_cert=False, with_proxies=True, tcp_port=None):
                     ]
                     done += [rhost]
 
-        reginfo = configure(network, args.adns)
+        pif0 = nodes[0].rpc_interfaces[PRIMARY_RPC_INTERFACE]
+        base_url = "https://" + pif0.host + ":" + str(pif0.port)
+
+        reginfo = configure(base_url, network.cert_path, args.adns)
 
         endorsed_certs = None
         if wait_for_endorsed_cert:

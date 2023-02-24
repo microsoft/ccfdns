@@ -5,6 +5,7 @@ import glob
 import time
 import json
 import http
+import requests
 
 import infra.e2e_args
 import infra.network
@@ -26,19 +27,21 @@ from adns_tools import poll_for_receipt
 DEFAULT_NODES = ["local://127.0.0.1:8081"]
 
 
-def configure(network, service_cfg):
+def configure(base_url, cabundle, service_cfg):
     """Configure the service"""
 
-    primary, _ = network.find_primary()
-    r = None
-    with primary.client() as client:
-        r = client.post("/app/configure", service_cfg)
-
+    r = requests.post(
+        f"{base_url}/app/configure",
+        json.dumps(service_cfg),
+        timeout=10,
+        verify=cabundle,
+    )
     assert r.status_code == http.HTTPStatus.OK
-    reginfo = json.loads(str(r.body))
+
+    reginfo = r.json()
     assert "x-ms-ccf-transaction-id" in r.headers
     reginfo["configuration_receipt"] = poll_for_receipt(
-        network, r.headers["x-ms-ccf-transaction-id"]
+        base_url, cabundle, r.headers["x-ms-ccf-transaction-id"]
     )
     return reginfo
 

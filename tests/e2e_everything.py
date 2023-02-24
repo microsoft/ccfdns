@@ -6,6 +6,8 @@ import http
 import logging
 import time
 import os
+import requests
+import json
 
 import infra.e2e_args
 import infra.network
@@ -20,11 +22,19 @@ import dns.rdatatype as rdt
 import dns.rdataclass as rdc
 import dns.rdtypes.ANY.SOA as SOA
 
+from infra.interfaces import PRIMARY_RPC_INTERFACE
+
+
 import adns_service
 from adns_service import aDNSConfig, ServiceCAConfig
 import ccf_demo_service
 import pebble
-from adns_tools import cert_to_pem, poll_for_receipt, NoReceiptException
+from adns_tools import (
+    cert_to_pem,
+    write_ca_bundle,
+    poll_for_receipt,
+    NoReceiptException,
+)
 
 
 nonzero_mrenclave_policy = """
@@ -37,14 +47,16 @@ nonzero_mrenclave_policy = """
 """
 
 
-def register_service(network, service_info, registration_info, num_retries=10):
+def register_service(service_info, cabundle, registration_info, num_retries=10):
     """Register the service"""
+
+    reg_url = service_info["adns_base_url"] + "/app/register-service"
+
     while num_retries > 0:
         try:
-            primary, _ = network.find_primary()
-            with primary.client() as client:
-                r = client.post(
-                    "/app/register-service",
+            r = requests.post(
+                reg_url,
+                json.dumps(
                     {
                         "contact": service_info["contact"],
                         "csr": registration_info["csr"],
@@ -52,14 +64,22 @@ def register_service(network, service_info, registration_info, num_retries=10):
                         "configuration_receipt": str(
                             registration_info["configuration_receipt"]
                         ),
-                    },
-                )
-                assert (
-                    r.status_code == http.HTTPStatus.OK
-                    or r.status_code == http.HTTPStatus.NO_CONTENT
-                )
-                assert "x-ms-ccf-transaction-id" in r.headers
-                return poll_for_receipt(network, r.headers["x-ms-ccf-transaction-id"])
+                    }
+                ),
+                headers={"Content-Type": "application/json"},
+                timeout=10,
+                verify=cabundle,
+            )
+            assert (
+                r.status_code == http.HTTPStatus.OK
+                or r.status_code == http.HTTPStatus.NO_CONTENT
+            )
+            assert "x-ms-ccf-transaction-id" in r.headers
+            return poll_for_receipt(
+                service_info["adns_base_url"],
+                cabundle,
+                r.headers["x-ms-ccf-transaction-id"],
+            )
         except Exception as ex:
             num_retries = num_retries - 1
             if num_retries == 0:
@@ -68,6 +88,7 @@ def register_service(network, service_info, registration_info, num_retries=10):
                 n = 5
                 LOG.error(f"Registration failed; retrying in {n} seconds.")
                 time.sleep(n)
+    return None
 
 
 def register_delegation(
@@ -148,15 +169,22 @@ def start_and_register_service(adns_nw, service_args, adns_endorsed_certs):
         "service_name": service_args.service_name,
         "contact": ["mailto:" + service_args.email],
         "adns_base_url": service_args.adns_base_url,
-        "ca_certs": [cert_to_pem(adns_nw.cert)] + adns_endorsed_certs,
+        "ca_certs": adns_endorsed_certs,  # [cert_to_pem(adns_nw.cert)] +
         "node_addresses": node_addr,
     }
+
+    cabundle = write_ca_bundle(adns_endorsed_certs)
 
     registered = False
     while not registered:
         try:
-            reginfo = ccf_demo_service.configure(service_nw, service_cfg)
-            registration_receipt = register_service(adns_nw, service_cfg, reginfo)
+            pif0 = service_nw.nodes[0].host.rpc_interfaces[PRIMARY_RPC_INTERFACE]
+            base_url = "https://" + pif0.host + ":" + str(pif0.port)
+
+            reginfo = ccf_demo_service.configure(
+                base_url, service_nw.cert_path, service_cfg
+            )
+            registration_receipt = register_service(service_cfg, cabundle, reginfo)
             registered = True
         except Exception as ex:
             if hasattr(ex, "message"):
@@ -164,6 +192,8 @@ def start_and_register_service(adns_nw, service_args, adns_endorsed_certs):
             else:
                 LOG.info(f"Exception: {ex}")
             logging.exception("caught exception")
+
+    os.unlink(cabundle)
 
     assert registration_receipt is not None
 
@@ -192,7 +222,7 @@ def run(pebble_args, adns_args, service_args, sub_adns_args, sub_service_args):
         adns_nw, adns_procs, adns_certs, _ = run_server(adns_args, True)
         procs += adns_procs
 
-        start_and_register_service(adns_nw, service_args, adns_certs)
+        start_and_register_service(adns_nw, service_args, adns_certs + pebble_certs)
 
         # Start a sub-domain aDNS
         adns_args.adns.ca_certs += pebble_certs
