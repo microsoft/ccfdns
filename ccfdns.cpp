@@ -147,7 +147,7 @@ namespace ccfdns
     virtual void on_challenge(
       const std::string& token, const std::string& response) override
     {
-      CCF_APP_DEBUG("ADNS ACME: on_challenge for {}", config.service_dns_name);
+      CCF_APP_DEBUG("ADNS: ACME: on_challenge for {}", config.service_dns_name);
 
       auto digest_b64 = key_authorization_digest(token, response);
 
@@ -173,7 +173,7 @@ namespace ccfdns
           {
             std::string sbody(body.begin(), body.end());
             CCF_APP_FAIL(
-              "ADNS ACME: error http_status={} body:\n{}", http_status, sbody);
+              "ADNS: ACME: error http_status={} body:\n{}", http_status, sbody);
           }
           return true;
         },
@@ -184,7 +184,7 @@ namespace ccfdns
 
     virtual void on_challenge_finished(const std::string& token) override
     {
-      CCF_APP_DEBUG("ADNS ACME: on_challenge_finished");
+      CCF_APP_DEBUG("ADNS: ACME: on_challenge_finished");
 
       return;
 
@@ -205,7 +205,7 @@ namespace ccfdns
 
     virtual void on_certificate(const std::string& certificate) override
     {
-      CCF_APP_DEBUG("ADNS ACME: on_certificate");
+      CCF_APP_DEBUG("ADNS: ACME: on_certificate");
 
       acme_ss->make_http_request(
         "POST",
@@ -238,7 +238,7 @@ namespace ccfdns
 
       auto url_str = url.scheme + "://" + url.host + ":" + url.port + url.path;
 
-      CCF_APP_DEBUG("ADNS ACME: on_http_request: {}", url_str);
+      CCF_APP_DEBUG("ADNS: ACME: on_http_request: {}", url_str);
 
       std::vector<uint8_t> body(
         req.get_content_data(),
@@ -748,8 +748,12 @@ namespace ccfdns
           ccf::Tables::ACME_CERTIFICATES);
         if (!tbl)
           throw std::runtime_error("missing ACME certificate table");
-        tbl->put(acme_config_name, certificate_pem);
-        service_cert_ok = true;
+        // Make sure we save only the leaf certificate
+        std::string marker = "END CERTIFICATE-----";
+        auto marker_index = certificate_pem.find(marker);
+        std::string one_pem =
+          certificate_pem.substr(0, marker_index + marker.size());
+        tbl->put(acme_config_name, one_pem);
       }
       else
       {
@@ -1046,7 +1050,6 @@ namespace ccfdns
     crypto::KeyPairPtr acme_account_key_pair;
     std::string internal_node_address = "https://127.0.0.1";
     std::string acme_config_name;
-    bool service_cert_ok = false;
 
     std::string table_name(
       const Name& origin, aDNS::Class class_, aDNS::Type type) const
@@ -1417,7 +1420,7 @@ namespace ccfapp
 #if defined(TRACE_LOGGING)
     logger::config::level() = logger::TRACE;
 #elif defined(VERBOSE_LOGGING)
-    logger::config::level() = logger::DEBUG;
+    logger::config::level() = logger::TRACE;
 #else
     logger::config::level() = logger::INFO;
 #endif

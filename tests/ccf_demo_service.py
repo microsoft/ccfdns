@@ -107,7 +107,11 @@ def run(args):
             host_specs += [host_spec]
 
     network = infra.network.Network(
-        host_specs, args.binary_dir, args.debug_nodes, args.perf_nodes
+        host_specs,
+        args.binary_dir,
+        args.debug_nodes,
+        args.perf_nodes,
+        library_dir=args.library_dir,
     )
 
     network.start_and_open(args)
