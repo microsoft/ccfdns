@@ -1462,6 +1462,7 @@ namespace aDNS
 
     for (const auto& [id, info] : dr.node_information)
     {
+      remove(origin, dr.subdomain, Class::IN, Type::NS);
       add(
         origin,
         mk_rr(
@@ -1480,6 +1481,7 @@ namespace aDNS
       RFC4034::DNSKEY dnskey(dnskey_rr.rdata);
       auto key_tag = get_key_tag(dnskey);
 
+      remove(origin, dnskey_rr.name, Class::IN, Type::DS);
       add(
         origin,
         RFC4034::DSRR(
@@ -1500,12 +1502,15 @@ namespace aDNS
     RFC4034::CanonicalRRSet glue_records;
 
     for (const auto& [id, info] : dr.node_information)
+    {
+      remove(origin, info.address.name, Class::IN, Type::DS);
       glue_records += mk_rr(
         info.address.name,
         Type::A,
         Class::IN,
         cfg.default_ttl,
         RFC1035::A(info.address.ip));
+    }
 
     for (const auto& gr : glue_records)
       add(origin, gr);
