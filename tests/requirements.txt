@@ -16,6 +16,6 @@ Jinja2
 httpx == 0.23.*
 locust
 pyOpenSSL
-dnspython[doh]
+dnspython[doh,dnssec]
 dnsstamps
 requests

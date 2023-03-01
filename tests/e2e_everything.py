@@ -37,16 +37,6 @@ from adns_tools import (
 )
 
 
-nonzero_mrenclave_policy = """
-    let r = true;
-    for (const [name, claims] of Object.entries(data.claims)) {
-        r &= claims.sgx_claims.report_body.mr_enclave.length == 32 &&
-            JSON.stringify(claims.custom_claims.sgx_report_data) != JSON.stringify([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
-    }
-    r == true
-"""
-
-
 def register_service(service_info, cabundle, registration_info, num_retries=10):
     """Register the service"""
 
@@ -348,15 +338,6 @@ def main():
             directory="https://127.0.0.1:1024/dir",
             ca_certificates=[],
         ),
-        registration_policy=nonzero_mrenclave_policy,
-        delegation_policy=nonzero_mrenclave_policy,
-        fixed_zsk="""-----BEGIN PRIVATE KEY-----
-MIG2AgEAMBAGByqGSM49AgEGBSuBBAAiBIGeMIGbAgEBBDApoJlA4ykORqLIJQNq
-rpE/KtX8WlGRmFj13deg1pLu2uazeeMKf4ccPOa4sH7oQWqhZANiAATe2J/4MjjS
-++0PMLpmgTxVqQgKG64siqKM1BBZjaex5TdxLKLVLPu6QAHKIRKtVeprL0KgkdNl
-XIiPf1pGst9TyaEfzTi/XxVqK/CGdZFct9r9eYMjWm01P6HLQi22SjI=
------END PRIVATE KEY-----
-""",
     )
 
     # A service that registers for adns.ccf.dev.
@@ -447,8 +428,6 @@ XIiPf1pGst9TyaEfzTi/XxVqK/CGdZFct9r9eYMjWm01P6HLQi22SjI=
         service_ca=ServiceCAConfig(
             directory="https://127.0.0.1:1024/dir", ca_certificates=[]
         ),
-        registration_policy=nonzero_mrenclave_policy,
-        delegation_policy=nonzero_mrenclave_policy,
     )
 
     # A service that registers for sub.adns.ccf.dev.

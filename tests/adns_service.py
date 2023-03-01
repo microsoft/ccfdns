@@ -40,6 +40,15 @@ import adns_tools
 
 DEFAULT_NODES = ["local://127.0.0.1:8080"]
 
+nonzero_mrenclave_policy = """
+    let r = true;
+    for (const [name, claims] of Object.entries(data.claims)) {
+        r &= claims.sgx_claims.report_body.mr_enclave.length == 32 &&
+            JSON.stringify(claims.custom_claims.sgx_report_data) != JSON.stringify([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    }
+    r == true
+"""
+
 
 class ServiceCAConfig(dict):
     def __init__(self, directory, ca_certificates=[]):
@@ -67,8 +76,6 @@ class aDNSConfig(dict):
         ca_certs,
         parent_base_url,
         service_ca,
-        registration_policy,
-        delegation_policy,
         fixed_zsk=None,
     ):
         dict.__init__(
@@ -87,8 +94,6 @@ class aDNSConfig(dict):
             ca_certs=ca_certs,
             parent_base_url=parent_base_url,
             service_ca=service_ca,
-            registration_policy=registration_policy,
-            delegation_policy=delegation_policy,
             fixed_zsk=fixed_zsk,
         )
         self.origin = origin
@@ -105,8 +110,6 @@ class aDNSConfig(dict):
         self.ca_certs = ca_certs
         self.parent_base_url = parent_base_url
         self.service_ca = service_ca
-        self.registration_policy = registration_policy
-        self.delegation_policy = delegation_policy
         self.fixed_zsk = fixed_zsk
 
 
@@ -385,12 +388,8 @@ def run(args, wait_for_endorsed_cert=False, with_proxies=True, tcp_port=None):
             network, args.node_addresses, False
         )
 
-        if args.adns.registration_policy:
-            set_policy(
-                network, "set_registration_policy", args.adns.registration_policy
-            )
-        if args.adns.delegation_policy:
-            set_policy(network, "set_delegation_policy", args.adns.delegation_policy)
+        set_policy(network, "set_registration_policy", nonzero_mrenclave_policy)
+        set_policy(network, "set_delegation_policy", nonzero_mrenclave_policy)
 
         if with_proxies:
             done = []
@@ -541,14 +540,6 @@ if __name__ == "__main__":
                 "directory": "https://127.0.0.1:1024/dir",
                 "ca_certificates": pebble_certs,
             },
-            "registration_policy": """
-                data.claims.sgx_claims.report_body.mr_enclave.length == 32 &&
-                JSON.stringify(data.claims.custom_claims.sgx_report_data) == JSON.stringify([ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
-                """,
-            "delegation_policy": """
-                data.claims.sgx_claims.report_body.mr_enclave.length == 32 &&
-                JSON.stringify(data.claims.custom_claims.sgx_report_data) == JSON.stringify([ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
-                """,
         }
     }
 
