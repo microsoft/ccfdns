@@ -243,7 +243,7 @@ def get_endorsed_certs(network, name):
 
     assert r.status_code == http.HTTPStatus.OK
     chain = json.loads(str(r.body))["certificate"]
-    return pebble.split_pem(chain)
+    return adns_tools.split_pem(chain)
 
 
 def wait_for_endorsed_certs(network, name, num_retries=20):
@@ -356,6 +356,7 @@ def run(args, wait_for_endorsed_cert=False, with_proxies=True, tcp_port=None):
             ext_if = HostSpec.from_str(external, http2=False).rpc_interfaces[
                 PRIMARY_RPC_INTERFACE
             ]
+            ext_if.forwarding_timeout = 10000
             ext_if.endorsement = Endorsement(
                 authority=EndorsementAuthority.ACME, acme_configuration=acme_config_name
             )
@@ -488,7 +489,7 @@ if __name__ == "__main__":
         dns_address="ns1.adns.ccf.dev:53",
         wait_forever=False,
         http_port=8080,
-        ca_cert_filename="pebble-ca-cert.pem",
+        ca_cert_filename="pebble-tls-cert.pem",
         config_filename="pebble.config.json",
     )
 

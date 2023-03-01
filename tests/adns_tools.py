@@ -24,6 +24,15 @@ def cert_to_pem(x):
     return x.public_bytes(serialization.Encoding.PEM).decode("ascii")
 
 
+def split_pem(pem):
+    r = []
+    begin = "-----BEGIN "
+    items = pem.split(begin)
+    for item in items[1:]:
+        r += [begin + item]
+    return r
+
+
 class NoReceiptException(Exception):
     pass
 

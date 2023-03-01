@@ -58,7 +58,7 @@ def run(args):
             # TODO: grab these from pebble.config.json
             pebble_mgmt_address = "127.0.0.1:1025"
             acme_directory = "https://127.0.0.1:1024/dir"
-            ca_cert_file = "pebble-ca-cert.pem"
+            ca_cert_file = "pebble-tls-cert.pem"
             ca_certs = [open(ca_cert_file, mode="r", encoding="ascii").read()]
             ca_certs = ca_certs + pebble.ca_certs(pebble_mgmt_address)
             email = "nobody@example.com"

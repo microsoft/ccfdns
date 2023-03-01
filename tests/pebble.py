@@ -19,6 +19,8 @@ from cryptography import x509
 from cryptography.x509.oid import NameOID
 from cryptography.hazmat.primitives import hashes
 
+import adns_tools
+
 
 def wait_for_port_to_listen(host, port, timeout=10):
     end_time = time.time() + timeout
@@ -121,7 +123,7 @@ class Arguments:
         binary_filename="/opt/pebble/pebble_linux-amd64",
         config_filename="pebble.config.json",
         ca_key_filename="pebble-key.pem",
-        ca_cert_filename="pebble-ca-cert.pem",
+        ca_cert_filename="pebble-tls-cert.pem",
         output_filename="pebble.out",
         error_filename="pebble.err",
         listen_address="127.0.0.1:1024",
@@ -223,17 +225,8 @@ def run_pebble_proc(args):
     return proc, out, err
 
 
-def split_pem(pem):
-    r = []
-    begin = "-----BEGIN "
-    items = pem.split(begin)
-    for item in items[1:]:
-        r += [begin + item]
-    return r
-
-
 def ca_certs_from_file(filename):
-    return split_pem(open(filename, mode="r", encoding="ascii").read())
+    return adns_tools.split_pem(open(filename, mode="r", encoding="ascii").read())
 
 
 def run_blocking(

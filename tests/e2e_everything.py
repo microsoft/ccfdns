@@ -289,8 +289,10 @@ def main():
         # dns_address="ns1.adns.ccf.dev:53",
         wait_forever=False,
         http_port=8080,
-        ca_cert_filename="pebble-ca-cert.pem",
+        ca_cert_filename="pebble-tls-cert.pem",
         config_filename="pebble.config.json",
+        listen_address="0.0.0.0:1024",
+        mgmt_address="0.0.0.0:1025",
     )
 
     # First, an aDNS server for adns.ccf.dev.
@@ -324,6 +326,7 @@ def main():
     adns_args.wait_forever = False
     adns_args.http2 = False
     adns_args.ca_certs = []
+    adns_args.initial_service_certificate_validity_days = 90
 
     adns_args.adns = aDNSConfig(
         origin="adns.ccf.dev.",
@@ -415,6 +418,7 @@ def main():
     sub_adns_args.wait_forever = False
     sub_adns_args.http2 = False
     sub_adns_args.ca_certs = []
+    sub_adns_args.initial_service_certificate_validity_days = 90
 
     sub_adns_args.adns = aDNSConfig(
         origin="sub.adns.ccf.dev.",
