@@ -207,11 +207,17 @@ namespace ccfdns
     {
       CCF_APP_DEBUG("ADNS: ACME: on_certificate");
 
+      // Make sure we only store the leaf certificate.
+      std::string marker = "END CERTIFICATE-----";
+      auto marker_index = certificate.find(marker);
+      std::string leaf_cert =
+        certificate.substr(0, marker_index + marker.size());
+
       acme_ss->make_http_request(
         "POST",
         node_address + "/app/internal/set-certificate",
         {},
-        to_json_bytes(SetCertificate::In{config.service_dns_name, certificate}),
+        to_json_bytes(SetCertificate::In{config.service_dns_name, leaf_cert}),
         [](
           const http_status& http_status,
           const http::HeaderMap&,
