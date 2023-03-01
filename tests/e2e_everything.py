@@ -82,17 +82,24 @@ def register_service(service_info, cabundle, registration_info, num_retries=10):
 
 
 def register_delegation(
-    adns_network, sub_adns_network, delegation_info, registration_info, num_retries=10
+    parent_base_url,
+    ca_certs,
+    sub_adns_network,
+    delegation_info,
+    registration_info,
+    num_retries=10,
 ):
     """Register delegation of a subdomain"""
 
+    cabundle = write_ca_bundle(ca_certs)
+
+    reg_url = parent_base_url + "/app/register-delegation"
+
     while num_retries > 0:
         try:
-            primary, _ = adns_network.find_primary()
-            r = None
-            with primary.client() as client:
-                r = client.post(
-                    "/app/register-delegation",
+            r = requests.post(
+                reg_url,
+                json.dumps(
                     {
                         "subdomain": delegation_info["subdomain"],
                         "contact": delegation_info["contact"],
@@ -103,20 +110,24 @@ def register_delegation(
                         "configuration_receipt": str(
                             registration_info["configuration_receipt"]
                         ),
-                    },
-                )
+                    }
+                ),
+                headers={"Content-Type": "application/json"},
+                timeout=10,
+                verify=cabundle,
+            )
             assert (
                 r.status_code == http.HTTPStatus.OK
                 or r.status_code == http.HTTPStatus.NO_CONTENT
             )
             assert "x-ms-ccf-transaction-id" in r.headers
             receipt = poll_for_receipt(
-                adns_network, r.headers["x-ms-ccf-transaction-id"]
+                parent_base_url, cabundle, r.headers["x-ms-ccf-transaction-id"]
             )
 
             sub_primary, _ = sub_adns_network.find_primary()
             with sub_primary.client() as client:
-                r = client.post("/app/start-delegation-acme-client", {})
+                client.post("/app/start-delegation-acme-client", {})
 
             return receipt
         except Exception as ex:
@@ -127,6 +138,7 @@ def register_delegation(
                 n = 5
                 LOG.error(f"Registration failed; retrying in {n} seconds.")
                 time.sleep(n)
+    return None
 
 
 def run_server(args, wait_for_endorsed_cert=False, with_proxies=True):
@@ -143,7 +155,7 @@ def run_server(args, wait_for_endorsed_cert=False, with_proxies=True):
     return adns_nw, procs, adns_endorsed_certs, reginfo
 
 
-def start_and_register_service(adns_nw, service_args, adns_endorsed_certs):
+def start_and_register_service(service_args, adns_endorsed_certs):
     """Start, configure, and register service"""
 
     service_nw = ccf_demo_service.run(service_args)
@@ -212,7 +224,7 @@ def run(pebble_args, adns_args, service_args, sub_adns_args, sub_service_args):
         adns_nw, adns_procs, adns_certs, _ = run_server(adns_args, True)
         procs += adns_procs
 
-        start_and_register_service(adns_nw, service_args, adns_certs + pebble_certs)
+        start_and_register_service(service_args, adns_certs + pebble_certs)
 
         # Start a sub-domain aDNS
         adns_args.adns.ca_certs += pebble_certs
@@ -227,16 +239,21 @@ def run(pebble_args, adns_args, service_args, sub_adns_args, sub_service_args):
             "contact": ["mailto:" + sub_adns_args.email],
         }
 
-        register_delegation(adns_nw, sub_adns_nw, delegation_info, sub_adns_reginfo)
+        register_delegation(
+            sub_adns_args.adns.parent_base_url,
+            adns_certs + pebble_certs,
+            sub_adns_nw,
+            delegation_info,
+            sub_adns_reginfo,
+        )
 
-        sub_endorsed_cert = adns_service.wait_for_endorsed_certs(
+        sub_endorsed_certs = adns_service.wait_for_endorsed_certs(
             sub_adns_nw, delegation_info["subdomain"], num_retries=10000
         )
 
         start_and_register_service(
-            sub_adns_nw,
             sub_service_args,
-            sub_endorsed_cert,
+            sub_endorsed_certs + pebble_certs,
         )
 
         LOG.info("Waiting forever...")

@@ -32,6 +32,7 @@ def write_ca_bundle(certs):
     r = tempfile.NamedTemporaryFile(delete=False)
     for cert in certs:
         r.write(cert.encode("ascii"))
+        r.write(b"\n")
     r.close()
     return r.name
 
