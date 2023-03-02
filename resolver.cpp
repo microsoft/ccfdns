@@ -295,13 +295,14 @@ namespace aDNS
         throw std::runtime_error(
           fmt::format("algorithm {} not supported", algorithm));
       auto coords = signing_key->coordinates();
-      CCF_APP_TRACE(
-        "ADNS: SIGN: key x/y {}{}", ds::to_hex(coords.x), ds::to_hex(coords.y));
-      CCF_APP_TRACE("SIGN: data={}", ds::to_hex(data_to_sign));
+      // CCF_APP_TRACE(
+      //   "ADNS: SIGN: key x/y {}{}", ds::to_hex(coords.x),
+      //   ds::to_hex(coords.y));
+      // CCF_APP_TRACE("SIGN: data={}", ds::to_hex(data_to_sign));
       auto sig = signing_key->sign(data_to_sign, crypto::MDType::SHA384);
-      CCF_APP_TRACE("ADNS: SIGN: sig={}", ds::to_hex(sig));
+      // CCF_APP_TRACE("ADNS: SIGN: sig={}", ds::to_hex(sig));
       convert_ec_signature_to_ieee_p1363(sig, signing_key);
-      CCF_APP_TRACE("ADNS: SIGN: r/s sig={}", ds::to_hex(sig));
+      // CCF_APP_TRACE("ADNS: SIGN: r/s sig={}", ds::to_hex(sig));
       return sig;
     };
     return r;
@@ -440,7 +441,7 @@ namespace aDNS
       qclass,
       qtype,
       [this, &origin, &name, &qclass, &records, &condition](const auto& rr) {
-        CCF_APP_TRACE("ADNS:  - {}", string_from_resource_record(rr));
+        // CCF_APP_TRACE("ADNS:  - {}", string_from_resource_record(rr));
         if (rr.name == name && (!condition || (*condition)(rr)))
           records.insert(rr);
         return true;
@@ -636,7 +637,7 @@ namespace aDNS
     CCF_APP_DEBUG(
       "ADNS: NEW KEY for {}, class={}, tag={}:", origin, class_, new_zsk_tag);
     CCF_APP_DEBUG("ADNS: - {}", string_from_resource_record(dnskey_rr));
-    CCF_APP_DEBUG("ADNS:  - xy={}", ds::to_hex(new_zsk_pk));
+    CCF_APP_DEBUG("ADNS:   - xy={}", ds::to_hex(new_zsk_pk));
 
     if (
       origin_exists(origin.parent()) &&
@@ -817,9 +818,9 @@ namespace aDNS
 
       auto [crecords, names] = order_records(origin, static_cast<QClass>(c));
 
-      CCF_APP_TRACE("ADNS: Records to sign at {}:", origin);
-      for (const auto& rr : crecords)
-        CCF_APP_TRACE("ADNS:  {}", string_from_resource_record(rr));
+      // CCF_APP_TRACE("ADNS: Records to sign at {}:", origin);
+      // for (const auto& rr : crecords)
+      //   CCF_APP_TRACE("ADNS:  {}", string_from_resource_record(rr));
 
       {
         // Remove existing RRSIGs and NSECs (could be avoided)
@@ -924,16 +925,18 @@ namespace aDNS
           }
         }
 
-        for (auto it = hashed_names_map.begin(); it != hashed_names_map.end();
-             it++)
-        {
-          CCF_APP_TRACE("ADNS:  - {}: ", ds::to_hex(it->first));
-          for (size_t i = 0; i < it->second.size(); i++)
-          {
-            CCF_APP_TRACE(
-              "ADNS:    - {}", string_from_resource_record(*(it->second)[i]));
-          }
-        }
+        // for (auto it = hashed_names_map.begin(); it !=
+        // hashed_names_map.end();
+        //      it++)
+        // {
+        //   CCF_APP_TRACE("ADNS:  - {}: ", ds::to_hex(it->first));
+        //   for (size_t i = 0; i < it->second.size(); i++)
+        //   {
+        //     CCF_APP_TRACE(
+        //       "ADNS:    - {}",
+        //       string_from_resource_record(*(it->second)[i]));
+        //   }
+        // }
 
         for (auto it = hashed_names_map.begin(); it != hashed_names_map.end();
              it++)
@@ -1460,9 +1463,10 @@ namespace aDNS
       throw std::runtime_error(
         "delegation registration policy evaluation failed");
 
+    remove(origin, dr.subdomain, Class::IN, Type::NS);
+
     for (const auto& [id, info] : dr.node_information)
     {
-      remove(origin, dr.subdomain, Class::IN, Type::NS);
       add(
         origin,
         mk_rr(
@@ -1474,6 +1478,9 @@ namespace aDNS
     }
 
     for (const auto& dnskey_rr : dr.dnskey_records)
+      remove(origin, dnskey_rr.name, Class::IN, Type::DS);
+
+    for (const auto& dnskey_rr : dr.dnskey_records)
     {
       if (!dnskey_rr.name.ends_with(origin))
         throw std::runtime_error("DNSKEY record name not within the zone");
@@ -1481,7 +1488,6 @@ namespace aDNS
       RFC4034::DNSKEY dnskey(dnskey_rr.rdata);
       auto key_tag = get_key_tag(dnskey);
 
-      remove(origin, dnskey_rr.name, Class::IN, Type::DS);
       add(
         origin,
         RFC4034::DSRR(
@@ -1499,20 +1505,19 @@ namespace aDNS
     // Glue records are not signed
     // (https://datatracker.ietf.org/doc/html/rfc4035#section-2.2)
 
-    RFC4034::CanonicalRRSet glue_records;
+    for (const auto& [id, info] : dr.node_information)
+      remove(origin, info.address.name, Class::IN, Type::DS);
 
     for (const auto& [id, info] : dr.node_information)
     {
-      remove(origin, info.address.name, Class::IN, Type::DS);
-      glue_records += mk_rr(
-        info.address.name,
-        Type::A,
-        Class::IN,
-        cfg.default_ttl,
-        RFC1035::A(info.address.ip));
+      add(
+        origin,
+        mk_rr(
+          info.address.name,
+          Type::A,
+          Class::IN,
+          cfg.default_ttl,
+          RFC1035::A(info.address.ip)));
     }
-
-    for (const auto& gr : glue_records)
-      add(origin, gr);
   }
 }
