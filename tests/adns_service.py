@@ -51,8 +51,11 @@ nonzero_mrenclave_policy = """
 
 
 class ServiceCAConfig(dict):
-    def __init__(self, directory, ca_certificates=[]):
-        dict.__init__(self, directory=directory, ca_certificates=ca_certificates)
+    def __init__(self, name, directory, ca_certificates=[]):
+        dict.__init__(
+            self, name=name, directory=directory, ca_certificates=ca_certificates
+        )
+        self.name = name
         self.directory = directory
         self.ca_certificates = ca_certificates
 

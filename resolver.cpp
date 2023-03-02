@@ -1343,7 +1343,17 @@ namespace aDNS
         aDNS::Type::CAA,
         Class::IN,
         configuration.default_ttl,
-        CAA(0x42, "tag", "value")));
+        CAA(0, "issue", configuration.service_ca.name)));
+
+    for (const auto& contact : rr.contact)
+      add(
+        origin,
+        mk_rr(
+          service_name,
+          aDNS::Type::CAA,
+          Class::IN,
+          configuration.default_ttl,
+          CAA(0, "iodef", "mailto:" + contact)));
 
     sign(origin);
 

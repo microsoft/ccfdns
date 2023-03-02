@@ -71,11 +71,12 @@ def register_service(service_info, cabundle, registration_info, num_retries=10):
                 r.headers["x-ms-ccf-transaction-id"],
             )
         except Exception as ex:
+            logging.exception("caught exception")
             num_retries = num_retries - 1
             if num_retries == 0:
                 raise ex
             else:
-                n = 5
+                n = 10
                 LOG.error(f"Registration failed; retrying in {n} seconds.")
                 time.sleep(n)
     return None
@@ -131,11 +132,12 @@ def register_delegation(
 
             return receipt
         except Exception as ex:
+            logging.exception("caught exception")
             num_retries = num_retries - 1
             if num_retries == 0:
                 raise ex
             else:
-                n = 5
+                n = 10
                 LOG.error(f"Registration failed; retrying in {n} seconds.")
                 time.sleep(n)
     return None
@@ -146,7 +148,7 @@ def run_server(args, wait_for_endorsed_cert=False, with_proxies=True):
     adns_endorsed_certs = None
 
     adns_nw, procs, adns_endorsed_certs, reginfo = adns_service.run(
-        args, wait_for_endorsed_cert, with_proxies
+        args, wait_for_endorsed_cert, with_proxies, tcp_port=53
     )
 
     if not adns_nw:
@@ -155,7 +157,7 @@ def run_server(args, wait_for_endorsed_cert=False, with_proxies=True):
     return adns_nw, procs, adns_endorsed_certs, reginfo
 
 
-def start_and_register_service(service_args, adns_endorsed_certs):
+def start_and_register_service(service_args, certificates):
     """Start, configure, and register service"""
 
     service_nw = ccf_demo_service.run(service_args)
@@ -171,11 +173,11 @@ def start_and_register_service(service_args, adns_endorsed_certs):
         "service_name": service_args.service_name,
         "contact": ["mailto:" + service_args.email],
         "adns_base_url": service_args.adns_base_url,
-        "ca_certs": adns_endorsed_certs,  # [cert_to_pem(adns_nw.cert)] +
+        "ca_certs": certificates,
         "node_addresses": node_addr,
     }
 
-    cabundle = write_ca_bundle(adns_endorsed_certs)
+    cabundle = write_ca_bundle(certificates)
 
     registered = False
     while not registered:
@@ -209,25 +211,25 @@ def run(pebble_args, adns_args, service_args, sub_adns_args, sub_service_args):
     procs = []
 
     try:
-        # Start CA
-        pebble_proc, _, _ = pebble.run_pebble(pebble_args)
-        procs += [pebble_proc]
-        while not os.path.exists(pebble_args.ca_cert_filename):
-            time.sleep(0.25)
-        pebble_certs = pebble.ca_certs(pebble_args.mgmt_address)
-        pebble_certs += pebble.ca_certs_from_file(pebble_args.ca_cert_filename)
-        adns_args.adns.service_ca.ca_certificates += pebble_certs
-        sub_adns_args.adns.service_ca.ca_certificates += pebble_certs
+        if pebble_args:
+            pebble_proc, _, _ = pebble.run_pebble(pebble_args)
+            procs += [pebble_proc]
+            while not os.path.exists(pebble_args.ca_cert_filename):
+                time.sleep(0.25)
+            ca_certs = pebble.ca_certs(pebble_args.mgmt_address)
+            ca_certs += pebble.ca_certs_from_file(pebble_args.ca_cert_filename)
+        else:
+            ca_certs = adns_args.adns.service_ca.ca_certificates
 
         # Start top-level aDNS
-        adns_args.adns.ca_certs += pebble_certs
+        adns_args.adns.ca_certs += ca_certs
         adns_nw, adns_procs, adns_certs, _ = run_server(adns_args, True)
         procs += adns_procs
 
-        start_and_register_service(service_args, adns_certs + pebble_certs)
+        start_and_register_service(service_args, adns_certs + ca_certs)
 
         # Start a sub-domain aDNS
-        adns_args.adns.ca_certs += pebble_certs
+        adns_args.adns.ca_certs += ca_certs
         sub_adns_nw, sub_procs, _, sub_adns_reginfo = run_server(
             sub_adns_args, False, True
         )
@@ -239,13 +241,15 @@ def run(pebble_args, adns_args, service_args, sub_adns_args, sub_service_args):
             "contact": ["mailto:" + sub_adns_args.email],
         }
 
-        register_delegation(
+        receipt = register_delegation(
             sub_adns_args.adns.parent_base_url,
-            adns_certs + pebble_certs,
+            adns_certs + ca_certs,
             sub_adns_nw,
             delegation_info,
             sub_adns_reginfo,
         )
+
+        # TODO: receipt as a DNS record, AAAA fragmented
 
         sub_endorsed_certs = adns_service.wait_for_endorsed_certs(
             sub_adns_nw, delegation_info["subdomain"], num_retries=10000
@@ -253,7 +257,7 @@ def run(pebble_args, adns_args, service_args, sub_adns_args, sub_service_args):
 
         start_and_register_service(
             sub_service_args,
-            sub_endorsed_certs + pebble_certs,
+            sub_endorsed_certs + ca_certs,
         )
 
         LOG.info("Waiting forever...")
@@ -284,16 +288,31 @@ def main():
         """CLI option parser"""
         parser.description = "Run a CCF-based demo service"
 
-    # Pebble CA
-    pebble_args = pebble.Arguments(
-        # dns_address="ns1.adns.ccf.dev:53",
-        wait_forever=False,
-        http_port=8080,
-        ca_cert_filename="pebble-tls-cert.pem",
-        config_filename="pebble.config.json",
-        listen_address="0.0.0.0:1024",
-        mgmt_address="0.0.0.0:1025",
-    )
+    # CA for service certificates
+    if True:
+        pebble_args = None
+        service_ca_config = ServiceCAConfig(
+            name="letsencrypt.org",
+            directory="https://acme-staging-v02.api.letsencrypt.org/directory",
+            ca_certificates=[
+                "-----BEGIN CERTIFICATE-----\nMIIFFjCCAv6gAwIBAgIRAJErCErPDBinU/bWLiWnX1owDQYJKoZIhvcNAQELBQAw\nTzELMAkGA1UEBhMCVVMxKTAnBgNVBAoTIEludGVybmV0IFNlY3VyaXR5IFJlc2Vh\ncmNoIEdyb3VwMRUwEwYDVQQDEwxJU1JHIFJvb3QgWDEwHhcNMjAwOTA0MDAwMDAw\nWhcNMjUwOTE1MTYwMDAwWjAyMQswCQYDVQQGEwJVUzEWMBQGA1UEChMNTGV0J3Mg\nRW5jcnlwdDELMAkGA1UEAxMCUjMwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEK\nAoIBAQC7AhUozPaglNMPEuyNVZLD+ILxmaZ6QoinXSaqtSu5xUyxr45r+XXIo9cP\nR5QUVTVXjJ6oojkZ9YI8QqlObvU7wy7bjcCwXPNZOOftz2nwWgsbvsCUJCWH+jdx\nsxPnHKzhm+/b5DtFUkWWqcFTzjTIUu61ru2P3mBw4qVUq7ZtDpelQDRrK9O8Zutm\nNHz6a4uPVymZ+DAXXbpyb/uBxa3Shlg9F8fnCbvxK/eG3MHacV3URuPMrSXBiLxg\nZ3Vms/EY96Jc5lP/Ooi2R6X/ExjqmAl3P51T+c8B5fWmcBcUr2Ok/5mzk53cU6cG\n/kiFHaFpriV1uxPMUgP17VGhi9sVAgMBAAGjggEIMIIBBDAOBgNVHQ8BAf8EBAMC\nAYYwHQYDVR0lBBYwFAYIKwYBBQUHAwIGCCsGAQUFBwMBMBIGA1UdEwEB/wQIMAYB\nAf8CAQAwHQYDVR0OBBYEFBQusxe3WFbLrlAJQOYfr52LFMLGMB8GA1UdIwQYMBaA\nFHm0WeZ7tuXkAXOACIjIGlj26ZtuMDIGCCsGAQUFBwEBBCYwJDAiBggrBgEFBQcw\nAoYWaHR0cDovL3gxLmkubGVuY3Iub3JnLzAnBgNVHR8EIDAeMBygGqAYhhZodHRw\nOi8veDEuYy5sZW5jci5vcmcvMCIGA1UdIAQbMBkwCAYGZ4EMAQIBMA0GCysGAQQB\ngt8TAQEBMA0GCSqGSIb3DQEBCwUAA4ICAQCFyk5HPqP3hUSFvNVneLKYY611TR6W\nPTNlclQtgaDqw+34IL9fzLdwALduO/ZelN7kIJ+m74uyA+eitRY8kc607TkC53wl\nikfmZW4/RvTZ8M6UK+5UzhK8jCdLuMGYL6KvzXGRSgi3yLgjewQtCPkIVz6D2QQz\nCkcheAmCJ8MqyJu5zlzyZMjAvnnAT45tRAxekrsu94sQ4egdRCnbWSDtY7kh+BIm\nlJNXoB1lBMEKIq4QDUOXoRgffuDghje1WrG9ML+Hbisq/yFOGwXD9RiX8F6sw6W4\navAuvDszue5L3sz85K+EC4Y/wFVDNvZo4TYXao6Z0f+lQKc0t8DQYzk1OXVu8rp2\nyJMC6alLbBfODALZvYH7n7do1AZls4I9d1P4jnkDrQoxB3UqQ9hVl3LEKQ73xF1O\nyK5GhDDX8oVfGKF5u+decIsH4YaTw7mP3GFxJSqv3+0lUFJoi5Lc5da149p90Ids\nhCExroL1+7mryIkXPeFM5TgO9r0rvZaBFOvV2z0gp35Z0+L4WPlbuEjN/lxPFin+\nHlUjr8gRsI3qfJOQFy/9rKIJR0Y/8Omwt/8oTWgy1mdeHmmjk7j1nYsvC9JSQ6Zv\nMldlTTKB3zhThV1+XWYp6rjd5JW1zbVWEkLNxE7GJThEUG3szgBVGP7pSWTUTsqX\nnLRbwHOoq7hHwg==\n-----END CERTIFICATE-----\n",
+                "-----BEGIN CERTIFICATE-----\nMIIDCzCCApGgAwIBAgIRALRY4992FVxZJKOJ3bpffWIwCgYIKoZIzj0EAwMwaDEL\nMAkGA1UEBhMCVVMxMzAxBgNVBAoTKihTVEFHSU5HKSBJbnRlcm5ldCBTZWN1cml0\neSBSZXNlYXJjaCBHcm91cDEkMCIGA1UEAxMbKFNUQUdJTkcpIEJvZ3VzIEJyb2Nj\nb2xpIFgyMB4XDTIwMDkwNDAwMDAwMFoXDTI1MDkxNTE2MDAwMFowVTELMAkGA1UE\nBhMCVVMxIDAeBgNVBAoTFyhTVEFHSU5HKSBMZXQncyBFbmNyeXB0MSQwIgYDVQQD\nExsoU1RBR0lORykgRXJzYXR6IEVkYW1hbWUgRTEwdjAQBgcqhkjOPQIBBgUrgQQA\nIgNiAAT9v/PJUtHOTk28nXCXrpP665vI4Z094h8o7R+5E6yNajZa0UubqjpZFoGq\nu785/vGXj6mdfIzc9boITGusZCSWeMj5ySMZGZkS+VSvf8VQqj+3YdEu4PLZEjBA\nivRFpEejggEQMIIBDDAOBgNVHQ8BAf8EBAMCAYYwHQYDVR0lBBYwFAYIKwYBBQUH\nAwIGCCsGAQUFBwMBMBIGA1UdEwEB/wQIMAYBAf8CAQAwHQYDVR0OBBYEFOv5JcKA\nKGbibQiSMvPC4a3D/zVFMB8GA1UdIwQYMBaAFN7Ro1lkDsGaNqNG7rAQdu+ul5Vm\nMDYGCCsGAQUFBwEBBCowKDAmBggrBgEFBQcwAoYaaHR0cDovL3N0Zy14Mi5pLmxl\nbmNyLm9yZy8wKwYDVR0fBCQwIjAgoB6gHIYaaHR0cDovL3N0Zy14Mi5jLmxlbmNy\nLm9yZy8wIgYDVR0gBBswGTAIBgZngQwBAgEwDQYLKwYBBAGC3xMBAQEwCgYIKoZI\nzj0EAwMDaAAwZQIwXcZbdgxcGH9rTErfSTkXfBKKygU0yO7OpbuNeY1id0FZ/hRY\nN5fdLOGuc+aHfCsMAjEA0P/xwKr6NQ9MN7vrfGAzO397PApdqfM7VdFK18aEu1xm\n3HMFKzIR8eEPsMx4smMl\n-----END CERTIFICATE-----\n",
+                "-----BEGIN CERTIFICATE-----\nMIICTjCCAdSgAwIBAgIRAIPgc3k5LlLVLtUUvs4K/QcwCgYIKoZIzj0EAwMwaDEL\nMAkGA1UEBhMCVVMxMzAxBgNVBAoTKihTVEFHSU5HKSBJbnRlcm5ldCBTZWN1cml0\neSBSZXNlYXJjaCBHcm91cDEkMCIGA1UEAxMbKFNUQUdJTkcpIEJvZ3VzIEJyb2Nj\nb2xpIFgyMB4XDTIwMDkwNDAwMDAwMFoXDTQwMDkxNzE2MDAwMFowaDELMAkGA1UE\nBhMCVVMxMzAxBgNVBAoTKihTVEFHSU5HKSBJbnRlcm5ldCBTZWN1cml0eSBSZXNl\nYXJjaCBHcm91cDEkMCIGA1UEAxMbKFNUQUdJTkcpIEJvZ3VzIEJyb2Njb2xpIFgy\nMHYwEAYHKoZIzj0CAQYFK4EEACIDYgAEOvS+w1kCzAxYOJbA06Aw0HFP2tLBLKPo\nFQqR9AMskl1nC2975eQqycR+ACvYelA8rfwFXObMHYXJ23XLB+dAjPJVOJ2OcsjT\nVqO4dcDWu+rQ2VILdnJRYypnV1MMThVxo0IwQDAOBgNVHQ8BAf8EBAMCAQYwDwYD\nVR0TAQH/BAUwAwEB/zAdBgNVHQ4EFgQU3tGjWWQOwZo2o0busBB2766XlWYwCgYI\nKoZIzj0EAwMDaAAwZQIwRcp4ZKBsq9XkUuN8wfX+GEbY1N5nmCRc8e80kUkuAefo\nuc2j3cICeXo1cOybQ1iWAjEA3Ooawl8eQyR4wrjCofUE8h44p0j7Yl/kBlJZT8+9\nvbtH7QiVzeKCOTQPINyRql6P\n-----END CERTIFICATE-----\n",
+            ],
+        )
+    else:
+        pebble_args = pebble.Arguments(
+            # dns_address="ns1.adns.ccf.dev:53",
+            wait_forever=False,
+            http_port=8080,
+            ca_cert_filename="pebble-tls-cert.pem",
+            config_filename="pebble.config.json",
+            listen_address="0.0.0.0:1024",
+            mgmt_address="0.0.0.0:1025",
+        )
+        service_ca_config = ServiceCAConfig(
+            name="pebble", directory="https://127.0.0.1:1024/dir", ca_certificates=[]
+        )
 
     # First, an aDNS server for adns.ccf.dev.
 
@@ -354,10 +373,7 @@ def main():
         nsec3_hash_iterations=3,
         ca_certs=adns_args.ca_certs,
         parent_base_url=None,
-        service_ca=ServiceCAConfig(  # CA for service certificates
-            directory="https://127.0.0.1:1024/dir",
-            ca_certificates=[],
-        ),
+        service_ca=service_ca_config,
     )
 
     # A service that registers for adns.ccf.dev.
@@ -446,9 +462,7 @@ def main():
         nsec3_hash_iterations=3,
         ca_certs=adns_args.ca_certs,
         parent_base_url="https://ns1.adns.ccf.dev:8443",
-        service_ca=ServiceCAConfig(
-            directory="https://127.0.0.1:1024/dir", ca_certificates=[]
-        ),
+        service_ca=service_ca_config,
     )
 
     # A service that registers for sub.adns.ccf.dev.

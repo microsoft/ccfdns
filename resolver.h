@@ -149,6 +149,7 @@ namespace aDNS
 
       struct ServiceCA
       {
+        std::string name;
         std::string directory;
         std::vector<std::string> ca_certificates;
       };

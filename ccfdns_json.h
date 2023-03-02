@@ -142,7 +142,7 @@ namespace aDNS
 {
   DECLARE_JSON_TYPE(Resolver::Configuration::ServiceCA);
   DECLARE_JSON_REQUIRED_FIELDS(
-    Resolver::Configuration::ServiceCA, directory, ca_certificates);
+    Resolver::Configuration::ServiceCA, name, directory, ca_certificates);
 
   DECLARE_JSON_TYPE(Resolver::NodeAddress);
   DECLARE_JSON_REQUIRED_FIELDS(Resolver::NodeAddress, name, ip, protocol, port);

@@ -9,6 +9,7 @@
 #include "rfc1035.h"
 #include "rfc4034.h"
 
+#include <ccf/_private/ds/thread_messaging.h>
 #include <ccf/_private/http/http_parser.h>
 #include <ccf/_private/node/acme_client.h>
 #include <ccf/_private/node/rpc/network_identity_interface.h>
@@ -232,6 +233,28 @@ namespace ccfdns
       return service_csr;
     }
 
+    struct HTTPRetryMsg
+    {
+      HTTPRetryMsg(
+        ACMEClient* client,
+        const http::URL& url,
+        const http::Request& req,
+        std::function<
+          bool(http_status status, http::HeaderMap&&, std::vector<uint8_t>&&)>
+          callback) :
+        client(client),
+        url(url),
+        req(std::move(req)),
+        callback(callback)
+      {}
+      ACMEClient* client;
+      http::URL url;
+      http::Request req;
+      std::function<bool(
+        http_status status, http::HeaderMap&&, std::vector<uint8_t>&&)>
+        callback;
+    };
+
     virtual void on_http_request(
       const http::URL& url,
       http::Request&& req,
@@ -250,18 +273,51 @@ namespace ccfdns
         req.get_content_data(),
         req.get_content_data() + req.get_content_length());
 
+      CCF_APP_DEBUG(
+        "ADNS: ACME: BODY: {}", std::string(body.begin(), body.end()));
+
       acme_ss->make_http_request(
         method,
         url_str,
         req.get_headers(),
         body,
-        [callback](
+        [this, url, r2 = req, callback](
           const http_status& status,
           const http::HeaderMap& headers,
           const std::vector<uint8_t>& data) {
           http::HeaderMap hdrs = headers;
-          std::vector<uint8_t> cdata = data;
-          return callback(status, std::move(hdrs), std::move(cdata));
+          if (status == HTTP_STATUS_SERVICE_UNAVAILABLE)
+          {
+            size_t wait_seconds = 5;
+            auto rait = hdrs.find("retry-after");
+            if (rait != hdrs.end())
+              wait_seconds = std::atoi(rait->second.c_str());
+
+            CCF_APP_DEBUG(
+              "ADNS: ACME: Retrying failed HTTP request in {} sec",
+              wait_seconds);
+
+            auto msg = std::make_unique<threading::Tmsg<HTTPRetryMsg>>(
+              [](std::unique_ptr<threading::Tmsg<HTTPRetryMsg>> msg) {
+                http::Request r = msg->data.req;
+                msg->data.client->on_http_request(
+                  msg->data.url, std::move(r), msg->data.callback);
+              },
+              this,
+              url,
+              r2,
+              callback);
+
+            threading::ThreadMessaging::instance().add_task_after(
+              std::move(msg), std::chrono::seconds(wait_seconds));
+
+            return true;
+          }
+          else
+          {
+            std::vector<uint8_t> cdata = data;
+            return callback(status, std::move(hdrs), std::move(cdata));
+          }
         },
         config.ca_certs);
     }
