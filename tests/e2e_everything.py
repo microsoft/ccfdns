@@ -220,6 +220,8 @@ def run(pebble_args, adns_args, service_args, sub_adns_args, sub_service_args):
                 time.sleep(0.25)
             ca_certs = pebble.ca_certs(pebble_args.mgmt_address)
             ca_certs += pebble.ca_certs_from_file(pebble_args.ca_cert_filename)
+            adns_args.adns.service_ca.certificates += ca_certs
+            sub_adns_args.adns.service_ca.certificates += ca_certs
         else:
             ca_certs = adns_args.adns.service_ca.certificates
 
