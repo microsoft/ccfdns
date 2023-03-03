@@ -74,7 +74,8 @@ namespace aDNS
 
     {static_cast<uint16_t>(RFC7671::Type::TLSA), Type::TLSA},
 
-    // {static_cast<uint16_t>(aDNS::Types::Type::TLSKEY), Type::TLSKEY},
+    {static_cast<uint16_t>(RFC8659::Type::CAA), Type::CAA},
+
     {static_cast<uint16_t>(aDNS::Types::Type::ATTEST), Type::ATTEST},
   };
 
@@ -1114,7 +1115,7 @@ namespace aDNS
         cfg.origin,
         aDNS::Type::CAA,
         Class::IN,
-        60,
+        3600,
         CAA(0, "issue", cfg.service_ca.name)));
 
     for (const auto& email : cfg.contact)
@@ -1124,7 +1125,7 @@ namespace aDNS
           cfg.origin,
           aDNS::Type::CAA,
           Class::IN,
-          60,
+          3600,
           CAA(0, "iodef", "mailto:" + email)));
 
     sign(cfg.origin);
