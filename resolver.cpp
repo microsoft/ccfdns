@@ -1118,7 +1118,6 @@ namespace aDNS
             CAA(0, "iodef", "mailto:" + contact)));
     }
 
-    remove(cfg.origin, cfg.origin, Class::IN, Type::CAA);
     add(
       cfg.origin,
       mk_rr(
