@@ -1111,14 +1111,15 @@ namespace aDNS
         60,
         CAA(0, "issue", cfg.service_ca.name)));
 
-    add(
-      cfg.origin,
-      mk_rr(
+    for (const auto &email : cfg.contact)
+      add(
         cfg.origin,
-        aDNS::Type::CAA,
-        Class::IN,
-        60,
-        CAA(0, "iodef", "mailto:" + cfg.contact[0])));
+        mk_rr(
+          cfg.origin,
+          aDNS::Type::CAA,
+          Class::IN,
+          60,
+          CAA(0, "iodef", "mailto:" + email)));
 
     sign(cfg.origin);
 
