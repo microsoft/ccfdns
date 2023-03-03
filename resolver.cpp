@@ -1068,6 +1068,8 @@ namespace aDNS
   Resolver::RegistrationInformation Resolver::configure(
     const Configuration& cfg)
   {
+    using namespace RFC8659;
+
     set_configuration(cfg);
 
     if (cfg.node_addresses.empty())
@@ -1096,6 +1098,26 @@ namespace aDNS
 
       add(cfg.origin, mk_rr(cfg.origin, Type::A, Class::IN, 1, A(addr.ip)));
     }
+
+    remove(cfg.origin, cfg.origin, Class::IN, Type::CAA);
+    add(
+      cfg.origin,
+      mk_rr(
+        cfg.origin,
+        aDNS::Type::CAA,
+        Class::IN,
+        cfg.default_ttl,
+        CAA(0, "issue", cfg.service_ca.name)));
+
+    for (const auto& contact : cfg.contact)
+      add(
+        cfg.origin,
+        mk_rr(
+          cfg.origin,
+          aDNS::Type::CAA,
+          Class::IN,
+          cfg.default_ttl,
+          CAA(0, "iodef", "mailto:" + contact)));
 
     sign(cfg.origin);
 
