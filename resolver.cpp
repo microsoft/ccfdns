@@ -1066,11 +1066,32 @@ namespace aDNS
       rdata);
   }
 
-  Resolver::RegistrationInformation Resolver::configure(
-    const Configuration& cfg)
+  void Resolver::add_caa_records(
+    const Name& origin,
+    const Name& name,
+    const std::string& ca_name,
+    const std::vector<std::string>& contact)
   {
     using namespace RFC8659;
 
+    add(
+      origin,
+      mk_rr(name, aDNS::Type::CAA, Class::IN, 3600, CAA(0, "issue", ca_name)));
+
+    for (const auto& email : contact)
+      add(
+        origin,
+        mk_rr(
+          name,
+          aDNS::Type::CAA,
+          Class::IN,
+          3600,
+          CAA(0, "iodef", "mailto:" + email)));
+  }
+
+  Resolver::RegistrationInformation Resolver::configure(
+    const Configuration& cfg)
+  {
     set_configuration(cfg);
 
     if (cfg.node_addresses.empty())
@@ -1108,44 +1129,10 @@ namespace aDNS
         cfg.origin,
         mk_rr(cfg.origin, Type::A, Class::IN, cfg.default_ttl, A(addr.ip)));
 
-      add(
-        cfg.origin,
-        mk_rr(
-          addr.name,
-          aDNS::Type::CAA,
-          Class::IN,
-          3600,
-          CAA(0, "issue", cfg.service_ca.name)));
-
-      for (const auto& email : cfg.contact)
-        add(
-          cfg.origin,
-          mk_rr(
-            addr.name,
-            aDNS::Type::CAA,
-            Class::IN,
-            3600,
-            CAA(0, "iodef", "mailto:" + email)));
+      add_caa_records(cfg.origin, addr.name, cfg.service_ca.name, cfg.contact);
     }
 
-    add(
-      cfg.origin,
-      mk_rr(
-        cfg.origin,
-        aDNS::Type::CAA,
-        Class::IN,
-        3600,
-        CAA(0, "issue", cfg.service_ca.name)));
-
-    for (const auto& email : cfg.contact)
-      add(
-        cfg.origin,
-        mk_rr(
-          cfg.origin,
-          aDNS::Type::CAA,
-          Class::IN,
-          3600,
-          CAA(0, "iodef", "mailto:" + email)));
+    add_caa_records(cfg.origin, cfg.origin, cfg.service_ca.name, cfg.contact);
 
     sign(cfg.origin);
 
@@ -1352,6 +1339,10 @@ namespace aDNS
 
       remove(origin, tlsa_name, Class::IN, Type::TLSA);
       add(origin, tlsa_rr);
+
+      // CAA RR for node
+      remove(origin, name, Class::IN, Type::CAA);
+      add_caa_records(origin, name, configuration.service_ca.name, rr.contact);
     }
 
     auto it = rr.node_information.begin();
@@ -1384,26 +1375,11 @@ namespace aDNS
           MatchingType::Full,
           public_key_sv)));
 
-    // CAA RR
+    // CAA RR for service
     remove(origin, service_name, Class::IN, Type::CAA);
-    add(
-      origin,
-      mk_rr(
-        service_name,
-        aDNS::Type::CAA,
-        Class::IN,
-        configuration.default_ttl,
-        CAA(0, "issue", configuration.service_ca.name)));
 
-    for (const auto& contact : rr.contact)
-      add(
-        origin,
-        mk_rr(
-          service_name,
-          aDNS::Type::CAA,
-          Class::IN,
-          configuration.default_ttl,
-          CAA(0, "iodef", "mailto:" + contact)));
+    add_caa_records(
+      origin, service_name, configuration.service_ca.name, rr.contact);
 
     sign(origin);
 

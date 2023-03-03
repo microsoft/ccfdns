@@ -352,6 +352,12 @@ namespace aDNS
       const small_vector<uint16_t>& rdata);
 
     Name find_zone(const Name& name);
+
+    void add_caa_records(
+      const Name& origin,
+      const Name& name,
+      const std::string& ca_name,
+      const std::vector<std::string>& contact);
   };
 
   uint16_t get_key_tag(const RFC4034::DNSKEY& dnskey_rdata);
