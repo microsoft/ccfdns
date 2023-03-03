@@ -360,11 +360,11 @@ def run(args, wait_for_endorsed_cert=False, with_proxies=True, tcp_port=None):
         for internal, external, ext_name, _ in args.node_addresses:
             host_spec = HostSpec.from_str(internal, http2=False)
             int_if = host_spec.rpc_interfaces[PRIMARY_RPC_INTERFACE]
-            int_if.forwarding_timeout = 10000
+            int_if.forwarding_timeout_ms = 10000
             ext_if = HostSpec.from_str(external, http2=False).rpc_interfaces[
                 PRIMARY_RPC_INTERFACE
             ]
-            ext_if.forwarding_timeout = 10000
+            ext_if.forwarding_timeout_ms = 10000
             ext_if.endorsement = Endorsement(
                 authority=EndorsementAuthority.ACME, acme_configuration=acme_config_name
             )
