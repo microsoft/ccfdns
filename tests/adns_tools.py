@@ -62,6 +62,7 @@ def poll_for_receipt(base_url, cabundle, txid):
                 and "code" in b["error"]
                 and b["error"]["code"] != "TransactionPendingOrUnknown"
             ):
+                LOG.error(b)
                 raise NoReceiptException()
         d = int(r.headers["retry-after"] if "retry-after" in r.headers else 3)
         LOG.info(f"waiting {d} seconds before retrying...")

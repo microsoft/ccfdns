@@ -947,9 +947,6 @@ namespace ccfdns
 
         acme_client_config.ca_certs.push_back(nwid_ss->get()->cert.str());
 
-        for (const auto& c : cfg.ca_certs)
-          acme_client_config.ca_certs.push_back(c);
-
         std::vector<crypto::SubjectAltName> sans;
         sans.push_back({cn, false});
 

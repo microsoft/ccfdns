@@ -51,13 +51,13 @@ nonzero_mrenclave_policy = """
 
 
 class ServiceCAConfig(dict):
-    def __init__(self, name, directory, ca_certificates=[]):
+    def __init__(self, name, directory, certificates=[]):
         dict.__init__(
-            self, name=name, directory=directory, ca_certificates=ca_certificates
+            self, name=name, directory=directory, ca_certificates=certificates
         )
         self.name = name
         self.directory = directory
-        self.ca_certificates = ca_certificates
+        self.certificates = certificates
 
 
 class aDNSConfig(dict):
@@ -76,7 +76,6 @@ class aDNSConfig(dict):
         use_nsec3,
         nsec3_hash_algorithm,
         nsec3_hash_iterations,
-        ca_certs,
         parent_base_url,
         service_ca,
         fixed_zsk=None,
@@ -94,7 +93,6 @@ class aDNSConfig(dict):
             use_nsec3=use_nsec3,
             nsec3_hash_algorithm=nsec3_hash_algorithm,
             nsec3_hash_iterations=nsec3_hash_iterations,
-            ca_certs=ca_certs,
             parent_base_url=parent_base_url,
             service_ca=service_ca,
             fixed_zsk=fixed_zsk,
@@ -110,7 +108,6 @@ class aDNSConfig(dict):
         self.use_nsec3 = use_nsec3
         self.nsec3_hash_algorithm = nsec3_hash_algorithm
         self.nsec3_hash_iterations = nsec3_hash_iterations
-        self.ca_certs = ca_certs
         self.parent_base_url = parent_base_url
         self.service_ca = service_ca
         self.fixed_zsk = fixed_zsk

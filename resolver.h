@@ -131,7 +131,6 @@ namespace aDNS
 
       std::optional<std::vector<Name>> alternative_names;
       std::optional<std::string> parent_base_url;
-      std::vector<std::string> ca_certs;
       std::vector<std::string> contact;
 
       uint32_t default_ttl = 86400;
