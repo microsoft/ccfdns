@@ -65,7 +65,8 @@ def register_service(service_info, cabundle, registration_info, num_retries=10):
                 or r.status_code == http.HTTPStatus.NO_CONTENT
             )
             if not ok:
-                LOG.error(r)
+                LOG.info(r)
+                LOG.info(r.text)
             assert ok
             assert "x-ms-ccf-transaction-id" in r.headers
             return poll_for_receipt(
@@ -239,7 +240,7 @@ def run(pebble_args, adns_args, service_args, sub_adns_args, sub_service_args):
         # Register the delegation
         delegation_info = {
             "subdomain": sub_adns_args.adns.origin,
-            "contact": ["mailto:" + sub_adns_args.email],
+            "contact": ["mailto:" + email for email in sub_adns_args.adns.contact],
         }
 
         receipt = register_delegation(
@@ -355,7 +356,7 @@ def main():
                 rdc.IN,
                 rdt.SOA,
                 mname="ns1.adns.ccf.dev.",
-                rname="some-dev.example.com",
+                rname="some-dev.adns.ccf.dev.",
                 serial=4,
                 refresh=604800,
                 retry=21600,
@@ -396,7 +397,7 @@ def main():
     service_args.constitution = glob.glob("../tests/constitution/*")
     service_args.package = "libccf_demo_service"
     service_args.label = "demo_service"
-    service_args.email = "bill@example.com"
+    service_args.email = "cwinter@microsoft.com"
     service_args.acme_config_name = "custom"
     service_args.wait_forever = False
     service_args.http2 = False
@@ -443,7 +444,7 @@ def main():
                 rdc.IN,
                 rdt.SOA,
                 mname="ns1.sub.adns.ccf.dev.",
-                rname="some-dev.sub.example.com",
+                rname="some-dev.sub.adns.ccf.dev.",
                 serial=4,
                 refresh=604800,
                 retry=21600,
@@ -486,7 +487,7 @@ def main():
     sub_service_args.label = "demo_sub_service"
     sub_service_args.acme_config_name = "custom"
     sub_service_args.wait_forever = False
-    sub_service_args.email = "joe@example.com"
+    sub_service_args.email = "cwinter@microsoft.com"
     sub_service_args.http2 = False
     sub_service_args.adns_base_url = "https://ns4.sub.adns.ccf.dev:8443"
     sub_service_args.ca_certs = service_ca_config.certificates

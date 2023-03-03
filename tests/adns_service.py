@@ -145,12 +145,14 @@ def configure(base_url, cabundle, config):
         verify=cabundle,
         headers={"Content-Type": "application/json"},
     )
-    LOG.info(r)
-    LOG.info(r.text)
-    assert (
+    ok = (
         r.status_code == http.HTTPStatus.OK
         or r.status_code == http.HTTPStatus.NO_CONTENT
     )
+    if not ok:
+        LOG.info(r)
+        LOG.info(r.text)
+    assert ok
     reginfo = r.json()["registration_info"]
     assert "x-ms-ccf-transaction-id" in r.headers
 
@@ -357,7 +359,8 @@ def run(args, wait_for_endorsed_cert=False, with_proxies=True, tcp_port=None):
         nodes = []
         for internal, external, ext_name, _ in args.node_addresses:
             host_spec = HostSpec.from_str(internal, http2=False)
-            # int_if = host_spec.rpc_interfaces[PRIMARY_RPC_INTERFACE]
+            int_if = host_spec.rpc_interfaces[PRIMARY_RPC_INTERFACE]
+            int_if.forwarding_timeout = 10000
             ext_if = HostSpec.from_str(external, http2=False).rpc_interfaces[
                 PRIMARY_RPC_INTERFACE
             ]
