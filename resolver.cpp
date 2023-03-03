@@ -1414,7 +1414,7 @@ namespace aDNS
         Name("_acme-challenge") + name,
         Type::TXT,
         Class::IN,
-        60,
+        600,
         TXT(key_authorization)));
 
     for (const auto& n : alternative_names)
@@ -1425,7 +1425,7 @@ namespace aDNS
             Name("_acme-challenge") + n,
             Type::TXT,
             Class::IN,
-            60,
+            600,
             TXT(key_authorization)));
 
     sign(origin);
