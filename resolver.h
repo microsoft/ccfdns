@@ -128,6 +128,7 @@ namespace aDNS
     struct Configuration
     {
       Name origin;
+      std::string soa;
 
       std::optional<std::vector<Name>> alternative_names;
       std::optional<std::string> parent_base_url;

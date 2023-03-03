@@ -154,6 +154,7 @@ namespace aDNS
   DECLARE_JSON_REQUIRED_FIELDS(
     Resolver::Configuration,
     origin,
+    soa,
     contact,
     default_ttl,
     signing_algorithm,

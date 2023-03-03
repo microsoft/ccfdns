@@ -1085,6 +1085,10 @@ namespace aDNS
     out.public_key = tls_key->public_key_pem().str();
     out.node_information = get_node_information();
 
+    add(
+      cfg.origin,
+      mk_rr(cfg.origin, aDNS::Type::SOA, Class::IN, 60, SOA(cfg.soa)));
+
     for (const auto& [id, addr] : cfg.node_addresses)
     {
       if (!addr.name.ends_with(cfg.origin))
@@ -1111,7 +1115,7 @@ namespace aDNS
         60,
         CAA(0, "issue", cfg.service_ca.name)));
 
-    for (const auto &email : cfg.contact)
+    for (const auto& email : cfg.contact)
       add(
         cfg.origin,
         mk_rr(

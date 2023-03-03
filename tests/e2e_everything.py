@@ -231,7 +231,6 @@ def run(pebble_args, adns_args, service_args, sub_adns_args, sub_service_args):
         start_and_register_service(service_args, adns_certs + ca_certs)
 
         # Start a sub-domain aDNS
-        adns_args.adns.ca_certs += ca_certs
         sub_adns_nw, sub_procs, _, sub_adns_reginfo = run_server(
             sub_adns_args, False, True
         )
