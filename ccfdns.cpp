@@ -208,17 +208,11 @@ namespace ccfdns
     {
       CCF_APP_DEBUG("ADNS: ACME: on_certificate");
 
-      // Make sure we only store the leaf certificate.
-      std::string marker = "END CERTIFICATE-----";
-      auto marker_index = certificate.find(marker);
-      std::string leaf_cert =
-        certificate.substr(0, marker_index + marker.size());
-
       acme_ss->make_http_request(
         "POST",
         node_address + "/app/internal/set-certificate",
         {},
-        to_json_bytes(SetCertificate::In{config.service_dns_name, leaf_cert}),
+        to_json_bytes(SetCertificate::In{config.service_dns_name, certificate}),
         [](
           const http_status& http_status,
           const http::HeaderMap&,
@@ -809,12 +803,7 @@ namespace ccfdns
           ccf::Tables::ACME_CERTIFICATES);
         if (!tbl)
           throw std::runtime_error("missing ACME certificate table");
-        // Make sure we save only the leaf certificate
-        std::string marker = "END CERTIFICATE-----";
-        auto marker_index = certificate_pem.find(marker);
-        std::string one_pem =
-          certificate_pem.substr(0, marker_index + marker.size());
-        tbl->put(acme_config_name, one_pem);
+        tbl->put(acme_config_name, certificate_pem);
       }
       else
       {
