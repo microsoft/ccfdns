@@ -524,7 +524,7 @@ namespace aDNS
 
         if (qtype != QType::SOA)
         {
-          auto soa_records = find_records(origin, origin, QType::SOA, qclass);
+          auto soa_records = find_records(origin, qname, QType::SOA, qclass);
           if (soa_records.size() > 0)
             result.authorities += *soa_records.begin();
         }
@@ -1414,7 +1414,7 @@ namespace aDNS
         Name("_acme-challenge") + name,
         Type::TXT,
         Class::IN,
-        1,
+        60,
         TXT(key_authorization)));
 
     for (const auto& n : alternative_names)
@@ -1425,7 +1425,7 @@ namespace aDNS
             Name("_acme-challenge") + n,
             Type::TXT,
             Class::IN,
-            1,
+            60,
             TXT(key_authorization)));
 
     sign(origin);
