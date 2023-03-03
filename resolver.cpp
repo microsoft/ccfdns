@@ -1103,7 +1103,9 @@ namespace aDNS
         cfg.origin,
         mk_rr(addr.name, Type::A, Class::IN, cfg.default_ttl, A(addr.ip)));
 
-      add(cfg.origin, mk_rr(cfg.origin, Type::A, Class::IN, 1, A(addr.ip)));
+      add(
+        cfg.origin,
+        mk_rr(cfg.origin, Type::A, Class::IN, cfg.default_ttl, A(addr.ip)));
     }
 
     add(
@@ -1544,7 +1546,7 @@ namespace aDNS
     // (https://datatracker.ietf.org/doc/html/rfc4035#section-2.2)
 
     for (const auto& [id, info] : dr.node_information)
-      remove(origin, info.address.name, Class::IN, Type::DS);
+      remove(origin, info.address.name, Class::IN, Type::A);
 
     for (const auto& [id, info] : dr.node_information)
     {

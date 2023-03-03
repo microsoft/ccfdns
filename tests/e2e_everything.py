@@ -15,15 +15,13 @@ import infra.node
 import infra.checker
 import infra.health_watcher
 import infra.interfaces
+from infra.interfaces import PRIMARY_RPC_INTERFACE
 
 from loguru import logger as LOG
 
 import dns.rdatatype as rdt
 import dns.rdataclass as rdc
 import dns.rdtypes.ANY.SOA as SOA
-
-from infra.interfaces import PRIMARY_RPC_INTERFACE
-
 
 import adns_service
 from adns_service import aDNSConfig, ServiceCAConfig
