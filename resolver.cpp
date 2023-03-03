@@ -1097,6 +1097,25 @@ namespace aDNS
         mk_rr(addr.name, Type::A, Class::IN, cfg.default_ttl, A(addr.ip)));
 
       add(cfg.origin, mk_rr(cfg.origin, Type::A, Class::IN, 1, A(addr.ip)));
+
+      add(
+        cfg.origin,
+        mk_rr(
+          addr.name,
+          aDNS::Type::CAA,
+          Class::IN,
+          cfg.default_ttl,
+          CAA(0, "issue", cfg.service_ca.name)));
+
+      for (const auto& contact : cfg.contact)
+        add(
+          cfg.origin,
+          mk_rr(
+            addr.name,
+            aDNS::Type::CAA,
+            Class::IN,
+            cfg.default_ttl,
+            CAA(0, "iodef", "mailto:" + contact)));
     }
 
     remove(cfg.origin, cfg.origin, Class::IN, Type::CAA);
