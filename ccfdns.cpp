@@ -570,7 +570,6 @@ namespace ccfdns
     virtual bool origin_exists(const Name& name) const override
     {
       check_context();
-      CCF_APP_DEBUG("Looking for origin: {}", name);
       auto origins = ctx->tx.ro<Origins>(origins_table_name);
       return origins->contains(name.lowered());
     }
@@ -936,12 +935,16 @@ namespace ccfdns
 
         auto cn = cfg.origin.unterminated();
 
+        std::vector<std::string> acme_contact;
+        for (const auto& email : cfg.contact)
+          acme_contact.push_back("mailto:" + email);
+
         ACME::ClientConfig acme_client_config = {
           .ca_certs = cfg.service_ca.ca_certificates,
           .directory_url = cfg.service_ca.directory,
           .service_dns_name = cn,
           .alternative_names = {cn},
-          .contact = cfg.contact,
+          .contact = acme_contact,
           .terms_of_service_agreed = true,
           .challenge_type = "dns-01"};
 

@@ -1075,6 +1075,9 @@ namespace aDNS
     if (cfg.node_addresses.empty())
       throw std::runtime_error("missing node information");
 
+    if (cfg.contact.empty())
+      throw std::runtime_error("at least one contact is required");
+
     auto tls_key = get_tls_key();
 
     RegistrationInformation out;
@@ -1097,25 +1100,6 @@ namespace aDNS
         mk_rr(addr.name, Type::A, Class::IN, cfg.default_ttl, A(addr.ip)));
 
       add(cfg.origin, mk_rr(cfg.origin, Type::A, Class::IN, 1, A(addr.ip)));
-
-      add(
-        cfg.origin,
-        mk_rr(
-          addr.name,
-          aDNS::Type::CAA,
-          Class::IN,
-          cfg.default_ttl,
-          CAA(0, "issue", cfg.service_ca.name)));
-
-      for (const auto& contact : cfg.contact)
-        add(
-          cfg.origin,
-          mk_rr(
-            addr.name,
-            aDNS::Type::CAA,
-            Class::IN,
-            cfg.default_ttl,
-            CAA(0, "iodef", "mailto:" + contact)));
     }
 
     add(
@@ -1124,18 +1108,17 @@ namespace aDNS
         cfg.origin,
         aDNS::Type::CAA,
         Class::IN,
-        cfg.default_ttl,
+        60,
         CAA(0, "issue", cfg.service_ca.name)));
 
-    for (const auto& contact : cfg.contact)
-      add(
+    add(
+      cfg.origin,
+      mk_rr(
         cfg.origin,
-        mk_rr(
-          cfg.origin,
-          aDNS::Type::CAA,
-          Class::IN,
-          cfg.default_ttl,
-          CAA(0, "iodef", "mailto:" + contact)));
+        aDNS::Type::CAA,
+        Class::IN,
+        60,
+        CAA(0, "iodef", "mailto:" + cfg.contact[0])));
 
     sign(cfg.origin);
 

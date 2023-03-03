@@ -77,6 +77,7 @@ class aDNSConfig(dict):
         nsec3_hash_algorithm,
         nsec3_hash_iterations,
         parent_base_url,
+        contact,
         service_ca,
         fixed_zsk=None,
     ):
@@ -94,6 +95,7 @@ class aDNSConfig(dict):
             nsec3_hash_algorithm=nsec3_hash_algorithm,
             nsec3_hash_iterations=nsec3_hash_iterations,
             parent_base_url=parent_base_url,
+            contact=contact,
             service_ca=service_ca,
             fixed_zsk=fixed_zsk,
         )
@@ -110,6 +112,7 @@ class aDNSConfig(dict):
         self.nsec3_hash_iterations = nsec3_hash_iterations
         self.parent_base_url = parent_base_url
         self.service_ca = service_ca
+        self.contact = contact
         self.fixed_zsk = fixed_zsk
 
 
@@ -142,6 +145,8 @@ def configure(base_url, cabundle, config):
         verify=cabundle,
         headers={"Content-Type": "application/json"},
     )
+    LOG.info(r)
+    LOG.info(r.text)
     assert (
         r.status_code == http.HTTPStatus.OK
         or r.status_code == http.HTTPStatus.NO_CONTENT

@@ -222,7 +222,7 @@ def run(pebble_args, adns_args, service_args, sub_adns_args, sub_service_args):
             ca_certs = pebble.ca_certs(pebble_args.mgmt_address)
             ca_certs += pebble.ca_certs_from_file(pebble_args.ca_cert_filename)
         else:
-            ca_certs = adns_args.adns.service_ca.ca_certificates
+            ca_certs = adns_args.adns.service_ca.certificates
 
         # Start top-level aDNS
         adns_nw, adns_procs, adns_certs, _ = run_server(adns_args, True)
@@ -343,7 +343,6 @@ def main():
     adns_args.package = "libccfdns"
     adns_args.label = "demo_adns"
     adns_args.acme_config_name = "custom"
-    adns_args.email = "some-dev@example.com"
     adns_args.wait_forever = False
     adns_args.http2 = False
     adns_args.initial_service_certificate_validity_days = 90
@@ -373,6 +372,7 @@ def main():
         nsec3_hash_algorithm="SHA1",
         nsec3_hash_iterations=3,
         parent_base_url=None,
+        contact=["cwinter@microsoft.com"],
         service_ca=service_ca_config,
     )
 
@@ -430,7 +430,6 @@ def main():
     sub_adns_args.constitution = glob.glob("../tests/constitution/*")
     sub_adns_args.package = "libccfdns"
     sub_adns_args.label = "demo_sub_adns"
-    sub_adns_args.email = "some-dev@sub.example.com"
     sub_adns_args.acme_config_name = "custom"
     sub_adns_args.wait_forever = False
     sub_adns_args.http2 = False
@@ -461,6 +460,7 @@ def main():
         nsec3_hash_algorithm="SHA1",
         nsec3_hash_iterations=3,
         parent_base_url="https://ns1.adns.ccf.dev:8443",
+        contact=["cwinter@microsoft.com"],
         service_ca=service_ca_config,
     )
 
