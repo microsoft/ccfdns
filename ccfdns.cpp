@@ -148,7 +148,8 @@ namespace ccfdns
     virtual void on_challenge(
       const std::string& token, const std::string& response) override
     {
-      CCF_APP_DEBUG("ADNS: ACME: on_challenge for {}", config.service_dns_name);
+      CCF_APP_DEBUG(
+        "CCFDNS: ACME: on_challenge for {}", config.service_dns_name);
 
       auto digest_b64 = key_authorization_digest(token, response);
 
@@ -174,7 +175,9 @@ namespace ccfdns
           {
             std::string sbody(body.begin(), body.end());
             CCF_APP_FAIL(
-              "ADNS: ACME: error http_status={} body:\n{}", http_status, sbody);
+              "CCFDNS: ACME: error http_status={} body:\n{}",
+              http_status,
+              sbody);
           }
           return true;
         },
@@ -185,7 +188,7 @@ namespace ccfdns
 
     virtual void on_challenge_finished(const std::string& token) override
     {
-      CCF_APP_DEBUG("ADNS: ACME: on_challenge_finished");
+      CCF_APP_DEBUG("CCFDNS: ACME: on_challenge_finished");
 
       return;
 
@@ -206,7 +209,7 @@ namespace ccfdns
 
     virtual void on_certificate(const std::string& certificate) override
     {
-      CCF_APP_DEBUG("ADNS: ACME: on_certificate");
+      CCF_APP_DEBUG("CCFDNS: ACME: on_certificate");
 
       acme_ss->make_http_request(
         "POST",
@@ -261,14 +264,14 @@ namespace ccfdns
 
       auto url_str = url.scheme + "://" + url.host + ":" + url.port + url.path;
 
-      CCF_APP_DEBUG("ADNS: ACME: on_http_request: {}", url_str);
+      CCF_APP_DEBUG("CCFDNS: ACME: on_http_request: {}", url_str);
 
       std::vector<uint8_t> body(
         req.get_content_data(),
         req.get_content_data() + req.get_content_length());
 
       CCF_APP_DEBUG(
-        "ADNS: ACME: BODY: {}", std::string(body.begin(), body.end()));
+        "CCFDNS: ACME: BODY: {}", std::string(body.begin(), body.end()));
 
       acme_ss->make_http_request(
         method,
@@ -288,7 +291,7 @@ namespace ccfdns
               wait_seconds = std::atoi(rait->second.c_str());
 
             CCF_APP_DEBUG(
-              "ADNS: ACME: Retrying failed HTTP request in {} sec",
+              "CCFDNS: ACME: Retrying failed HTTP request in {} sec",
               wait_seconds);
 
             auto msg = std::make_unique<threading::Tmsg<HTTPRetryMsg>>(
@@ -715,7 +718,7 @@ namespace ccfdns
       {
         static const JSValue jnull = {JSValueUnion{0}, JS_TAG_NULL};
 
-        CCF_APP_TRACE("Policy evaluation program:\n{}", program);
+        CCF_APP_TRACE("CCFDNS: Policy evaluation program:\n{}", program);
 
         JSValue val = JS_Eval(
           ctx,
@@ -756,7 +759,7 @@ namespace ccfdns
         {
           auto jval = JS_JSONStringify(ctx, val, jnull, jnull);
           const char* cstr = JS_ToCString(ctx, jval);
-          CCF_APP_DEBUG("Policy evaluation result: {}", cstr);
+          CCF_APP_DEBUG("CCFDNS: Policy evaluation result: {}", cstr);
           JS_FreeCString(ctx, cstr);
           JS_FreeValue(ctx, jval);
         }
@@ -877,11 +880,12 @@ namespace ccfdns
 
       if (reginfo.dnskey_records)
       {
-        CCF_APP_INFO("ADNS: Our DNSKEY records: ");
+        CCF_APP_INFO("CCFDNS: : Our DNSKEY records: ");
         for (const auto& dnskey_rr : *reginfo.dnskey_records)
-          CCF_APP_INFO("ADNS: - {}", string_from_resource_record(dnskey_rr));
+          CCF_APP_INFO(
+            "CCFDNS: : - {}", string_from_resource_record(dnskey_rr));
 
-        CCF_APP_INFO("ADNS: Our proposed DS records: ");
+        CCF_APP_INFO("CCFDNS: : Our proposed DS records: ");
         for (const auto& dnskey_rr : *reginfo.dnskey_records)
         {
           auto key_tag = get_key_tag(dnskey_rr.rdata);
@@ -896,7 +900,7 @@ namespace ccfdns
             cfg.digest_type,
             dnskey_rdata);
 
-          CCF_APP_INFO("ADNS: - {}", string_from_resource_record(ds));
+          CCF_APP_INFO("CCFDNS: : - {}", string_from_resource_record(ds));
         }
       }
 
@@ -1022,13 +1026,13 @@ namespace ccfdns
     {
       const auto& cfg = get_configuration();
 
-      CCF_APP_DEBUG("Set up ACME client for {}", name);
+      CCF_APP_DEBUG("CCFDNS: Set up ACME client for {}", name);
 
       std::string subject_name = name.unterminated();
 
       OpenSSL::UqX509_REQ req(csr, false);
 
-      CCF_APP_DEBUG("CSR:\n{}", (std::string)req);
+      CCF_APP_DEBUG("CCFDNS: CSR:\n{}", (std::string)req);
 
       auto sans = req.get_subject_alternative_names();
       std::vector<std::string> ssans;
@@ -1471,7 +1475,7 @@ namespace ccfapp
 #if defined(TRACE_LOGGING)
     logger::config::level() = logger::TRACE;
 #elif defined(VERBOSE_LOGGING)
-    logger::config::level() = logger::TRACE;
+    logger::config::level() = logger::DEBUG;
 #else
     logger::config::level() = logger::INFO;
 #endif
