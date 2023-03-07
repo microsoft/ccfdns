@@ -78,7 +78,7 @@ namespace kv::serialisers
     static ResourceRecord from_serialised(const SerialisedEntry& data)
     {
       size_t pos = 0;
-      return ResourceRecord({data.data(), data.data() + data.size()}, pos);
+      return ResourceRecord(std::span<const uint8_t>(data), pos);
     }
   };
 }

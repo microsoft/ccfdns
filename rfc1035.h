@@ -32,7 +32,7 @@ namespace RFC1035 // https://datatracker.ietf.org/doc/html/rfc1035
       data = small_vector<uint8_t>(s.size(), (uint8_t*)s.data());
     }
 
-    Label(const std::vector<uint8_t>& bytes, size_t& pos)
+    Label(const std::span<const uint8_t>& bytes, size_t& pos)
     {
       if (pos >= bytes.size())
         throw std::runtime_error("invalid label size (position)");
@@ -50,10 +50,14 @@ namespace RFC1035 // https://datatracker.ietf.org/doc/html/rfc1035
         auto index = pos + 1 + i;
         if (index >= bytes.size())
           throw std::runtime_error("not enough label data");
-        data[i] = bytes.at(index);
+        data[i] = bytes[index];
       }
       pos += data.size() + 1;
     }
+
+    Label(const std::vector<uint8_t>& bytes, size_t& pos) :
+      Label(std::span<const uint8_t>(bytes), pos)
+    {}
 
     template <typename T>
     Label(const small_vector<T>& bytes, size_t& pos)
@@ -189,10 +193,14 @@ namespace RFC1035 // https://datatracker.ietf.org/doc/html/rfc1035
         labels.push_back(Label());
     }
 
-    Name(const std::vector<uint8_t>& bytes, size_t& pos)
+    Name(const std::span<const uint8_t>& bytes, size_t& pos)
     {
       parse_bytes(bytes, pos);
     }
+
+    Name(const std::vector<uint8_t>& bytes, size_t& pos) :
+      Name(std::span<const uint8_t>(bytes), pos)
+    {}
 
     Name(const std::vector<uint8_t>& bytes, size_t& pos, uint8_t num_labels)
     {
@@ -411,7 +419,9 @@ namespace RFC1035 // https://datatracker.ietf.org/doc/html/rfc1035
 
   protected:
     void parse_bytes(
-      const std::vector<uint8_t>& bytes, size_t& pos, uint8_t num_labels = 0xFF)
+      const std::span<const uint8_t>& bytes,
+      size_t& pos,
+      uint8_t num_labels = 0xFF)
     {
       size_t total_size = 0;
       do
@@ -422,6 +432,12 @@ namespace RFC1035 // https://datatracker.ietf.org/doc/html/rfc1035
           throw std::runtime_error("excessive name length");
       } while (labels.back().size() > 0 && pos < bytes.size() &&
                labels.size() < num_labels);
+    }
+
+    void parse_bytes(
+      const std::vector<uint8_t>& bytes, size_t& pos, uint8_t num_labels = 0xFF)
+    {
+      parse_bytes(std::span<const uint8_t>(bytes), pos, num_labels);
     }
 
     void parse_bytes(
@@ -616,7 +632,7 @@ namespace RFC1035
       rdata(rdata)
     {}
 
-    ResourceRecord(const std::vector<uint8_t>& bytes, size_t& pos)
+    ResourceRecord(const std::span<const uint8_t>& bytes, size_t& pos)
     {
       name = Name(bytes, pos);
       type = get<uint16_t>(bytes, pos);
@@ -624,6 +640,10 @@ namespace RFC1035
       ttl = get<uint32_t>(bytes, pos);
       rdata = small_vector<uint16_t, uint8_t>(bytes, pos);
     }
+
+    ResourceRecord(const std::vector<uint8_t>& bytes, size_t& pos) :
+      ResourceRecord(std::span<const uint8_t>(bytes), pos)
+    {}
 
     operator std::vector<uint8_t>() const
     {
@@ -735,7 +755,7 @@ namespace RFC1035
 
     Header() = default;
 
-    Header(const std::vector<uint8_t>& bytes, size_t& pos)
+    Header(const std::span<const uint8_t>& bytes, size_t& pos)
     {
       id = get<uint16_t>(bytes, pos);
       uint8_t qr_opcode_aa_tc_rd = get<uint8_t>(bytes, pos);
@@ -761,6 +781,10 @@ namespace RFC1035
       nscount = get<uint16_t>(bytes, pos);
       arcount = get<uint16_t>(bytes, pos);
     }
+
+    Header(const std::vector<uint8_t>& bytes, size_t& pos) :
+      Header(std::span<const uint8_t>(bytes), pos)
+    {}
 
     operator std::vector<uint8_t>() const
     {
@@ -799,7 +823,7 @@ namespace RFC1035
 
     Question() = default;
 
-    Question(const std::vector<uint8_t>& bytes, size_t& pos)
+    Question(const std::span<const uint8_t>& bytes, size_t& pos)
     {
       qname = Name(bytes, pos);
       if (!qname.is_absolute())
@@ -807,6 +831,10 @@ namespace RFC1035
       qtype = static_cast<QType>(get<uint16_t>(bytes, pos));
       qclass = static_cast<QClass>(get<uint16_t>(bytes, pos));
     }
+
+    Question(const std::vector<uint8_t>& bytes, size_t& pos) :
+      Question(std::span<const uint8_t>(bytes), pos)
+    {}
 
     operator std::vector<uint8_t>() const
     {
@@ -835,7 +863,7 @@ namespace RFC1035
       additionals = get_n<ResourceRecord>(bytes, pos, header.arcount);
     }
 
-    Message(const std::vector<uint8_t>& bytes, size_t& pos)
+    Message(const std::span<const uint8_t>& bytes, size_t& pos)
     {
       header = Header(bytes, pos);
 
@@ -844,6 +872,10 @@ namespace RFC1035
       authorities = get_n<ResourceRecord>(bytes, pos, header.nscount);
       additionals = get_n<ResourceRecord>(bytes, pos, header.arcount);
     }
+
+    Message(const std::vector<uint8_t>& bytes, size_t& pos) :
+      Message(std::span<const uint8_t>(bytes), pos)
+    {}
 
     ~Message() {}
 

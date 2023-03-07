@@ -57,7 +57,7 @@ public:
     }
   }
 
-  small_vector(const std::vector<uint8_t>& bytes, size_t& pos) :
+  small_vector(const std::span<const uint8_t>& bytes, size_t& pos) :
     size_(0),
     data(nullptr)
   {
@@ -69,6 +69,10 @@ public:
         data[i] = get<E>(bytes, pos);
     }
   }
+
+  small_vector(const std::vector<uint8_t>& bytes, size_t& pos) :
+    small_vector(std::span<const uint8_t>(bytes), pos)
+  {}
 
   small_vector(const small_vector<uint16_t>& bytes, size_t& pos) :
     size_(0),

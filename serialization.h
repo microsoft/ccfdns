@@ -3,6 +3,7 @@
 #pragma once
 
 #include <cstdint>
+#include <span>
 #include <stdexcept>
 #include <vector>
 
@@ -34,6 +35,18 @@ inline std::vector<T> get_n(const V& bytes, size_t& pos, size_t n)
 template <>
 inline std::vector<uint8_t> get_n(
   const std::vector<uint8_t>& bytes, size_t& pos, size_t n)
+{
+  std::vector<uint8_t> r(n);
+  for (size_t i = 0; i < n; i++)
+  {
+    r[i] = get<uint8_t>(bytes, pos);
+  }
+  return r;
+}
+
+template <>
+inline std::vector<uint8_t> get_n(
+  const std::span<const uint8_t>& bytes, size_t& pos, size_t n)
 {
   std::vector<uint8_t> r(n);
   for (size_t i = 0; i < n; i++)
