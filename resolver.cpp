@@ -1158,7 +1158,16 @@ namespace aDNS
       out.dnskey_records = std::vector<ResourceRecord>();
       for (const auto& keyrr : dnskeys.answers)
         if (keyrr.type == static_cast<uint16_t>(aDNS::Type::DNSKEY))
-          out.dnskey_records->push_back(keyrr);
+        {
+          if (cfg.use_key_signing_key)
+          {
+            RFC4034::DNSKEY rd(keyrr.rdata);
+            if (rd.is_key_signing_key())
+              out.dnskey_records->push_back(keyrr);
+          }
+          else
+            out.dnskey_records->push_back(keyrr);
+        }
     }
 
     return out;
