@@ -1342,7 +1342,7 @@ namespace aDNS
         configuration.default_ttl,
         TLSA(
           CertificateUsage::DANE_EE,
-          Selector::CERT,
+          Selector::SPKI,
           MatchingType::Full,
           public_key_sv));
 
@@ -1380,7 +1380,7 @@ namespace aDNS
         configuration.default_ttl,
         TLSA(
           CertificateUsage::DANE_EE,
-          Selector::CERT,
+          Selector::SPKI,
           MatchingType::Full,
           public_key_sv)));
 
