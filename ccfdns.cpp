@@ -1190,7 +1190,7 @@ namespace ccfdns
         "/configure",
         HTTP_POST,
         ccf::json_adapter(configure),
-        ccf::no_auth_required)
+        {std::make_shared<ccf::UserCertAuthnPolicy>()})
         .set_auto_schema<Configure::In, Configure::Out>()
         .set_forwarding_required(ccf::endpoints::ForwardingRequired::Always)
         .install();
@@ -1213,7 +1213,7 @@ namespace ccfdns
         "/start-delegation-acme-client",
         HTTP_POST,
         ccf::json_adapter(start_acme_client),
-        ccf::no_auth_required)
+        {std::make_shared<ccf::UserCertAuthnPolicy>()})
         .set_auto_schema<void, void>()
         .set_forwarding_required(ccf::endpoints::ForwardingRequired::Always)
         .install();
@@ -1378,7 +1378,7 @@ namespace ccfdns
         "/register-service",
         HTTP_POST,
         ccf::json_adapter(register_service),
-        ccf::no_auth_required)
+        {std::make_shared<ccf::MemberCertAuthnPolicy>()})
         .set_auto_schema<RegisterService::In, RegisterService::Out>()
         .set_forwarding_required(ccf::endpoints::ForwardingRequired::Always)
         .install();
@@ -1403,7 +1403,7 @@ namespace ccfdns
         "/register-delegation",
         HTTP_POST,
         ccf::json_adapter(register_delegation),
-        ccf::no_auth_required)
+        {std::make_shared<ccf::MemberCertAuthnPolicy>()})
         .set_auto_schema<RegisterDelegation::In, RegisterDelegation::Out>()
         .set_forwarding_required(ccf::endpoints::ForwardingRequired::Always)
         .install();
@@ -1455,6 +1455,30 @@ namespace ccfdns
         ccf::json_adapter(get_certificate),
         ccf::no_auth_required)
         .set_auto_schema<GetCertificate::In, GetCertificate::Out>()
+        .set_forwarding_required(ccf::endpoints::ForwardingRequired::Never)
+        .install();
+
+      auto resign = [this](auto& ctx, nlohmann::json&& params) {
+        try
+        {
+          ContextContext cc(ccfdns, ctx);
+          const auto in = params.get<Resign::In>();
+          ccfdns->sign(in.origin);
+          return ccf::make_success();
+        }
+        catch (std::exception& ex)
+        {
+          return ccf::make_error(
+            HTTP_STATUS_BAD_REQUEST, ccf::errors::InternalError, ex.what());
+        }
+      };
+
+      make_endpoint(
+        "/resign",
+        HTTP_POST,
+        ccf::json_adapter(resign),
+        {std::make_shared<ccf::UserCertAuthnPolicy>()})
+        .set_auto_schema<Resign::In, Resign::Out>()
         .set_forwarding_required(ccf::endpoints::ForwardingRequired::Never)
         .install();
     }

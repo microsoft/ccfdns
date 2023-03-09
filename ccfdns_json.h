@@ -226,4 +226,7 @@ namespace ccfdns
   DECLARE_JSON_REQUIRED_FIELDS(GetCertificate::In, service_dns_name);
   DECLARE_JSON_TYPE(GetCertificate::Out);
   DECLARE_JSON_REQUIRED_FIELDS(GetCertificate::Out, certificate);
+
+  DECLARE_JSON_TYPE(Resign::In);
+  DECLARE_JSON_REQUIRED_FIELDS(Resign::In, origin);
 }

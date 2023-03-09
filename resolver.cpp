@@ -584,7 +584,7 @@ namespace aDNS
   }
 
   std::pair<RFC4034::CanonicalRRSet, Resolver::Names> Resolver::order_records(
-    const Name& origin, QClass c) const
+    const Name& origin, QClass c, std::optional<Name> match_name) const
   {
     RFC4034::CanonicalRRSet r;
     Names names;
@@ -600,13 +600,16 @@ namespace aDNS
         origin,
         c,
         static_cast<QType>(t),
-        [&origin, &records, &names](const auto& rr) {
+        [&origin, &records, &names, &match_name](const auto& rr) {
           // delegation points/glue entries are not signed
           // (https://datatracker.ietf.org/doc/html/rfc4035#section-2.2)
           if (rr.type != static_cast<uint16_t>(Type::NS) || rr.name == origin)
           {
-            records.push_back(rr);
-            names.insert(rr.name);
+            if (!match_name || *match_name == rr.name)
+            {
+              records.push_back(rr);
+              names.insert(rr.name);
+            }
           }
           return true;
         });
@@ -615,6 +618,20 @@ namespace aDNS
     }
 
     return std::make_pair(r, names);
+  }
+
+  Resolver::Names Resolver::names(const Name& origin, QClass c) const
+  {
+    Names r;
+
+    for (const auto& [_, t] : supported_types)
+    {
+      for_each(origin, c, static_cast<QType>(t), [&origin, &r](const auto& rr) {
+        r.insert(rr.name);
+        return true;
+      });
+    }
+    return r;
   }
 
   Resolver::KeyAndTag Resolver::add_new_signing_key(
@@ -816,6 +833,12 @@ namespace aDNS
         throw std::runtime_error("too many SOA records");
 
       bool is_authoritative = soa_records.size() == 1;
+
+      // auto names_in_zone = names(origin, static_cast<QClass>(c));
+
+      // CCF_APP_DEBUG("CCFDNS: Names in zone:");
+      // for (const auto& n : names_in_zone)
+      //   CCF_APP_DEBUG(" - {}", n);
 
       auto [crecords, names] = order_records(origin, static_cast<QClass>(c));
 
@@ -1419,7 +1442,7 @@ namespace aDNS
         Name("_acme-challenge") + name,
         Type::TXT,
         Class::IN,
-        600,
+        60,
         TXT(key_authorization)));
 
     for (const auto& n : alternative_names)
@@ -1430,7 +1453,7 @@ namespace aDNS
             Name("_acme-challenge") + n,
             Type::TXT,
             Class::IN,
-            600,
+            60,
             TXT(key_authorization)));
 
     sign(origin);

@@ -302,7 +302,11 @@ namespace aDNS
     typedef std::set<Name, RFC4034::CanonicalNameOrdering> Names;
 
     std::pair<RFC4034::CanonicalRRSet, Names> order_records(
-      const Name& origin, QClass c) const;
+      const Name& origin,
+      QClass c,
+      std::optional<Name> match_name = std::nullopt) const;
+
+    Names names(const Name& origin, QClass c) const;
 
     RFC4034::CanonicalRRSet get_record_set(
       const Name& origin, const Name& name, QClass c, QType t) const;

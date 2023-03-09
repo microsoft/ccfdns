@@ -134,7 +134,7 @@ def add_record(client, origin, name, stype, rdata_obj):
     return r
 
 
-def configure(base_url, cabundle, config):
+def configure(base_url, cabundle, config, client_cert=None):
     """Configure an aDNS service"""
 
     url = base_url + "/app/configure"
@@ -144,6 +144,7 @@ def configure(base_url, cabundle, config):
         timeout=10,
         verify=cabundle,
         headers={"Content-Type": "application/json"},
+        cert=client_cert,
     )
     ok = (
         r.status_code == http.HTTPStatus.OK
@@ -423,7 +424,12 @@ def run(args, wait_for_endorsed_cert=False, with_proxies=True, tcp_port=None):
         pif0 = nodes[0].rpc_interfaces[PRIMARY_RPC_INTERFACE]
         base_url = "https://" + pif0.host + ":" + str(pif0.port)
 
-        reginfo = configure(base_url, network.cert_path, args.adns)
+        client_cert = (
+            os.path.join(network.common_dir, "user0_cert.pem"),
+            os.path.join(network.common_dir, "user0_privk.pem"),
+        )
+
+        reginfo = configure(base_url, network.cert_path, args.adns, client_cert)
 
         endorsed_certs = None
         if wait_for_endorsed_cert:

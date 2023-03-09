@@ -35,7 +35,9 @@ from adns_tools import (
 )
 
 
-def register_service(service_info, cabundle, registration_info, num_retries=10):
+def register_service(
+    service_info, cabundle, registration_info, client_cert=None, num_retries=10
+):
     """Register the service"""
 
     reg_url = service_info["adns_base_url"] + "/app/register-service"
@@ -57,6 +59,7 @@ def register_service(service_info, cabundle, registration_info, num_retries=10):
                 headers={"Content-Type": "application/json"},
                 timeout=10,
                 verify=cabundle,
+                cert=client_cert,
             )
             ok = (
                 r.status_code == http.HTTPStatus.OK
@@ -86,6 +89,7 @@ def register_service(service_info, cabundle, registration_info, num_retries=10):
 
 def register_delegation(
     parent_base_url,
+    parent_member_cert,
     ca_certs,
     sub_adns_network,
     delegation_info,
@@ -118,6 +122,7 @@ def register_delegation(
                 headers={"Content-Type": "application/json"},
                 timeout=10,
                 verify=cabundle,
+                cert=parent_member_cert,
             )
             assert (
                 r.status_code == http.HTTPStatus.OK
@@ -129,7 +134,7 @@ def register_delegation(
             )
 
             sub_primary, _ = sub_adns_network.find_primary()
-            with sub_primary.client() as client:
+            with sub_primary.client("user0") as client:
                 client.post("/app/start-delegation-acme-client", {})
 
             return receipt
@@ -159,7 +164,7 @@ def run_server(args, wait_for_endorsed_cert=False, with_proxies=True):
     return adns_nw, procs, adns_endorsed_certs, reginfo
 
 
-def start_and_register_service(service_args, certificates):
+def start_and_register_service(service_args, certificates, member_cert):
     """Start, configure, and register service"""
 
     service_nw = ccf_demo_service.run(service_args)
@@ -190,7 +195,10 @@ def start_and_register_service(service_args, certificates):
             reginfo = ccf_demo_service.configure(
                 base_url, service_nw.cert_path, service_cfg
             )
-            registration_receipt = register_service(service_cfg, cabundle, reginfo)
+
+            registration_receipt = register_service(
+                service_cfg, cabundle, reginfo, member_cert
+            )
             registered = True
         except Exception as ex:
             if hasattr(ex, "message"):
@@ -229,7 +237,12 @@ def run(pebble_args, adns_args, service_args, sub_adns_args, sub_service_args):
         adns_nw, adns_procs, adns_certs, _ = run_server(adns_args, True)
         procs += adns_procs
 
-        start_and_register_service(service_args, adns_certs + ca_certs)
+        member_cert = (
+            os.path.join(adns_nw.common_dir, "member0_cert.pem"),
+            os.path.join(adns_nw.common_dir, "member0_privk.pem"),
+        )
+
+        start_and_register_service(service_args, adns_certs + ca_certs, member_cert)
 
         # Start a sub-domain aDNS
         sub_adns_nw, sub_procs, _, sub_adns_reginfo = run_server(
@@ -245,6 +258,7 @@ def run(pebble_args, adns_args, service_args, sub_adns_args, sub_service_args):
 
         receipt = register_delegation(
             sub_adns_args.adns.parent_base_url,
+            member_cert,
             adns_certs + ca_certs,
             sub_adns_nw,
             delegation_info,
@@ -257,9 +271,13 @@ def run(pebble_args, adns_args, service_args, sub_adns_args, sub_service_args):
             sub_adns_nw, delegation_info["subdomain"], num_retries=10000
         )
 
+        sub_member_cert = (
+            os.path.join(sub_adns_nw.common_dir, "member0_cert.pem"),
+            os.path.join(sub_adns_nw.common_dir, "member0_privk.pem"),
+        )
+
         start_and_register_service(
-            sub_service_args,
-            sub_endorsed_certs + ca_certs,
+            sub_service_args, sub_endorsed_certs + ca_certs, sub_member_cert
         )
 
         LOG.info("Waiting forever...")

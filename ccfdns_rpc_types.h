@@ -100,4 +100,13 @@ namespace ccfdns
       std::string certificate;
     };
   };
+
+  struct Resign
+  {
+    struct In
+    {
+      std::string origin;
+    };
+    using Out = void;
+  };
 }
