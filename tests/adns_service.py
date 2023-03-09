@@ -10,7 +10,6 @@ import subprocess
 import json
 import logging
 import requests
-import tempfile
 
 import infra.e2e_args
 import infra.network
@@ -134,33 +133,45 @@ def add_record(client, origin, name, stype, rdata_obj):
     return r
 
 
-def configure(base_url, cabundle, config, client_cert=None):
+def configure(base_url, cabundle, config, client_cert=None, num_retries=10):
     """Configure an aDNS service"""
 
-    url = base_url + "/app/configure"
-    r = requests.post(
-        url,
-        json.dumps(config),
-        timeout=10,
-        verify=cabundle,
-        headers={"Content-Type": "application/json"},
-        cert=client_cert,
-    )
-    ok = (
-        r.status_code == http.HTTPStatus.OK
-        or r.status_code == http.HTTPStatus.NO_CONTENT
-    )
-    if not ok:
-        LOG.info(r)
-        LOG.info(r.text)
-    assert ok
-    reginfo = r.json()["registration_info"]
-    assert "x-ms-ccf-transaction-id" in r.headers
+    while num_retries > 0:
+        try:
+            url = base_url + "/app/configure"
+            r = requests.post(
+                url,
+                json.dumps(config),
+                timeout=10,
+                verify=cabundle,
+                headers={"Content-Type": "application/json"},
+                cert=client_cert,
+            )
+            ok = (
+                r.status_code == http.HTTPStatus.OK
+                or r.status_code == http.HTTPStatus.NO_CONTENT
+            )
+            if not ok:
+                LOG.info(r)
+                LOG.info(r.text)
+            assert ok
+            reginfo = r.json()["registration_info"]
+            assert "x-ms-ccf-transaction-id" in r.headers
 
-    reginfo["configuration_receipt"] = adns_tools.poll_for_receipt(
-        base_url, cabundle, r.headers["x-ms-ccf-transaction-id"]
-    )
-    return reginfo
+            reginfo["configuration_receipt"] = adns_tools.poll_for_receipt(
+                base_url, cabundle, r.headers["x-ms-ccf-transaction-id"]
+            )
+            return reginfo
+        except Exception as ex:
+            logging.exception("caught exception")
+            num_retries = num_retries - 1
+            if num_retries == 0:
+                raise ex
+            else:
+                n = 10
+                LOG.error(f"Configuration failed; retrying in {n} seconds.")
+                time.sleep(n)
+    return None
 
 
 def populate(network, args):

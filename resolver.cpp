@@ -1130,9 +1130,15 @@ namespace aDNS
     out.public_key = tls_key->public_key_pem().str();
     out.node_information = get_node_information();
 
+    remove(cfg.origin, cfg.origin, Class::IN, Type::SOA);
     add(
       cfg.origin,
       mk_rr(cfg.origin, aDNS::Type::SOA, Class::IN, 60, SOA(cfg.soa)));
+
+    remove(cfg.origin, cfg.origin, Class::IN, Type::NS);
+    remove(cfg.origin, cfg.origin, Class::IN, Type::A);
+
+    add_caa_records(cfg.origin, cfg.origin, cfg.service_ca.name, cfg.contact);
 
     for (const auto& [id, addr] : cfg.node_addresses)
     {
@@ -1144,6 +1150,7 @@ namespace aDNS
         cfg.origin,
         mk_rr(cfg.origin, Type::NS, Class::IN, cfg.default_ttl, NS(addr.name)));
 
+      remove(cfg.origin, addr.name, Class::IN, Type::A);
       add(
         cfg.origin,
         mk_rr(addr.name, Type::A, Class::IN, cfg.default_ttl, A(addr.ip)));
@@ -1152,10 +1159,25 @@ namespace aDNS
         cfg.origin,
         mk_rr(cfg.origin, Type::A, Class::IN, cfg.default_ttl, A(addr.ip)));
 
+      remove(cfg.origin, addr.name, Class::IN, Type::CAA);
       add_caa_records(cfg.origin, addr.name, cfg.service_ca.name, cfg.contact);
     }
 
-    add_caa_records(cfg.origin, cfg.origin, cfg.service_ca.name, cfg.contact);
+    for (const auto& [_, info] : out.node_information)
+    {
+      remove(cfg.origin, info.address.name, Class::IN, Type::ATTEST);
+      auto attest_rr = mk_rr(
+        info.address.name,
+        Type::ATTEST,
+        Class::IN,
+        cfg.default_ttl,
+        Types::ATTEST(info.attestation));
+      add(cfg.origin, attest_rr);
+
+      Name attest_name = Name("attest") + info.address.name;
+      remove(cfg.origin, attest_name, Class::IN, Type::AAAA);
+      add_fragmented(cfg.origin, attest_name, attest_rr);
+    }
 
     sign(cfg.origin);
 
@@ -1330,8 +1352,9 @@ namespace aDNS
       add(origin, att_rr);
 
       // Fragmented ATTEST RR
-      remove(origin, Name("attest") + name, Class::IN, Type::ATTEST);
-      add_fragmented(origin, Name("attest") + name, att_rr);
+      auto attest_name = Name("attest") + name;
+      remove(origin, attest_name, Class::IN, Type::AAAA);
+      add_fragmented(origin, attest_name, att_rr);
 
       add(
         origin,

@@ -155,7 +155,11 @@ def run_server(args, wait_for_endorsed_cert=False, with_proxies=True):
     adns_endorsed_certs = None
 
     adns_nw, procs, adns_endorsed_certs, reginfo = adns_service.run(
-        args, wait_for_endorsed_cert, with_proxies, tcp_port=53
+        args,
+        wait_for_endorsed_cert,
+        with_proxies=with_proxies,
+        tcp_port=53,
+        udp_port=53,
     )
 
     if not adns_nw:
@@ -324,7 +328,7 @@ def main():
         )
     else:
         pebble_args = pebble.Arguments(
-            # dns_address="ns1.adns.ccf.dev:53",
+            dns_address="10.50.50.50:53",
             wait_forever=False,
             http_port=8080,
             ca_cert_filename="pebble-tls-cert.pem",
@@ -365,7 +369,8 @@ def main():
     adns_args.acme_config_name = "custom"
     adns_args.wait_forever = False
     adns_args.http2 = False
-    adns_args.initial_service_certificate_validity_days = 90
+    adns_args.initial_node_cert_validity_days = 365
+    adns_args.initial_service_cert_validity_days = 365
 
     adns_args.adns = aDNSConfig(
         origin="adns.ccf.dev.",
@@ -423,6 +428,8 @@ def main():
     service_args.http2 = False
     service_args.adns_base_url = "https://ns1.adns.ccf.dev:8443"
     service_args.ca_certs = service_ca_config.certificates
+    service_args.initial_node_cert_validity_days = 365
+    service_args.initial_service_cert_validity_days = 365
 
     # Then, a second aDNS server for sub.adns.ccf.dev.
 
@@ -453,7 +460,8 @@ def main():
     sub_adns_args.acme_config_name = "custom"
     sub_adns_args.wait_forever = False
     sub_adns_args.http2 = False
-    sub_adns_args.initial_service_certificate_validity_days = 90
+    sub_adns_args.initial_node_cert_validity_days = 365
+    sub_adns_args.initial_service_cert_validity_days = 365
 
     sub_adns_args.adns = aDNSConfig(
         origin="sub.adns.ccf.dev.",
@@ -511,6 +519,8 @@ def main():
     sub_service_args.http2 = False
     sub_service_args.adns_base_url = "https://ns4.sub.adns.ccf.dev:8443"
     sub_service_args.ca_certs = service_ca_config.certificates
+    sub_service_args.initial_node_cert_validity_days = 365
+    sub_service_args.initial_service_cert_validity_days = 365
 
     run(pebble_args, adns_args, service_args, sub_adns_args, sub_service_args)
 
