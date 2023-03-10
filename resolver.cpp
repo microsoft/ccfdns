@@ -450,6 +450,20 @@ namespace aDNS
     return records;
   }
 
+  RFC4034::CanonicalRRSet Resolver::find_rrsigs(
+    const Name& origin, const Name& name, QClass qclass, Type type_covered)
+  {
+    return find_records(
+      origin,
+      name,
+      static_cast<QType>(Type::RRSIG),
+      qclass,
+      [](const auto& rr) {
+        RFC4034::RRSIG rd(rr.rdata, type2str);
+        return rd.type_covered == static_cast<uint16_t>(Type::DS);
+      });
+  }
+
   Resolver::Resolution Resolver::resolve(
     const Name& qname, QType qtype, QClass qclass)
   {
@@ -518,16 +532,23 @@ namespace aDNS
           name += suffix;
           result.authorities +=
             find_records(origin, name, static_cast<QType>(Type::NSEC3), qclass);
+          result.authorities += find_rrsigs(origin, name, qclass, Type::NSEC3);
         }
         else
+        {
           result.authorities +=
             find_records(origin, qname, static_cast<QType>(Type::NSEC), qclass);
+          result.authorities += find_rrsigs(origin, qname, qclass, Type::NSEC);
+        }
 
         if (qtype != QType::SOA)
         {
           auto soa_records = find_records(origin, qname, QType::SOA, qclass);
           if (soa_records.size() > 0)
+          {
             result.authorities += *soa_records.begin();
+            result.authorities += find_rrsigs(origin, qname, qclass, Type::SOA);
+          }
         }
 
         if (!qname.is_root())
@@ -537,6 +558,10 @@ namespace aDNS
             // Delegation records
             result.authorities +=
               find_records(origin, n, static_cast<QType>(Type::NS), qclass);
+
+            result.authorities +=
+              find_records(origin, n, static_cast<QType>(Type::DS), qclass);
+            result.authorities += find_rrsigs(origin, n, qclass, Type::DS);
 
             // Glue records
             for (const auto& rr : result.authorities)
@@ -550,21 +575,6 @@ namespace aDNS
               }
           }
         }
-
-        result.authorities += find_records(
-          origin,
-          qname,
-          QType::RRSIG,
-          qclass,
-          [&cfg = configuration, &qtype](const auto& rr) {
-            RFC4034::RRSIG rd(rr.rdata, type2str);
-            return (!cfg.use_nsec3 &&
-                    rd.type_covered == static_cast<uint16_t>(Type::NSEC)) ||
-              (cfg.use_nsec3 &&
-               rd.type_covered == static_cast<uint16_t>(Type::NSEC3)) ||
-              (qtype != QType::SOA &&
-               rd.type_covered == static_cast<uint16_t>(Type::SOA));
-          });
 
         if (result.response_code == NO_ERROR && result.authorities.empty())
           result.response_code = NAME_ERROR; // NXDOMAIN

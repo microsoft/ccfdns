@@ -211,6 +211,9 @@ namespace aDNS
       std::optional<std::function<bool(const ResourceRecord&)>> condition =
         std::nullopt);
 
+    RFC4034::CanonicalRRSet find_rrsigs(
+      const Name& origin, const Name& name, QClass qclass, Type type_covered);
+
     virtual void for_each(
       const Name& origin,
       QClass qclass,
