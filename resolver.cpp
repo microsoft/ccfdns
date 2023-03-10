@@ -458,9 +458,9 @@ namespace aDNS
       name,
       static_cast<QType>(Type::RRSIG),
       qclass,
-      [](const auto& rr) {
+      [type_covered](const auto& rr) {
         RFC4034::RRSIG rd(rr.rdata, type2str);
-        return rd.type_covered == static_cast<uint16_t>(Type::DS);
+        return rd.type_covered == static_cast<uint16_t>(type_covered);
       });
   }
 
