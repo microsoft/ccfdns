@@ -242,7 +242,10 @@ public:
   virtual std::map<std::string, Resolver::NodeInfo> get_node_information()
     override
   {
-    return {};
+    std::map<std::string, Resolver::NodeInfo> r;
+    for (const auto& [id, addr] : configuration.node_addresses)
+      r[id] = {.address = addr, .attestation = dummy_attestation};
+    return r;
   }
 };
 
@@ -626,16 +629,21 @@ TEST_CASE("Service registration")
 {
   TestResolver s;
 
-  Name origin("example.com.");
-
-  REQUIRE_NOTHROW(s.add(
-    origin,
-    RR(
-      origin,
-      aDNS::Type::SOA,
-      aDNS::Class::IN,
-      RFC1035::SOA(
-        "ns1.example.com. joe.example.com. 4 604800 86400 2419200 0"))));
+  Resolver::Configuration cfg;
+  cfg = {
+    .origin = Name("example.com."),
+    .soa = "ns1.example.com. joe.example.com. 4 604800 86400 2419200 0",
+    .contact = {"joe@example.com"},
+    .service_ca = {.name = "myCA"},
+    .node_addresses =
+      {{"id",
+        Resolver::NodeAddress{
+          .name = Name("ns1.example.com."),
+          .ip = "127.0.0.1",
+          .protocol = "tcp",
+          .port = 53}}},
+  };
+  s.configure(cfg);
 
   Name service_name("service42.example.com.");
   auto service_key = crypto::make_key_pair(crypto::CurveID::SECP384R1);
@@ -655,10 +663,12 @@ TEST_CASE("Service registration")
   REQUIRE((std::string)sans.at(0).string() == "alt.service42.example.com");
 
   s.register_service(
-    {csr, {"joe@example.com"}, {{"id", {url_name, address, "tcp", 8000}}}});
+    {csr,
+     {"joe@example.com"},
+     {{"id", {{url_name, address, "tcp", 8000}, dummy_attestation}}}});
 
   auto dnskey_rrs =
-    s.resolve(origin, aDNS::QType::DNSKEY, aDNS::QClass::IN).answers;
+    s.resolve(cfg.origin, aDNS::QType::DNSKEY, aDNS::QClass::IN).answers;
   REQUIRE(RFC4034::verify_rrsigs(dnskey_rrs, dnskey_rrs, type2str));
 
   auto r = s.resolve(service_name, aDNS::QType::TLSA, aDNS::QClass::IN);
@@ -670,7 +680,8 @@ TEST_CASE("Service registration")
   r = s.resolve(service_name, aDNS::QType::A, aDNS::QClass::IN);
   REQUIRE(RFC4034::verify_rrsigs(r.answers, dnskey_rrs, type2str));
 
-  s.install_acme_response(origin, service_name, {}, RFC1035::TXT("sometoken"));
+  s.install_acme_response(
+    cfg.origin, service_name, {}, RFC1035::TXT("sometoken"));
   auto challenge_name = Name("_acme-challenge") + service_name;
   r = s.resolve(challenge_name, aDNS::QType::TXT, aDNS::QClass::IN);
   REQUIRE(RFC4034::verify_rrsigs(r.answers, dnskey_rrs, type2str));
@@ -682,22 +693,45 @@ TEST_CASE("Delegation")
 
   Resolver::Configuration main_cfg, sub_cfg;
 
-  main_cfg = {.origin = Name("example.com.")};
-  //. .node_infos = {{Name("ns1.example.com."), "192.168.0.1"}}};
+  main_cfg = {
+    .origin = Name("example.com."),
+    .soa = "ns1.example.com. joe.example.com. 4 604800 86400 2419200 0",
+    .contact = {"joe@example.com"},
+    .service_ca = {.name = "myCA"},
+    .node_addresses =
+      {{"id",
+        Resolver::NodeAddress{
+          .name = Name("ns1.example.com."),
+          .ip = "127.0.0.1",
+          .protocol = "tcp",
+          .port = 53}}},
+  };
 
   auto main_reginfo = main.configure(main_cfg);
 
-  sub_cfg = {.origin = Name("sub.example.com.")};
-  // .node_infos = {{Name("ns1.sub.example.com."), "192.168.1.1"}}};
+  sub_cfg = {
+    .origin = Name("sub.example.com."),
+    .soa = "ns1.sub.example.com. joe.sub.example.com. 4 604800 86400 2419200 0",
+    .contact = {"joe@sub.example.com"},
+    .service_ca = {.name = "myCA"},
+    .node_addresses =
+      {{"id",
+        Resolver::NodeAddress{
+          .name = Name("ns1.sub.example.com."),
+          .ip = "127.0.1.1",
+          .protocol = "tcp",
+          .port = 53}}},
+  };
 
   auto sub_reginfo = sub.configure(sub_cfg);
 
   REQUIRE(sub_reginfo.dnskey_records != std::nullopt);
+  REQUIRE(!sub_reginfo.node_information.empty());
 
   Resolver::DelegationRequest dr = {
     .subdomain = sub_cfg.origin,
     .csr = sub_reginfo.csr,
-    .contact = std::vector<std::string>{"someone@example.com"},
+    .contact = {"someone@sub.example.com"},
     .node_information = sub_reginfo.node_information,
     .dnskey_records = *sub_reginfo.dnskey_records};
 
