@@ -497,21 +497,9 @@ namespace aDNS
       if (records.size() > 0)
       {
         for (const auto& rr : records)
-        {
-          for_each(
-            origin,
-            static_cast<QClass>(rr.class_),
-            QType::RRSIG,
-            [&qname, &rrtype = rr.type, &result_set](const auto& rr) {
-              if (rr.name == qname)
-              {
-                auto rdata = RFC4034::RRSIG(rr.rdata, type2str);
-                if (rdata.type_covered == rrtype)
-                  result_set.insert(rr);
-              }
-              return true;
-            });
-        }
+          if (rr.name == qname)
+            result_set +=
+              find_rrsigs(origin, rr.name, qclass, static_cast<Type>(rr.type));
 
         result_set += records;
       }
@@ -568,7 +556,7 @@ namespace aDNS
               if (rr.type == static_cast<uint16_t>(Type::NS))
               {
                 result.additionals += find_records(
-                  origin,
+                  origin + Name("glue."),
                   NS(rr.rdata).nsdname,
                   static_cast<QType>(Type::A),
                   qclass);
@@ -1605,14 +1593,16 @@ namespace aDNS
 
     // Glue records are not signed
     // (https://datatracker.ietf.org/doc/html/rfc4035#section-2.2)
+    // Note: we shouldn't answer direct queries for glue records, so we put them
+    // into a special origin.
 
     for (const auto& [id, info] : dr.node_information)
-      remove(origin, info.address.name, Class::IN, Type::A);
+      remove(origin + Name("glue."), info.address.name, Class::IN, Type::A);
 
     for (const auto& [id, info] : dr.node_information)
     {
       add(
-        origin,
+        origin + Name("glue."),
         mk_rr(
           info.address.name,
           Type::A,

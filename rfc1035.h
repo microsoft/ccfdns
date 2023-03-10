@@ -398,6 +398,8 @@ namespace RFC1035 // https://datatracker.ietf.org/doc/html/rfc1035
     Name operator+(const Name& other) const
     {
       std::vector<Label> lbls = labels;
+      if (is_absolute())
+        lbls.pop_back();
       for (const auto& l : other.labels)
         lbls.push_back(l);
       return Name(lbls);
@@ -405,6 +407,8 @@ namespace RFC1035 // https://datatracker.ietf.org/doc/html/rfc1035
 
     Name& operator+=(const Name& other)
     {
+      if (is_absolute())
+        labels.pop_back();
       for (const auto& l : other.labels)
         labels.push_back(l);
       return *this;

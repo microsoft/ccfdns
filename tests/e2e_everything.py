@@ -150,14 +150,14 @@ def register_delegation(
     return None
 
 
-def run_server(args, wait_for_endorsed_cert=False, with_proxies=True):
+def run_server(args, wait_for_endorsed_cert=False):
     """Run an aDNS server (network)"""
     adns_endorsed_certs = None
 
     adns_nw, procs, adns_endorsed_certs, reginfo = adns_service.run(
         args,
         wait_for_endorsed_cert,
-        with_proxies=with_proxies,
+        with_proxies=False,
         tcp_port=53,
         udp_port=53,
     )
@@ -238,7 +238,9 @@ def run(pebble_args, adns_args, service_args, sub_adns_args, sub_service_args):
             ca_certs = adns_args.adns.service_ca.certificates
 
         # Start top-level aDNS
-        adns_nw, adns_procs, adns_certs, _ = run_server(adns_args, True)
+        adns_nw, adns_procs, adns_certs, _ = run_server(
+            adns_args, wait_for_endorsed_cert=True
+        )
         procs += adns_procs
 
         member_cert = (
@@ -250,7 +252,7 @@ def run(pebble_args, adns_args, service_args, sub_adns_args, sub_service_args):
 
         # Start a sub-domain aDNS
         sub_adns_nw, sub_procs, _, sub_adns_reginfo = run_server(
-            sub_adns_args, False, True
+            sub_adns_args, wait_for_endorsed_cert=False
         )
         procs += sub_procs
 
@@ -328,7 +330,7 @@ def main():
         )
     else:
         pebble_args = pebble.Arguments(
-            dns_address="10.50.50.50:53",
+            # dns_address="10.50.50.50:53",
             wait_forever=False,
             http_port=8080,
             ca_cert_filename="pebble-tls-cert.pem",
