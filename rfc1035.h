@@ -660,6 +660,20 @@ namespace RFC1035
       return r;
     }
 
+    std::vector<uint8_t> to_bytes_compressed(uint16_t name_index) const
+    {
+      if (name_index == 0)
+        return (std::vector<uint8_t>)*this;
+
+      std::vector<uint8_t> r;
+      put((uint16_t)(name_index | 0xC000), r);
+      put(type, r);
+      put(class_, r);
+      put(ttl, r);
+      rdata.put(r);
+      return r;
+    }
+
     bool operator==(const ResourceRecord& other) const = default;
   };
 
@@ -848,6 +862,18 @@ namespace RFC1035
       put(qclass, r);
       return r;
     }
+
+    std::vector<uint8_t> to_bytes_compressed(uint16_t name_index) const
+    {
+      if (name_index == 0)
+        return (std::vector<uint8_t>)*this;
+      std::vector<uint8_t> r;
+
+      put((uint16_t)(name_index | 0xC000), r);
+      put(qtype, r);
+      put(qclass, r);
+      return r;
+    }
   };
 
   // https://datatracker.ietf.org/doc/html/rfc1035#section-4.1
@@ -886,10 +912,18 @@ namespace RFC1035
     operator std::vector<uint8_t>() const
     {
       std::vector<uint8_t> r = header;
+#if 1
+      std::map<std::string, size_t> name_indices;
+      to_bytes_compressed(questions, name_indices, r);
+      to_bytes_compressed(answers, name_indices, r);
+      to_bytes_compressed(authorities, name_indices, r);
+      to_bytes_compressed(additionals, name_indices, r);
+#else
       put_n(questions, r, questions.size());
       put_n(answers, r, answers.size());
       put_n(authorities, r, authorities.size());
       put_n(additionals, r, additionals.size());
+#endif
       return r;
     }
 
@@ -898,6 +932,41 @@ namespace RFC1035
     std::vector<ResourceRecord> answers;
     std::vector<ResourceRecord> authorities;
     std::vector<ResourceRecord> additionals;
+
+  protected:
+    static std::string get_name(const Question& q)
+    {
+      return q.qname;
+    }
+
+    static std::string get_name(const ResourceRecord& q)
+    {
+      return q.name;
+    }
+
+    template <typename T>
+    static void to_bytes_compressed(
+      const std::vector<T>& elements,
+      std::map<std::string, size_t>& name_indices,
+      std::vector<uint8_t>& r)
+    {
+      for (const auto& elem : elements)
+      {
+        auto ename = get_name(elem);
+        auto it = name_indices.find(ename);
+        if (it != name_indices.end() && it->second < 16384)
+        {
+          auto cmprssd = elem.to_bytes_compressed(it->second);
+          r.insert(r.end(), cmprssd.begin(), cmprssd.end());
+        }
+        else
+        {
+          name_indices[ename] = r.size();
+          auto qv = (std::vector<uint8_t>)elem;
+          r.insert(r.end(), qv.begin(), qv.end());
+        }
+      }
+    }
   };
 
   class RDataFormat
