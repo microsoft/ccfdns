@@ -142,7 +142,7 @@ def configure(base_url, cabundle, config, client_cert=None, num_retries=10):
             r = requests.post(
                 url,
                 json.dumps(config),
-                timeout=10,
+                timeout=60,
                 verify=cabundle,
                 headers={"Content-Type": "application/json"},
                 cert=client_cert,

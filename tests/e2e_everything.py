@@ -57,7 +57,7 @@ def register_service(
                     }
                 ),
                 headers={"Content-Type": "application/json"},
-                timeout=10,
+                timeout=120,
                 verify=cabundle,
                 cert=client_cert,
             )
@@ -120,7 +120,7 @@ def register_delegation(
                     }
                 ),
                 headers={"Content-Type": "application/json"},
-                timeout=10,
+                timeout=60,
                 verify=cabundle,
                 cert=parent_member_cert,
             )
@@ -373,6 +373,8 @@ def main():
     adns_args.http2 = False
     adns_args.initial_node_cert_validity_days = 365
     adns_args.initial_service_cert_validity_days = 365
+    adns_args.message_timeout_ms = 2000
+    adns_args.election_timeout_ms = 50000
 
     adns_args.adns = aDNSConfig(
         origin="adns.ccf.dev.",
@@ -464,6 +466,8 @@ def main():
     sub_adns_args.http2 = False
     sub_adns_args.initial_node_cert_validity_days = 365
     sub_adns_args.initial_service_cert_validity_days = 365
+    sub_adns_args.message_timeout_ms = 2000
+    sub_adns_args.election_timeout_ms = 50000
 
     sub_adns_args.adns = aDNSConfig(
         origin="sub.adns.ccf.dev.",
