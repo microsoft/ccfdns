@@ -349,7 +349,10 @@ namespace aDNS
       std::vector<RFC4034::CanonicalRRSet::iterator>& rrs);
 
     void add_fragmented(
-      const Name& origin, const Name& name, const ResourceRecord& rr);
+      const Name& origin,
+      const Name& name,
+      const ResourceRecord& rr,
+      uint8_t records_per_name = 64);
 
     ResourceRecord mk_rr(
       const Name& name,

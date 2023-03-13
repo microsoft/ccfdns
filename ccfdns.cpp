@@ -429,7 +429,7 @@ namespace ccfdns
     virtual void add(const Name& origin, const ResourceRecord& rr) override
     {
       check_context();
-      CCF_APP_DEBUG("CCFDNS: Add: {}", string_from_resource_record(rr));
+      CCF_APP_TRACE("CCFDNS: Add: {}", string_from_resource_record(rr));
 
       if (!origin.is_absolute())
         throw std::runtime_error("origin not absolute");
@@ -456,7 +456,7 @@ namespace ccfdns
     virtual void remove(const Name& origin, const ResourceRecord& rr)
     {
       check_context();
-      CCF_APP_DEBUG("CCFDNS: Remove: {}", string_from_resource_record(rr));
+      CCF_APP_TRACE("CCFDNS: Remove: {}", string_from_resource_record(rr));
 
       if (!origin.is_absolute())
         throw std::runtime_error("origin not absolute");
@@ -488,7 +488,7 @@ namespace ccfdns
     {
       check_context();
 
-      CCF_APP_DEBUG(
+      CCF_APP_TRACE(
         "CCFDNS: Remove {} type {} at {}", name, string_from_type(t), origin);
 
       if (!origin.is_absolute())
@@ -518,7 +518,7 @@ namespace ccfdns
     {
       check_context();
 
-      CCF_APP_DEBUG(
+      CCF_APP_TRACE(
         "CCFDNS: Remove type {} at {}", string_from_type(t), origin);
 
       if (!origin.is_absolute())

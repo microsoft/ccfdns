@@ -176,7 +176,7 @@ namespace RFC4034
     put(keytag, data_to_sign);
     signer.put(data_to_sign);
 
-    CCF_APP_DEBUG(
+    CCF_APP_TRACE(
       "ADNS: SIGN: record set: {} {} {} {} size: {}",
       crrs.name,
       crrs.type,

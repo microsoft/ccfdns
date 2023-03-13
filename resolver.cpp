@@ -848,7 +848,7 @@ namespace aDNS
         // Remove existing RRSIGs and NSECs (could be avoided)
         for (const auto& name : names)
         {
-          CCF_APP_DEBUG("ADNS: Remove {}", name);
+          CCF_APP_TRACE("ADNS: Remove {}", name);
           remove(origin, name, c, Type::RRSIG);
           remove(origin, name, c, Type::NSEC);
           remove(origin, c, Type::NSEC3);
@@ -1164,6 +1164,7 @@ namespace aDNS
     for (const auto& [_, info] : out.node_information)
     {
       remove(cfg.origin, info.address.name, Class::IN, Type::ATTEST);
+
       auto attest_rr = mk_rr(
         info.address.name,
         Type::ATTEST,
@@ -1217,39 +1218,71 @@ namespace aDNS
   }
 
   void Resolver::add_fragmented(
-    const Name& origin, const Name& name, const ResourceRecord& rr)
+    const Name& origin,
+    const Name& name,
+    const ResourceRecord& rr,
+    uint8_t records_per_name)
   {
-    auto configuration = get_configuration();
-
-    remove(origin, name, Class::IN, Type::AAAA);
+    // TODO: remove old records?
 
     uint16_t rsz = rr.rdata.size();
-    size_t num_rrs = rsz / 14;
+    size_t num_rrs = rsz / 15;
 
-    if ((rsz % 14) != 0)
+    if ((rsz % 15) != 0)
       num_rrs++;
+
+    size_t num_names = num_rrs / records_per_name;
+
+    if ((num_rrs % records_per_name) != 0)
+      num_names++;
+
+    if (num_names > 65535)
+      throw std::runtime_error(
+        "too many names/record for AAAA fragmented record");
 
     small_vector<uint16_t> data(16);
 
-    for (uint16_t i = 0; i < num_rrs; i++)
+    size_t bytes_encoded = 0;
+    for (size_t n = 0; n < num_names; n++)
     {
-      data[0] = i >> 8;
-      data[1] = i & 0xFF;
+      Name fname = Name("_" + std::to_string(n)) + name;
 
-      for (size_t j = 0; j < 14; j++)
+      remove(origin, fname, Class::IN, Type::AAAA);
+
+      for (size_t i = 0; i < records_per_name; i++)
       {
-        auto inx = 14 * i + j;
-        data[2 + j] = inx >= rsz ? 0 : rr.rdata[inx];
-      }
+        data[0] = i;
 
-      add(
-        origin,
-        mk_rr(
-          name,
-          Type::AAAA,
-          Class::IN,
-          configuration.default_ttl,
-          RFC3596::AAAA(data)));
+        size_t bytes_per_fragment = records_per_name * 15;
+
+        if (n == 0 && i == 0)
+        {
+          data[1] = rsz >> 8;
+          data[2] = rsz & 0xFF;
+          data[3] = num_names >> 8;
+          data[4] = num_names & 0xFF;
+
+          for (size_t j = 5; j < 16; j++)
+            data[j] = bytes_encoded >= rsz ? 0 : rr.rdata[bytes_encoded++];
+        }
+        else
+        {
+          for (size_t j = 1; j < 16; j++)
+            data[j] = bytes_encoded >= rsz ? 0 : rr.rdata[bytes_encoded++];
+        }
+
+        add(
+          origin,
+          mk_rr(
+            fname,
+            Type::AAAA,
+            static_cast<aDNS::Class>(rr.class_),
+            rr.ttl,
+            RFC3596::AAAA(data)));
+
+        if (bytes_encoded >= rsz)
+          break;
+      }
     }
   }
 
