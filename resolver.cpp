@@ -1393,6 +1393,9 @@ namespace aDNS
       remove(origin, tlsa_name, Class::IN, Type::TLSA);
       add(origin, tlsa_rr);
 
+      remove(origin, tlsa_name, Class::IN, Type::AAAA);
+      add_fragmented(origin, tlsa_name, tlsa_rr);
+
       // CAA RR for node
       remove(origin, name, Class::IN, Type::CAA);
       add_caa_records(origin, name, configuration.service_ca.name, rr.contact);
@@ -1410,23 +1413,23 @@ namespace aDNS
     }
 
     // TLSA RR for service
-    std::transform(
-      tlsa_prolow.begin(), tlsa_prolow.end(), tlsa_prolow.begin(), ::tolower);
-    auto tlsa_name = Name("_" + std::to_string(tlsa_port)) +
-      Name(std::string("_") + tlsa_prolow) + service_name;
+    auto tlsa_rr = mk_rr(
+      service_name,
+      Type::TLSA,
+      Class::IN,
+      configuration.default_ttl,
+      TLSA(
+        CertificateUsage::DANE_EE,
+        Selector::SPKI,
+        MatchingType::Full,
+        public_key_sv));
+
     remove(origin, service_name, Class::IN, Type::TLSA);
-    add(
-      origin,
-      mk_rr(
-        service_name,
-        Type::TLSA,
-        Class::IN,
-        configuration.default_ttl,
-        TLSA(
-          CertificateUsage::DANE_EE,
-          Selector::SPKI,
-          MatchingType::Full,
-          public_key_sv)));
+    add(origin, tlsa_rr);
+
+    auto tlsa_name = Name("tlsa") + service_name;
+    remove(origin, tlsa_name, Class::IN, Type::AAAA);
+    add_fragmented(origin, tlsa_name, tlsa_rr);
 
     // CAA RR for service
     remove(origin, service_name, Class::IN, Type::CAA);
