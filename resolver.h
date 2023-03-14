@@ -304,10 +304,14 @@ namespace aDNS
 
     typedef std::set<Name, RFC4034::CanonicalNameOrdering> Names;
 
-    std::pair<RFC4034::CanonicalRRSet, Names> order_records(
+    RFC4034::CanonicalRRSet get_ordered_records(
       const Name& origin,
       QClass c,
+      QType t,
       std::optional<Name> match_name = std::nullopt) const;
+
+    Resolver::Names get_ordered_names(
+      const Name& origin, QClass c, QType t) const;
 
     Names names(const Name& origin, QClass c) const;
 
@@ -336,9 +340,15 @@ namespace aDNS
       uint16_t tag,
       const small_vector<uint16_t>& dnskey_rdata);
 
-    typedef std::
-      map<small_vector<uint8_t>, std::vector<RFC4034::CanonicalRRSet::iterator>>
-        HashedNamesMap;
+    struct NameTypes
+    {
+      Name name;
+      std::set<Type> types;
+    };
+
+    typedef std::map<small_vector<uint8_t>, NameTypes> HashedNameTypesMap;
+    typedef std::map<Name, std::set<Type>, RFC4034::CanonicalNameOrdering>
+      NameTypesMap;
 
     ResourceRecord add_nsec3(
       Class c,
@@ -346,7 +356,8 @@ namespace aDNS
       uint32_t ttl,
       const small_vector<uint8_t>& hashed_name,
       const small_vector<uint8_t>& next_hashed_owner_name,
-      std::vector<RFC4034::CanonicalRRSet::iterator>& rrs);
+      const RFC1035::Name& suffix,
+      std::set<Type> types);
 
     void add_fragmented(
       const Name& origin,
@@ -368,6 +379,15 @@ namespace aDNS
       const Name& name,
       const std::string& ca_name,
       const std::vector<std::string>& contact);
+
+    size_t sign_rrset(
+      const Name& origin,
+      QClass c,
+      QType t,
+      const Name& name,
+      std::shared_ptr<crypto::KeyPair> key,
+      uint16_t key_tag,
+      RFC4034::Algorithm signing_algorithm);
   };
 
   uint16_t get_key_tag(const RFC4034::DNSKEY& dnskey_rdata);

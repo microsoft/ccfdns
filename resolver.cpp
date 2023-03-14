@@ -581,41 +581,31 @@ namespace aDNS
     return result;
   }
 
-  std::pair<RFC4034::CanonicalRRSet, Resolver::Names> Resolver::order_records(
-    const Name& origin, QClass c, std::optional<Name> match_name) const
+  RFC4034::CanonicalRRSet Resolver::get_ordered_records(
+    const Name& origin, QClass c, QType t, std::optional<Name> match_name) const
   {
     RFC4034::CanonicalRRSet r;
-    Names names;
 
-    for (const auto& [_, t] : supported_types)
-    {
-      if (t == Type::RRSIG)
-        continue; // signatures are not signed but recreated
+    for_each(origin, c, t, [&origin, &r, &match_name](const auto& rr) {
+      if (!match_name || *match_name == rr.name)
+        r += RFC4034::canonicalize(origin, rr, type2str);
+      return true;
+    });
 
-      std::vector<ResourceRecord> records;
+    return r;
+  }
 
-      for_each(
-        origin,
-        c,
-        static_cast<QType>(t),
-        [&origin, &records, &names, &match_name](const auto& rr) {
-          // delegation points/glue entries are not signed
-          // (https://datatracker.ietf.org/doc/html/rfc4035#section-2.2)
-          if (rr.type != static_cast<uint16_t>(Type::NS) || rr.name == origin)
-          {
-            if (!match_name || *match_name == rr.name)
-            {
-              records.push_back(rr);
-              names.insert(rr.name);
-            }
-          }
-          return true;
-        });
+  Resolver::Names Resolver::get_ordered_names(
+    const Name& origin, QClass c, QType t) const
+  {
+    Names r;
 
-      r += RFC4034::canonicalize(origin, records, type2str);
-    }
+    for_each(origin, c, static_cast<QType>(t), [&origin, &r](const auto& rr) {
+      r.insert(rr.name);
+      return true;
+    });
 
-    return std::make_pair(r, names);
+    return r;
   }
 
   Resolver::Names Resolver::names(const Name& origin, QClass c) const
@@ -765,15 +755,15 @@ namespace aDNS
     uint32_t ttl,
     const small_vector<uint8_t>& name_hash,
     const small_vector<uint8_t>& next_hashed_owner_name,
-    std::vector<RFC4034::CanonicalRRSet::iterator>& rrs)
+    const RFC1035::Name& suffix,
+    std::set<Type> types)
   {
-    assert(!rrs.empty());
+    assert(!types.empty());
     auto configuration = get_configuration();
 
     std::string nameb32 = base32hex_encode(&name_hash[0], name_hash.size());
     assert(nameb32.size() <= 63);
     RFC1035::Name name(nameb32);
-    const RFC1035::Name& suffix = rrs.front()->name;
     name += suffix;
 
     uint8_t flags = 0;
@@ -788,8 +778,8 @@ namespace aDNS
       next_hashed_owner_name,
       type2str);
 
-    for (const auto& rec : rrs)
-      rdata.type_bit_maps.insert(static_cast<uint16_t>(rec->type));
+    for (const auto& t : types)
+      rdata.type_bit_maps.insert(static_cast<uint16_t>(t));
 
     rdata.type_bit_maps.insert(static_cast<uint16_t>(Type::RRSIG));
     rdata.type_bit_maps.insert(static_cast<uint16_t>(Type::NSEC3));
@@ -804,6 +794,61 @@ namespace aDNS
     add(origin, rr);
 
     return rr;
+  }
+
+  size_t Resolver::sign_rrset(
+    const Name& origin,
+    QClass c,
+    QType t,
+    const Name& name,
+    std::shared_ptr<crypto::KeyPair> key,
+    uint16_t key_tag,
+    RFC4034::Algorithm signing_algorithm)
+  {
+    CCF_APP_DEBUG(
+      "ADNS: Signing {} class {} type {}",
+      name,
+      string_from_qclass(c),
+      string_from_qtype(t));
+
+    auto crecords = get_ordered_records(origin, c, t, name);
+
+    if (!crecords.empty())
+    {
+      RFC4034::CRRS crrs(
+        name,
+        crecords.begin()->class_,
+        crecords.begin()->type,
+        crecords.begin()->ttl);
+
+      for (const auto& rr : crecords)
+      {
+        // delegation points/glue entries are not signed
+        // https://datatracker.ietf.org/doc/html/rfc4035#section-2.2
+        if (t == QType::NS && name != origin)
+          continue;
+
+        if (rr.ttl != crrs.ttl)
+          CCF_APP_INFO(
+            "ADNS: warning: TTL mismatch in record set for {} type {}",
+            name,
+            type2str(rr.type));
+
+        crrs.rdata.insert(rr.rdata);
+      }
+
+      add(
+        origin,
+        RFC4034::RRSIGRR(
+          make_signing_function(key),
+          key_tag,
+          signing_algorithm,
+          origin,
+          crrs,
+          type2str));
+    }
+
+    return crecords.size();
   }
 
   void Resolver::sign(const Name& origin)
@@ -832,156 +877,110 @@ namespace aDNS
 
       bool is_authoritative = soa_records.size() == 1;
 
-      // auto names_in_zone = names(origin, static_cast<QClass>(c));
+      remove(origin, c, Type::RRSIG);
+      remove(origin, c, Type::NSEC);
+      remove(origin, c, Type::NSEC3); // Necessary?
+      remove(origin, c, Type::NSEC3PARAM);
 
-      // CCF_APP_DEBUG("CCFDNS: Names in zone:");
-      // for (const auto& n : names_in_zone)
-      //   CCF_APP_DEBUG(" - {}", n);
+      HashedNameTypesMap nsec3_types;
+      NameTypesMap nsec_types;
 
-      auto [crecords, names] = order_records(origin, static_cast<QClass>(c));
-
-      // CCF_APP_TRACE("ADNS: Records to sign at {}:", origin);
-      // for (const auto& rr : crecords)
-      //   CCF_APP_TRACE("ADNS:  {}", string_from_resource_record(rr));
-
+    restart:
+      for (const auto& [_, t] : supported_types)
       {
-        // Remove existing RRSIGs and NSECs (could be avoided)
-        for (const auto& name : names)
-        {
-          CCF_APP_TRACE("ADNS: Remove {}", name);
-          remove(origin, name, c, Type::RRSIG);
-          remove(origin, name, c, Type::NSEC);
-          remove(origin, c, Type::NSEC3);
-          remove(origin, c, Type::NSEC3PARAM);
-        }
-      }
-
-      // Add RRSIGs
-      for (auto it = crecords.begin(); it != crecords.end();)
-      {
-        uint32_t ttl = it->ttl;
-        const auto& name = it->name;
-        const auto& type = it->type;
-        const auto& class_ = it->class_;
-
-        RFC4034::CanonicalRRSet::iterator next = std::next(it);
-        while (next != crecords.end() && next->name == name &&
-               next->type == type && next->class_ == class_)
-        {
-          if (next->ttl != ttl)
-            CCF_APP_INFO(
-              "ADNS: warning: TTL mismatch in record set for {}", name);
-          next++;
-        }
-
-        // https://datatracker.ietf.org/doc/html/rfc4035#section-2.2
-        auto tt = static_cast<Type>(type);
         if (
-          tt == Type::RRSIG || (tt == Type::NS && name != origin) ||
-          tt == Type::NSEC || tt == Type::NSEC3)
+          t == Type::RRSIG || t == Type::OPT || t == Type::NSEC ||
+          t == Type::NSEC3)
+          continue; // These are not signed but recreated
+
+        auto names = get_ordered_names(
+          origin, static_cast<QClass>(c), static_cast<QType>(t));
+
+        for (auto it = names.begin(); it != names.end(); it++)
         {
-          it = next;
-          continue;
-        }
+          const auto& name = *it;
 
-        bool is_dnskey = tt == Type::DNSKEY;
-        auto [key, key_tag] = is_dnskey ? ksk_and_tag : zsk_and_tag;
+          auto [key, key_tag] =
+            t == Type::DNSKEY && configuration.use_key_signing_key ?
+            ksk_and_tag :
+            zsk_and_tag;
 
-        RFC4034::CRRS crrs(name, class_, type, ttl);
-        for (auto rit = it; rit != next; rit++)
-          crrs.rdata.insert(rit->rdata);
-
-        add(
-          origin,
-          RFC4034::RRSIGRR(
-            make_signing_function(key),
-            key_tag,
-            configuration.signing_algorithm,
+          auto num_records = sign_rrset(
             origin,
-            crrs,
-            type2str));
+            static_cast<QClass>(c),
+            static_cast<QType>(t),
+            name,
+            key,
+            key_tag,
+            configuration.signing_algorithm);
 
-        it = next;
-      }
-
-      uint32_t ttl = configuration.default_ttl;
-      if (is_authoritative)
-      {
-        SOA soa_rdata(soa_records.begin()->rdata);
-        ttl = soa_rdata.minimum;
-      }
-
-      if (configuration.use_nsec3)
-      {
-        // https://datatracker.ietf.org/doc/html/rfc5155#section-3.1.7
-
-        HashedNamesMap hashed_names_map;
-        while (!crecords.empty() && hashed_names_map.empty())
-        {
-          for (auto it = crecords.begin(); it != crecords.end();)
+          if (configuration.use_nsec3 && num_records > 0)
           {
             auto hashed_owner = RFC5155::NSEC3::hash(
-              origin,
-              it->name,
-              configuration.nsec3_hash_iterations,
-              nsec3_salt);
+              origin, name, configuration.nsec3_hash_iterations, nsec3_salt);
 
-            if (hashed_names_map.find(hashed_owner) != hashed_names_map.end())
+            auto hit = nsec3_types.find(hashed_owner);
+            if (hit != nsec3_types.end() && hit->second.name != name)
             {
               // https://datatracker.ietf.org/doc/html/rfc5155#section-7.1
               // hash collision, restart with new salt
               auto e = crypto::create_entropy();
               e->random(&nsec3_salt[0], nsec3_salt.size());
-              hashed_names_map.clear();
-              break;
+              nsec3_types.clear();
+              CCF_APP_INFO(
+                "ADNS: Restarting zone signing after NSEC3 hash collision");
+              goto restart;
             }
 
-            std::vector<RFC4034::CanonicalRRSet::iterator> entries;
-            auto next = it;
-            for (; next != crecords.end() && next->name == it->name; next++)
-              entries.push_back(next);
-
-            hashed_names_map[hashed_owner] = entries;
-
-            it = next;
+            if (hit == nsec3_types.end())
+            {
+              nsec3_types[hashed_owner].name = name;
+              nsec3_types[hashed_owner].types = {t, Type::RRSIG};
+            }
+            else
+              hit->second.types.insert({t, Type::RRSIG});
+          }
+          else
+          {
+            nsec_types[name].insert(static_cast<Type>(t)); // Type::RRSIG
           }
         }
+      }
 
-        // for (auto it = hashed_names_map.begin(); it !=
-        // hashed_names_map.end();
-        //      it++)
-        // {
-        //   CCF_APP_TRACE("ADNS:  - {}: ", ds::to_hex(it->first));
-        //   for (size_t i = 0; i < it->second.size(); i++)
-        //   {
-        //     CCF_APP_TRACE(
-        //       "ADNS:    - {}",
-        //       string_from_resource_record(*(it->second)[i]));
-        //   }
-        // }
+      uint32_t nsec_ttl = configuration.default_ttl;
+      if (is_authoritative)
+      {
+        SOA soa_rdata(soa_records.begin()->rdata);
+        nsec_ttl = soa_rdata.minimum;
+      }
 
-        for (auto it = hashed_names_map.begin(); it != hashed_names_map.end();
-             it++)
+      if (configuration.use_nsec3)
+      {
+        // https://datatracker.ietf.org/doc/html/rfc5155#section-3.1.7
+        for (auto it = nsec3_types.begin(); it != nsec3_types.end(); it++)
         {
-          if (it->second.front()->type == static_cast<uint16_t>(Type::NSEC3))
-            continue;
-
           auto next = std::next(it);
 
-          auto first = *it->second.begin();
-          const Name& owner = first->name;
+          const Name& owner = it->second.name;
           small_vector<uint8_t> next_hashed_owner_name =
-            next != hashed_names_map.end() ? next->first :
-                                             hashed_names_map.begin()->first;
+            next != nsec3_types.end() ? next->first :
+                                        nsec3_types.begin()->first;
 
           auto rr = add_nsec3(
-            c, origin, ttl, it->first, next_hashed_owner_name, it->second);
+            c,
+            origin,
+            nsec_ttl,
+            it->first,
+            next_hashed_owner_name,
+            owner,
+            it->second.types);
 
+          // Add RRSIG for NSEC3
           RFC4034::CRRS crrs(
             owner,
             static_cast<RFC1035::Class>(c),
             static_cast<uint16_t>(Type::NSEC3),
-            ttl,
+            nsec_ttl,
             rr.rdata);
 
           auto [key, key_tag] = zsk_and_tag;
@@ -1003,7 +1002,7 @@ namespace aDNS
             RFC5155::NSEC3PARAMRR(
               origin,
               static_cast<RFC1035::Class>(c),
-              ttl,
+              nsec_ttl,
               configuration.nsec3_hash_algorithm,
               0x00,
               configuration.nsec3_hash_iterations,
@@ -1012,39 +1011,33 @@ namespace aDNS
       }
       else
       {
-        auto next = std::next(crecords.begin());
-        for (auto it = crecords.begin(); it != crecords.end();)
+        for (auto it = nsec_types.begin(); it != nsec_types.end();)
         {
-          Name next_domain_name = next != crecords.end() ?
-            next->name :
+          auto next = std::next(it);
+          Name next_domain_name = next != nsec_types.end() ?
+            next->first :
             (is_authoritative ? soa_records.begin()->name : origin);
 
-          std::set<RFC4034::Type> types = {
-            static_cast<RFC4034::Type>(it->type),
-            RFC4034::Type::RRSIG,
-            RFC4034::Type::NSEC};
-
-          while (next != crecords.end() && next->name == it->name &&
-                 next->class_ == it->class_)
-          {
-            types.insert(static_cast<RFC4034::Type>(next->type));
-            next++;
-          }
+          std::set<RFC4034::Type> types;
+          types.insert(RFC4034::Type::RRSIG);
+          types.insert(RFC4034::Type::NSEC);
+          for (const auto t : it->second)
+            types.insert(static_cast<RFC4034::Type>(t));
 
           RFC4034::NSECRR rr(
-            it->name,
+            it->first,
             static_cast<RFC1035::Class>(c),
-            ttl,
+            nsec_ttl,
             next_domain_name,
             types,
             type2str);
           add(origin, rr);
 
           RFC4034::CRRS crrs(
-            it->name,
+            it->first,
             static_cast<RFC1035::Class>(c),
             static_cast<uint16_t>(Type::NSEC),
-            ttl,
+            nsec_ttl,
             rr.rdata);
 
           auto [key, key_tag] = zsk_and_tag;
@@ -1066,8 +1059,8 @@ namespace aDNS
 
   std::shared_ptr<crypto::KeyPair> Resolver::get_tls_key()
   {
-    // The CCF resolver uses the network key, but we could also use the zone or
-    // key signing key.
+    // The CCF resolver uses the network key, but we could also use the zone
+    // or key signing key.
     const auto& cfg = get_configuration();
     return get_signing_key(cfg.origin, Class::IN, true).first;
   }
@@ -1355,7 +1348,8 @@ namespace aDNS
     if (!policy_ok)
       throw std::runtime_error("service registration policy evaluation failed");
 
-    // TODO: Check we're not overwriting existing registrations? Part of policy?
+    // TODO: Check we're not overwriting existing registrations? Part of
+    // policy?
 
     uint16_t flags = 0x0000;
     auto pk_der = public_key.der_pubkey();
@@ -1629,8 +1623,8 @@ namespace aDNS
 
     // Glue records are not signed
     // (https://datatracker.ietf.org/doc/html/rfc4035#section-2.2)
-    // Note: we shouldn't answer direct queries for glue records, so we put them
-    // into a special origin.
+    // Note: we shouldn't answer direct queries for glue records, so we put
+    // them into a special origin.
 
     for (const auto& [id, info] : dr.node_information)
       remove(origin + Name("glue."), info.address.name, Class::IN, Type::A);

@@ -441,9 +441,6 @@ namespace ccfdns
       auto c = static_cast<aDNS::Class>(rr.class_);
       auto t = static_cast<aDNS::Type>(rr.type);
 
-      CCF_APP_TRACE(
-        "CCFDNS: Add {} type {} to {}", rr.name, string_from_type(t), origin);
-
       ResourceRecord rs(rr);
 
       if (!rs.name.is_absolute())
@@ -488,9 +485,6 @@ namespace ccfdns
     {
       check_context();
 
-      CCF_APP_TRACE(
-        "CCFDNS: Remove {} type {} at {}", name, string_from_type(t), origin);
-
       if (!origin.is_absolute())
         throw std::runtime_error("origin not absolute");
 
@@ -505,7 +499,7 @@ namespace ccfdns
                            const ResourceRecord& rr) {
           if (rr.type == static_cast<uint16_t>(t) && rr.name == aname)
           {
-            CCF_APP_TRACE("CCFDNS: remove {}", string_from_resource_record(rr));
+            CCF_APP_TRACE("CCFDNS: Remove {}", string_from_resource_record(rr));
             records->remove(rr);
           }
           return true;
