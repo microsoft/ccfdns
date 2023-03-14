@@ -749,7 +749,7 @@ TEST_CASE("Delegation")
   auto r = main.resolve(sub_cfg.origin, aDNS::QType::A, aDNS::QClass::IN);
 
   REQUIRE(r.answers.size() == 0);
-  REQUIRE(r.authorities.size() == 3); // NS + NSEC3 + RRSIG (over NSEC3)
+  REQUIRE(r.authorities.size() == 4); // NS + DS + NSEC3 + RRSIG (over NSEC3)
   REQUIRE(r.additionals.size() == 1); // Glue record
   // Note: verify_rrsigs would fail here because the delegation record (NS) is
   // not signed.
