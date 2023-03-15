@@ -191,6 +191,7 @@ namespace aDNS
       RFC4034::CanonicalRRSet answers;
       RFC4034::CanonicalRRSet authorities;
       RFC4034::CanonicalRRSet additionals;
+      bool is_authoritative = false;
     };
 
     Resolver();
@@ -199,7 +200,13 @@ namespace aDNS
 
     virtual RegistrationInformation configure(const Configuration& cfg);
 
-    virtual Message reply(const Message& msg);
+    struct Reply
+    {
+      Message message;
+      size_t peer_udp_payload_size;
+    };
+
+    virtual Reply reply(const Message& msg);
 
     virtual Resolution resolve(const Name& qname, QType qtype, QClass qclass);
 

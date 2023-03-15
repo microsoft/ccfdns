@@ -525,7 +525,7 @@ namespace ccfdns
 
     using Resolver::reply;
 
-    virtual Message reply(const Message& msg) override
+    virtual Reply reply(const Message& msg) override
     {
       check_context();
       return Resolver::reply(msg);
@@ -1329,7 +1329,7 @@ namespace ccfdns
           ctx.rpc_ctx->set_response_status(HTTP_STATUS_OK);
           ctx.rpc_ctx->set_response_header(
             http::headers::CONTENT_TYPE, "application/dns-message");
-          std::vector<uint8_t> out = reply;
+          std::vector<uint8_t> out = reply.message;
           CCF_APP_INFO("CCFDNS: response: {}", ds::to_hex(out));
 
           ctx.rpc_ctx->set_response_body(out);

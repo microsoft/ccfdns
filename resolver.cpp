@@ -323,7 +323,7 @@ namespace aDNS
     return RFC4034::keytag(&bytes[0], bytes.size());
   }
 
-  Message Resolver::reply(const Message& msg)
+  Resolver::Reply Resolver::reply(const Message& msg)
   {
     try
     {
@@ -363,16 +363,22 @@ namespace aDNS
           r.additionals.end(),
           resolution.additionals.begin(),
           resolution.additionals.end());
+
+        r.header.aa &= resolution.is_authoritative;
       }
 
+      size_t peer_udp_payload_size = 0;
+
+      bool have_client_opt = false;
       for (const auto& rr : msg.additionals)
       {
-        bool have_opt = false;
         if (rr.type == static_cast<uint16_t>(Type::OPT))
         {
           CCF_APP_TRACE("ADNS: EDNS(0): {}", string_from_resource_record(rr));
-          if (have_opt)
+
+          if (have_client_opt)
           {
+            // More than one OPT record is a format violation
             // https://datatracker.ietf.org/doc/html/rfc6891#section-6.1.1
             r.header.rcode = ResponseCode::FORMAT;
             break;
@@ -394,7 +400,7 @@ namespace aDNS
           CCF_APP_TRACE(
             "ADNS: EDNS(0) reply: {}", string_from_resource_record(opt_reply));
           r.additionals.push_back(opt_reply);
-          have_opt = true;
+          have_client_opt = true;
         }
       }
 
@@ -403,9 +409,7 @@ namespace aDNS
       r.header.nscount = r.authorities.size();
       r.header.arcount = r.additionals.size();
 
-      r.header.aa = r.header.ancount > 0;
-
-      return r;
+      return {r, peer_udp_payload_size};
     }
     catch (std::exception& ex)
     {
@@ -420,7 +424,7 @@ namespace aDNS
     r.header.id = msg.header.id;
     r.header.qr = true;
     r.header.rcode = SERVER_FAILURE;
-    return r;
+    return {r, 0};
   }
 
   RFC4034::CanonicalRRSet Resolver::find_records(
@@ -532,10 +536,21 @@ namespace aDNS
         if (qtype != QType::SOA)
         {
           auto soa_records = find_records(origin, qname, QType::SOA, qclass);
-          if (soa_records.size() > 0)
+          if (!soa_records.empty())
           {
             result.authorities += *soa_records.begin();
             result.authorities += find_rrsigs(origin, qname, qclass, Type::SOA);
+            result.is_authoritative = true;
+          }
+          else if (qname != origin)
+          {
+            soa_records = find_records(origin, origin, QType::SOA, qclass);
+            if (soa_records.empty())
+              throw std::runtime_error("no SOA for origin");
+            result.authorities += *soa_records.begin();
+            result.authorities +=
+              find_rrsigs(origin, origin, qclass, Type::SOA);
+            result.is_authoritative = true;
           }
         }
 
@@ -577,6 +592,8 @@ namespace aDNS
       result_set.empty() ? " <nothing>" : "");
     for (const auto& rr : result_set)
       CCF_APP_TRACE("ADNS:  - {}", string_from_resource_record(rr));
+
+    result.is_authoritative |= result.answers.size() > 0;
 
     return result;
   }
@@ -853,7 +870,7 @@ namespace aDNS
 
   void Resolver::sign(const Name& origin)
   {
-    CCF_APP_DEBUG("ADNS: (Re)signing {}", origin);
+    CCF_APP_INFO("ADNS: (Re)signing {}", origin);
 
     if (!origin.is_absolute())
       throw std::runtime_error("origin is not absolute");
@@ -942,7 +959,8 @@ namespace aDNS
           }
           else
           {
-            nsec_types[name].insert(static_cast<Type>(t)); // Type::RRSIG
+            nsec_types[name].insert(static_cast<Type>(t));
+            nsec_types[name].insert(Type::RRSIG);
           }
         }
       }
@@ -977,7 +995,7 @@ namespace aDNS
 
           // Add RRSIG for NSEC3
           RFC4034::CRRS crrs(
-            owner,
+            rr.name,
             static_cast<RFC1035::Class>(c),
             static_cast<uint16_t>(Type::NSEC3),
             nsec_ttl,
@@ -990,7 +1008,7 @@ namespace aDNS
               make_signing_function(key),
               key_tag,
               configuration.signing_algorithm,
-              origin,
+              rr.name,
               crrs,
               type2str));
         }
@@ -1055,6 +1073,8 @@ namespace aDNS
         }
       }
     }
+
+    CCF_APP_INFO("ADNS: (Re)signing {} done", origin);
   }
 
   std::shared_ptr<crypto::KeyPair> Resolver::get_tls_key()
@@ -1187,6 +1207,8 @@ namespace aDNS
 
     out.csr =
       tls_key->create_csr_der("CN=" + cn, sans, tls_key->public_key_pem());
+
+    // get_signing_key(cfg.origin, Class::IN, cfg.use_key_signing_key);
 
     auto dnskeys = resolve(cfg.origin, QType::DNSKEY, QClass::IN);
 
@@ -1483,10 +1505,6 @@ namespace aDNS
     if (!name.ends_with(origin))
       throw std::runtime_error("name outside of zone");
 
-    // Note: does not necessarily have to be installed on the same DNS server;
-    // we can delegate the challenge to someone else, e.g. a non-DNSSEC
-    // server.
-
     add(
       origin,
       mk_rr(
@@ -1507,7 +1525,8 @@ namespace aDNS
             60,
             TXT(key_authorization)));
 
-    sign(origin);
+    // Challenge TXTs don't necessarily always have to be signed.
+    // sign(origin);
   }
 
   void Resolver::remove_acme_response(const Name& origin, const Name& name)

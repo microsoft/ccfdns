@@ -98,7 +98,7 @@ namespace RFC6891 // https://datatracker.ietf.org/doc/html/rfc6891
     bool dnssec_ok = false;
     uint16_t z : 15;
 
-    TTL(uint32_t ttl)
+    TTL(uint32_t ttl = 0)
     {
       extended_rcode = (ttl & 0xFF000000) >> 24;
       version = (ttl & 0x00FF0000) >> 16;
