@@ -654,11 +654,9 @@ namespace ccfdns
     {
       check_context();
 
-      auto policy =
-        ctx->tx
-          .rw<ServiceRegistrationPolicy>(service_registration_policy_table_name)
-          ->get();
-      policy = new_policy;
+      auto policy = ctx->tx.rw<ServiceRegistrationPolicy>(
+        service_registration_policy_table_name);
+      policy->put(new_policy);
     }
 
     virtual std::string delegation_registration_policy() const override
@@ -678,11 +676,9 @@ namespace ccfdns
     {
       check_context();
 
-      auto policy = ctx->tx
-                      .rw<DelegationRegistrationPolicy>(
-                        delegation_registration_policy_table_name)
-                      ->get();
-      policy = new_policy;
+      auto policy = ctx->tx.rw<DelegationRegistrationPolicy>(
+        delegation_registration_policy_table_name);
+      policy->put(new_policy);
     }
 
     static constexpr const size_t default_stack_size = 1024 * 1024;
@@ -1536,6 +1532,55 @@ namespace ccfdns
       };
 
       make_endpoint("/dump", HTTP_GET, dump, ccf::no_auth_required)
+        .set_forwarding_required(ccf::endpoints::ForwardingRequired::Never)
+        .install();
+
+      auto registration_policy = [this](auto& ctx) {
+        try
+        {
+          ContextContext cc(ccfdns, ctx);
+          ctx.rpc_ctx->set_response_status(HTTP_STATUS_OK);
+          ctx.rpc_ctx->set_response_header(
+            http::headers::CONTENT_TYPE, http::headervalues::contenttype::TEXT);
+          ctx.rpc_ctx->set_response_body(ccfdns->service_registration_policy());
+        }
+        catch (std::exception& ex)
+        {
+          ctx.rpc_ctx->set_response_status(HTTP_STATUS_INTERNAL_SERVER_ERROR);
+          ctx.rpc_ctx->set_response_body(ex.what());
+        }
+      };
+
+      make_endpoint(
+        "/registration-policy",
+        HTTP_GET,
+        registration_policy,
+        ccf::no_auth_required)
+        .set_forwarding_required(ccf::endpoints::ForwardingRequired::Never)
+        .install();
+
+      auto delegation_policy = [this](auto& ctx) {
+        try
+        {
+          ContextContext cc(ccfdns, ctx);
+          ctx.rpc_ctx->set_response_status(HTTP_STATUS_OK);
+          ctx.rpc_ctx->set_response_header(
+            http::headers::CONTENT_TYPE, http::headervalues::contenttype::TEXT);
+          ctx.rpc_ctx->set_response_body(
+            ccfdns->delegation_registration_policy());
+        }
+        catch (std::exception& ex)
+        {
+          ctx.rpc_ctx->set_response_status(HTTP_STATUS_INTERNAL_SERVER_ERROR);
+          ctx.rpc_ctx->set_response_body(ex.what());
+        }
+      };
+
+      make_endpoint(
+        "/delegation-policy",
+        HTTP_GET,
+        delegation_policy,
+        ccf::no_auth_required)
         .set_forwarding_required(ccf::endpoints::ForwardingRequired::Never)
         .install();
     }
