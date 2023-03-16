@@ -306,6 +306,10 @@ namespace aDNS
 
     virtual std::map<std::string, NodeInfo> get_node_information() = 0;
 
+    const std::map<uint16_t, Type>& get_supported_types();
+
+    const std::map<uint16_t, Class>& get_supported_classes();
+
   protected:
     small_vector<uint8_t> nsec3_salt;
 

@@ -1660,4 +1660,15 @@ namespace aDNS
           RFC1035::A(info.address.ip)));
     }
   }
+
+  const std::map<uint16_t, Type>& Resolver::get_supported_types()
+  {
+    return supported_types;
+  }
+
+  const std::map<uint16_t, Class>& Resolver::get_supported_classes()
+  {
+    return supported_classes;
+  }
+
 }

@@ -44,6 +44,7 @@
 #include <quickjs/quickjs.h>
 #include <ravl/oe.h>
 #include <ravl/openssl.hpp>
+#include <regex>
 #include <stdexcept>
 
 using namespace aDNS;
@@ -1088,6 +1089,48 @@ namespace ccfdns
       return acme_clients.find(name) != acme_clients.end();
     }
 
+    std::string dump()
+    {
+      const auto& cfg = get_configuration();
+      std::string r;
+
+      auto origins = ctx->tx.ro<CCFDNS::Origins>(origins_table_name);
+      origins->foreach([this, &r, &cfg](const Name& origin) {
+        r += "$ORIGIN " + (std::string)origin + "\n";
+        r += "$TTL " + std::to_string(cfg.default_ttl) + "\n\n";
+        for (const auto& [_, c] : get_supported_classes())
+          for (const auto& [_, t] : get_supported_types())
+          {
+            auto records = ctx->tx.ro<Records>(table_name(origin, c, t));
+            records->foreach([&r](const ResourceRecord& rr) {
+              if (static_cast<aDNS::Type>(rr.type) == aDNS::Type::ATTEST)
+                r += "; ";
+              auto tmp = string_from_resource_record(rr) + "\n";
+              if (static_cast<aDNS::Type>(rr.type) == aDNS::Type::NSEC3)
+                r += std::regex_replace(tmp, std::regex("ATTEST"), "");
+              else if (static_cast<aDNS::Type>(rr.type) == aDNS::Type::RRSIG)
+              {
+                auto type2str = [](const auto& x) {
+                  return string_from_type(static_cast<aDNS::Type>(x));
+                };
+                RFC4034::RRSIG sd(rr.rdata, type2str);
+                if (
+                  sd.type_covered == static_cast<uint16_t>(aDNS::Type::ATTEST))
+                  r += "; ";
+                r += tmp;
+              }
+              else
+                r += tmp;
+              return true;
+            });
+          }
+        r += "\n";
+        return true;
+      });
+
+      return r;
+    }
+
   protected:
     ccf::endpoints::EndpointContext* ctx = nullptr;
     std::map<std::string, std::shared_ptr<ccfdns::ACMEClient>> acme_clients;
@@ -1473,6 +1516,26 @@ namespace ccfdns
         ccf::json_adapter(resign),
         {std::make_shared<ccf::UserCertAuthnPolicy>()})
         .set_auto_schema<Resign::In, Resign::Out>()
+        .set_forwarding_required(ccf::endpoints::ForwardingRequired::Never)
+        .install();
+
+      auto dump = [this](auto& ctx) {
+        try
+        {
+          ContextContext cc(ccfdns, ctx);
+          ctx.rpc_ctx->set_response_status(HTTP_STATUS_OK);
+          ctx.rpc_ctx->set_response_header(
+            http::headers::CONTENT_TYPE, http::headervalues::contenttype::TEXT);
+          ctx.rpc_ctx->set_response_body(ccfdns->dump());
+        }
+        catch (std::exception& ex)
+        {
+          ctx.rpc_ctx->set_response_status(HTTP_STATUS_INTERNAL_SERVER_ERROR);
+          ctx.rpc_ctx->set_response_body(ex.what());
+        }
+      };
+
+      make_endpoint("/dump", HTTP_GET, dump, ccf::no_auth_required)
         .set_forwarding_required(ccf::endpoints::ForwardingRequired::Never)
         .install();
     }
