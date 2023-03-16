@@ -840,11 +840,6 @@ namespace aDNS
 
       for (const auto& rr : crecords)
       {
-        // delegation points/glue entries are not signed
-        // https://datatracker.ietf.org/doc/html/rfc4035#section-2.2
-        if (t == QType::NS && name != origin)
-          continue;
-
         if (rr.ttl != crrs.ttl)
           CCF_APP_INFO(
             "ADNS: warning: TTL mismatch in record set for {} type {}",
@@ -916,6 +911,11 @@ namespace aDNS
         for (auto it = names.begin(); it != names.end(); it++)
         {
           const auto& name = *it;
+
+          // delegation points/glue records are not signed
+          // https://datatracker.ietf.org/doc/html/rfc4035#section-2.2
+          if (t == Type::NS && name != origin)
+            continue;
 
           auto [key, key_tag] =
             t == Type::DNSKEY && configuration.use_key_signing_key ?
