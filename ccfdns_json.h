@@ -163,6 +163,7 @@ namespace aDNS
     use_nsec3,
     nsec3_hash_algorithm,
     nsec3_hash_iterations,
+    nsec3_salt_length,
     service_ca,
     node_addresses);
   DECLARE_JSON_OPTIONAL_FIELDS(

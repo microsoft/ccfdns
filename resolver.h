@@ -144,6 +144,7 @@ namespace aDNS
       RFC5155::HashAlgorithm nsec3_hash_algorithm =
         RFC5155::HashAlgorithm::SHA1;
       uint16_t nsec3_hash_iterations = 3;
+      uint8_t nsec3_salt_length = 8;
 
       std::optional<std::string> fixed_zsk; // TODO: Debug-only?
 
@@ -311,9 +312,20 @@ namespace aDNS
     const std::map<uint16_t, Class>& get_supported_classes();
 
   protected:
-    small_vector<uint8_t> nsec3_salt;
-
     typedef std::set<Name, RFC4034::CanonicalNameOrdering> Names;
+
+    small_vector<uint8_t> generate_nsec3_salt(uint8_t length);
+
+    small_vector<uint8_t> get_nsec3_salt(
+      const Name& origin, aDNS::QClass class_);
+
+    void update_nsec3_salt(
+      const Name& origin,
+      aDNS::Class class_,
+      uint16_t ttl,
+      RFC5155::HashAlgorithm hash_algorithm,
+      uint16_t hash_iterations,
+      uint8_t salt_length);
 
     RFC4034::CanonicalRRSet get_ordered_records(
       const Name& origin,
@@ -368,7 +380,9 @@ namespace aDNS
       const small_vector<uint8_t>& hashed_name,
       const small_vector<uint8_t>& next_hashed_owner_name,
       const RFC1035::Name& suffix,
-      std::set<Type> types);
+      std::set<Type> types,
+      uint32_t nsec_ttl,
+      const KeyAndTag& key_and_tag);
 
     void add_fragmented(
       const Name& origin,

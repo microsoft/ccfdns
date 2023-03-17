@@ -75,6 +75,7 @@ class aDNSConfig(dict):
         use_nsec3,
         nsec3_hash_algorithm,
         nsec3_hash_iterations,
+        nsec3_salt_length,
         parent_base_url,
         contact,
         service_ca,
@@ -93,6 +94,7 @@ class aDNSConfig(dict):
             use_nsec3=use_nsec3,
             nsec3_hash_algorithm=nsec3_hash_algorithm,
             nsec3_hash_iterations=nsec3_hash_iterations,
+            nsec3_salt_length=nsec3_salt_length,
             parent_base_url=parent_base_url,
             contact=contact,
             service_ca=service_ca,
@@ -109,6 +111,7 @@ class aDNSConfig(dict):
         self.use_nsec3 = use_nsec3
         self.nsec3_hash_algorithm = nsec3_hash_algorithm
         self.nsec3_hash_iterations = nsec3_hash_iterations
+        self.nsec3_salt_length = nsec3_salt_length
         self.parent_base_url = parent_base_url
         self.service_ca = service_ca
         self.contact = contact
