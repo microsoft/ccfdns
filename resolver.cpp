@@ -1393,7 +1393,7 @@ namespace aDNS
 
     CCF_APP_INFO("ADNS: Register service {} in {}", service_name, origin);
 
-    save_service_registration_request(rr);
+    save_service_registration_request(service_name, rr);
 
     if (!req.verify(public_key))
       throw std::runtime_error("CSR signature validation failed");
@@ -1620,7 +1620,7 @@ namespace aDNS
 
     CCF_APP_INFO("ADNS: Register delegation {} in {}", name, origin);
 
-    save_delegation_registration_request(dr);
+    save_delegation_request(name, dr);
 
     if (!name.ends_with(origin))
       throw std::runtime_error("name outside of origin");
@@ -1650,7 +1650,7 @@ namespace aDNS
       }
 
       policy_data += "  }};";
-      policy_ok = evaluate_delegation_registration_policy(policy_data);
+      policy_ok = evaluate_delegation_policy(policy_data);
     }
 #ifdef ATTESTATION_VERIFICATION_FAILURE_OK
     catch (...)

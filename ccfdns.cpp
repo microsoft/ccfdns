@@ -25,9 +25,11 @@
 #include <ccf/ds/logger.h>
 #include <ccf/endpoint_context.h>
 #include <ccf/endpoints/authentication/cert_auth.h>
+#include <ccf/historical_queries_adapter.h>
 #include <ccf/http_header_map.h>
 #include <ccf/http_query.h>
 #include <ccf/http_status.h>
+#include <ccf/indexing/strategies/visit_each_entry_in_map.h>
 #include <ccf/json_handler.h>
 #include <ccf/node/acme_subsystem_interface.h>
 #include <ccf/node/node_configuration_interface.h>
@@ -37,6 +39,7 @@
 #include <ccf/service/tables/acme_certificates.h>
 #include <ccf/service/tables/nodes.h>
 #include <ccf/version.h>
+#include <kv/version.h>
 #include <memory>
 #include <nlohmann/json.hpp>
 #include <optional>
@@ -46,6 +49,8 @@
 #include <ravl/openssl.hpp>
 #include <regex>
 #include <stdexcept>
+#include <tx.h>
+#include <tx_id.h>
 
 using namespace aDNS;
 using namespace RFC1035;
@@ -328,6 +333,40 @@ namespace ccfdns
     std::vector<uint8_t> service_csr;
   };
 
+  using namespace ccf::indexing::strategies;
+
+  class LastWriteTxIDByKey : public VisitEachEntryInMap
+  {
+  public:
+    LastWriteTxIDByKey(const std::string& map_name) :
+      VisitEachEntryInMap(map_name, "TxIDByKey")
+    {}
+
+    virtual void visit_entry(
+      const ccf::TxID& txid,
+      const ccf::ByteVector& k,
+      const ccf::ByteVector& v) override
+    {
+      std::lock_guard<ccf::pal::Mutex> guard(lock);
+      CCF_APP_DEBUG("CCFDNS: visit_entry {}", k);
+      txids_by_key[k] = txid;
+    }
+
+    std::optional<ccf::TxID> last_write(const ccf::ByteVector& k)
+    {
+      CCF_APP_DEBUG("CCFDNS: last_write {}", k);
+      auto it = txids_by_key.find(k);
+      if (it == txids_by_key.end())
+        return std::nullopt;
+      else
+        return it->second;
+    }
+
+  protected:
+    ccf::pal::Mutex lock;
+    std::unordered_map<ccf::ByteVector, ccf::TxID> txids_by_key;
+  };
+
   class CCFDNS : public Resolver
   {
   public:
@@ -335,7 +374,8 @@ namespace ccfdns
       const std::string& node_id,
       std::shared_ptr<ccf::ACMESubsystemInterface> acme_ss,
       std::shared_ptr<ccf::NetworkIdentitySubsystem> nwid_ss,
-      std::shared_ptr<ccf::NodeConfigurationInterface> nci_ss) :
+      std::shared_ptr<ccf::NodeConfigurationInterface> nci_ss,
+      ccf::indexing::IndexingStrategies& istrats) :
       Resolver(),
       node_id(node_id),
       acme_ss(acme_ss),
@@ -343,6 +383,12 @@ namespace ccfdns
       nci_ss(nci_ss)
     {
       acme_account_key_pair = crypto::make_key_pair(crypto::CurveID::SECP384R1);
+      registration_index_strategy = std::make_shared<RegistrationRequestsIndex>(
+        registration_requests_table_name);
+      istrats.install_strategy(registration_index_strategy);
+      delegation_index_strategy = std::make_shared<DelegationRequestsIndex>(
+        delegation_requests_table_name);
+      istrats.install_strategy(delegation_index_strategy);
     }
 
     virtual ~CCFDNS() {}
@@ -382,17 +428,24 @@ namespace ccfdns
     const std::string service_registration_policy_table_name =
       "public:ccf.gov.ccfdns.service_registration_policy";
 
-    using LatestRegistrationRequest = ccf::ServiceValue<RegisterService::In>;
-    const std::string latest_registration_request_table_name =
-      "public:last_service_registration_request";
+    using RegistrationRequests = ccf::ServiceMap<Name, RegisterService::In>;
+    const std::string registration_requests_table_name =
+      "public:service_registration_requests";
+    using RegistrationRequestsIndex = LastWriteTxIDByKey;
+    std::shared_ptr<RegistrationRequestsIndex> registration_index_strategy =
+      nullptr;
 
-    using DelegationRegistrationPolicy = ccf::ServiceValue<std::string>;
+    using DelegationPolicies =
+      ccf::ServiceValue<std::pair<std::string, std::string>>;
     const std::string delegation_registration_policy_table_name =
       "public:ccf.gov.ccfdns.delegation_registration_policy";
 
-    using LatestDelegationRequest = ccf::ServiceValue<RegisterDelegation::In>;
-    const std::string latest_delegation_request_table_name =
-      "public:last_delegation_registration_request";
+    using DelegationRequests = ccf::ServiceMap<Name, RegisterDelegation::In>;
+    const std::string delegation_requests_table_name =
+      "public:delegation_requests";
+    using DelegationRequestsIndex = LastWriteTxIDByKey;
+    std::shared_ptr<DelegationRequestsIndex> delegation_index_strategy =
+      nullptr;
 
     void set_endpoint_context(ccf::endpoints::EndpointContext* c)
     {
@@ -659,26 +712,41 @@ namespace ccfdns
       policy->put(new_policy);
     }
 
-    virtual std::string delegation_registration_policy() const override
+    virtual std::string delegation_policy() const override
     {
       check_context();
 
-      auto policy_table = ctx->tx.ro<DelegationRegistrationPolicy>(
+      auto tbl = ctx->tx.ro<DelegationPolicies>(
         delegation_registration_policy_table_name);
-      const std::optional<std::string> policy = policy_table->get();
-      if (!policy)
-        throw std::runtime_error("no delegation registration policy");
-      return *policy;
+      const auto policies = tbl->get();
+      if (!policies)
+        throw std::runtime_error("no delegation registration policies");
+
+      auto [parent, local] = *policies;
+
+      if (parent.empty())
+        throw std::runtime_error("no parent delegation policy");
+      if (local.empty())
+        throw std::runtime_error("no local delegation policy");
+
+      return "function parent() {\n" + parent +
+        "}\n\n"
+        "function local() {\n" +
+        local + "\n" +
+        "}\n\n"
+        "parent() && local()";
     }
 
-    virtual void set_delegation_registration_policy(
-      const std::string& new_policy) override
+    virtual void set_delegation_policy(const std::string& new_policy) override
     {
       check_context();
 
-      auto policy = ctx->tx.rw<DelegationRegistrationPolicy>(
+      auto tbl = ctx->tx.rw<DelegationPolicies>(
         delegation_registration_policy_table_name);
-      policy->put(new_policy);
+      const auto old_policies = tbl->get();
+
+      if (old_policies)
+        tbl->put({old_policies->first, new_policy});
     }
 
     static constexpr const size_t default_stack_size = 1024 * 1024;
@@ -772,12 +840,11 @@ namespace ccfdns
       return rt.eval(program);
     }
 
-    virtual bool evaluate_delegation_registration_policy(
+    virtual bool evaluate_delegation_policy(
       const std::string& data) const override
     {
       RPJSRuntime rt;
-      std::string program = data + "\n\n" + delegation_registration_policy();
-      return rt.eval(program);
+      return rt.eval(delegation_policy());
     }
 
     using Resolver::register_delegation;
@@ -965,6 +1032,74 @@ namespace ccfdns
       return reginfo;
     }
 
+    std::string configuration_receipt(
+      ccf::endpoints::ReadOnlyEndpointContext& ctx,
+      ccf::historical::StatePtr historical_state)
+    {
+      std::string r;
+      auto historical_tx = historical_state->store->create_read_only_tx();
+      auto tbl = historical_tx.template ro<TConfigurationTable>(
+        configuration_table_name);
+      if (!tbl)
+        throw std::runtime_error("configuration table not found");
+      const auto cfg = tbl->get();
+      if (!cfg)
+        throw std::runtime_error("configuration not found");
+      const auto txid = tbl->get_version_of_previous_write();
+      if (!txid)
+        throw std::runtime_error("configuration TX ID not found");
+      auto receipt = ccf::describe_receipt_v1(*historical_state->receipt);
+
+      nlohmann::json j;
+      j["txid"] = txid.value();
+      j["configuration"] = cfg.value();
+      j["receipt"] = receipt;
+      return j.dump();
+    }
+
+    std::string registration_receipt(
+      ccf::endpoints::ReadOnlyEndpointContext& ctx,
+      ccf::historical::StatePtr historical_state,
+      const std::string& service_name)
+    {
+      auto historical_tx = historical_state->store->create_read_only_tx();
+      auto tbl = historical_tx.template ro<RegistrationRequests>(
+        registration_requests_table_name);
+      if (!tbl)
+        throw std::runtime_error("service registration table not found");
+      const auto reg = tbl->get(service_name);
+      if (!reg)
+        throw std::runtime_error("service registration not found");
+      auto receipt = ccf::describe_receipt_v1(*historical_state->receipt);
+
+      nlohmann::json j;
+      j["registration"] = reg.value();
+      j["receipt"] = receipt;
+      return j.dump();
+    }
+
+    std::string delegation_receipt(
+      ccf::endpoints::ReadOnlyEndpointContext& ctx,
+      ccf::historical::StatePtr historical_state,
+      const std::string& subdomain)
+    {
+      CCF_APP_DEBUG("CCFDNS: delegation_receipt: {} ", subdomain);
+      auto historical_tx = historical_state->store->create_read_only_tx();
+      auto tbl = historical_tx.template ro<DelegationRequests>(
+        delegation_requests_table_name);
+      if (!tbl)
+        throw std::runtime_error("delegation requests table not found");
+      const auto dr = tbl->get(subdomain);
+      if (!dr)
+        throw std::runtime_error("delegation request not found");
+      auto receipt = ccf::describe_receipt_v1(*historical_state->receipt);
+
+      nlohmann::json j;
+      j["delegation"] = dr.value();
+      j["receipt"] = receipt;
+      return j.dump();
+    }
+
     virtual void start_delegation_acme_client()
     {
       check_context();
@@ -981,29 +1116,29 @@ namespace ccfdns
     }
 
     virtual void save_service_registration_request(
-      const RegistrationRequest& rr) override
+      const Name& name, const RegistrationRequest& rr) override
     {
       check_context();
 
-      auto lrr = ctx->tx.template rw<CCFDNS::LatestRegistrationRequest>(
-        latest_registration_request_table_name);
+      auto lrr = ctx->tx.template rw<CCFDNS::RegistrationRequests>(
+        registration_requests_table_name);
       if (!lrr)
         throw std::runtime_error(
           "could not access service registration request table");
-      lrr->put(rr);
+      lrr->put(name, rr);
     }
 
-    virtual void save_delegation_registration_request(
-      const DelegationRequest& dr) override
+    virtual void save_delegation_request(
+      const Name& name, const DelegationRequest& dr) override
     {
       check_context();
 
-      auto lrr = ctx->tx.template rw<CCFDNS::LatestDelegationRequest>(
-        latest_delegation_request_table_name);
+      auto lrr = ctx->tx.template rw<CCFDNS::DelegationRequests>(
+        delegation_requests_table_name);
       if (!lrr)
         throw std::runtime_error(
           "could not access delegation registration request table");
-      lrr->put(dr);
+      lrr->put(name, dr);
     }
 
     virtual void start_service_acme(
@@ -1201,8 +1336,16 @@ namespace ccfdns
       auto acme_ss = context.get_subsystem<ccf::ACMESubsystemInterface>();
       auto nwid_ss = context.get_subsystem<ccf::NetworkIdentitySubsystem>();
       auto nci_ss = context.get_subsystem<ccf::NodeConfigurationInterface>();
+      auto& istrats = context.get_indexing_strategies();
 
-      ccfdns = std::make_shared<CCFDNS>(node_id, acme_ss, nwid_ss, nci_ss);
+      ccfdns =
+        std::make_shared<CCFDNS>(node_id, acme_ss, nwid_ss, nci_ss, istrats);
+
+      auto is_tx_committed =
+        [this](ccf::View view, ccf::SeqNo seqno, std::string& error_reason) {
+          return ccf::historical::is_tx_committed_v2(
+            consensus, view, seqno, error_reason);
+        };
 
       auto configure = [this](auto& ctx, nlohmann::json&& params) {
         try
@@ -1219,6 +1362,8 @@ namespace ccfdns
         }
       };
 
+      // auto configure_committed = [this](auto& ctx, const ccf::TxID& txid) {};
+
       make_endpoint(
         "/configure",
         HTTP_POST,
@@ -1226,6 +1371,152 @@ namespace ccfdns
         {std::make_shared<ccf::UserCertAuthnPolicy>()})
         .set_auto_schema<Configure::In, Configure::Out>()
         .set_forwarding_required(ccf::endpoints::ForwardingRequired::Always)
+        .install();
+
+      auto configuration_receipt =
+        [this](
+          ccf::endpoints::ReadOnlyEndpointContext& ctx,
+          ccf::historical::StatePtr historical_state) {
+          try
+          {
+            auto r = ccfdns->configuration_receipt(ctx, historical_state);
+            ctx.rpc_ctx->set_response_body(std::move(r));
+          }
+          catch (std::exception& ex)
+          {
+            ctx.rpc_ctx->set_response_body(ex.what());
+            ctx.rpc_ctx->set_response_status(HTTP_STATUS_BAD_REQUEST);
+          }
+        };
+
+      auto config_txid_extractor =
+        [this](ccf::endpoints::ReadOnlyEndpointContext& ctx)
+        -> std::optional<ccf::TxID> {
+        auto tbl = ctx.tx.ro<CCFDNS::TConfigurationTable>(
+          ccfdns->configuration_table_name);
+        if (!tbl)
+          throw std::runtime_error("configuration table not found");
+        const auto cfg = tbl->get();
+        if (!cfg)
+          throw std::runtime_error("configuration not found");
+        auto version = tbl->get_version_of_previous_write();
+        if (!version || *version == kv::NoVersion)
+          return std::nullopt;
+        return ccf::TxID{.view = consensus->get_view(), .seqno = *version};
+      };
+
+      make_read_only_endpoint(
+        "/configuration-receipt",
+        HTTP_GET,
+        ccf::historical::read_only_adapter_v3(
+          configuration_receipt,
+          context,
+          is_tx_committed,
+          config_txid_extractor),
+        ccf::no_auth_required)
+        .set_auto_schema<void, std::string>()
+        .set_forwarding_required(ccf::endpoints::ForwardingRequired::Never)
+        .install();
+
+      auto registration_receipt =
+        [this](
+          ccf::endpoints::ReadOnlyEndpointContext& ctx,
+          ccf::historical::StatePtr historical_state) {
+          try
+          {
+            const auto parsed_query =
+              http::parse_query(ctx.rpc_ctx->get_request_query());
+            Name service_name =
+              Name(get_param(parsed_query, "service-name")).terminated();
+            CCF_APP_DEBUG("CCFDNS: registration_receipt: {}", service_name);
+            auto r =
+              ccfdns->registration_receipt(ctx, historical_state, service_name);
+            ctx.rpc_ctx->set_response_body(std::move(r));
+            ctx.rpc_ctx->set_response_status(HTTP_STATUS_OK);
+          }
+          catch (std::exception& ex)
+          {
+            ctx.rpc_ctx->set_response_body(ex.what());
+            ctx.rpc_ctx->set_response_status(HTTP_STATUS_BAD_REQUEST);
+          }
+        };
+
+      auto registration_txid_extractor =
+        [this](ccf::endpoints::ReadOnlyEndpointContext& ctx)
+        -> std::optional<ccf::TxID> {
+        const auto parsed_query =
+          http::parse_query(ctx.rpc_ctx->get_request_query());
+        Name service_name =
+          Name(get_param(parsed_query, "service-name")).terminated();
+        auto sn = CCFDNS::RegistrationRequests::KeySerialiser::to_serialised(
+          service_name);
+        auto r = ccfdns->registration_index_strategy->last_write(sn);
+        CCF_APP_DEBUG(
+          "CCFDNS: registration_txid_extractor: {} {}",
+          service_name,
+          r.has_value());
+        return r;
+      };
+
+      make_read_only_endpoint(
+        "/registration-receipt",
+        HTTP_GET,
+        ccf::historical::read_only_adapter_v3(
+          registration_receipt,
+          context,
+          is_tx_committed,
+          registration_txid_extractor),
+        ccf::no_auth_required)
+        .set_auto_schema<std::string, std::string>()
+        .set_forwarding_required(ccf::endpoints::ForwardingRequired::Never)
+        .install();
+
+      auto delegation_receipt = [this](
+                                  ccf::endpoints::ReadOnlyEndpointContext& ctx,
+                                  ccf::historical::StatePtr historical_state) {
+        try
+        {
+          const auto parsed_query =
+            http::parse_query(ctx.rpc_ctx->get_request_query());
+          Name subdomain =
+            Name(get_param(parsed_query, "subdomain")).terminated();
+          auto r = ccfdns->delegation_receipt(ctx, historical_state, subdomain);
+          ctx.rpc_ctx->set_response_body(std::move(r));
+          ctx.rpc_ctx->set_response_status(HTTP_STATUS_OK);
+        }
+        catch (std::exception& ex)
+        {
+          ctx.rpc_ctx->set_response_body(ex.what());
+          ctx.rpc_ctx->set_response_status(HTTP_STATUS_BAD_REQUEST);
+        }
+      };
+
+      auto delegation_txid_extractor =
+        [this](ccf::endpoints::ReadOnlyEndpointContext& ctx)
+        -> std::optional<ccf::TxID> {
+        const auto parsed_query =
+          http::parse_query(ctx.rpc_ctx->get_request_query());
+        Name subdomain =
+          Name(get_param(parsed_query, "subdomain")).terminated();
+        auto ssub =
+          CCFDNS::DelegationRequests::KeySerialiser::to_serialised(subdomain);
+        auto r = ccfdns->delegation_index_strategy->last_write(ssub);
+        CCF_APP_DEBUG(
+          "CCFDNS: delegation_txid_extractor: {} {}", subdomain, r.has_value());
+        return r;
+      };
+
+      make_read_only_endpoint(
+        "/delegation-receipt",
+        HTTP_GET,
+        ccf::historical::read_only_adapter_v3(
+          delegation_receipt,
+          context,
+          is_tx_committed,
+          delegation_txid_extractor),
+        ccf::no_auth_required)
+        .set_auto_schema<std::string, std::string>()
+        .set_forwarding_required(ccf::endpoints::ForwardingRequired::Never)
         .install();
 
       auto start_acme_client = [this](auto& ctx, nlohmann::json&& params) {
@@ -1523,11 +1814,12 @@ namespace ccfdns
           ctx.rpc_ctx->set_response_header(
             http::headers::CONTENT_TYPE, http::headervalues::contenttype::TEXT);
           ctx.rpc_ctx->set_response_body(ccfdns->dump());
+          ctx.rpc_ctx->set_response_status(HTTP_STATUS_OK);
         }
         catch (std::exception& ex)
         {
-          ctx.rpc_ctx->set_response_status(HTTP_STATUS_INTERNAL_SERVER_ERROR);
           ctx.rpc_ctx->set_response_body(ex.what());
+          ctx.rpc_ctx->set_response_status(HTTP_STATUS_INTERNAL_SERVER_ERROR);
         }
       };
 
@@ -1543,11 +1835,12 @@ namespace ccfdns
           ctx.rpc_ctx->set_response_header(
             http::headers::CONTENT_TYPE, http::headervalues::contenttype::TEXT);
           ctx.rpc_ctx->set_response_body(ccfdns->service_registration_policy());
+          ctx.rpc_ctx->set_response_status(HTTP_STATUS_OK);
         }
         catch (std::exception& ex)
         {
-          ctx.rpc_ctx->set_response_status(HTTP_STATUS_INTERNAL_SERVER_ERROR);
           ctx.rpc_ctx->set_response_body(ex.what());
+          ctx.rpc_ctx->set_response_status(HTTP_STATUS_INTERNAL_SERVER_ERROR);
         }
       };
 
@@ -1566,13 +1859,13 @@ namespace ccfdns
           ctx.rpc_ctx->set_response_status(HTTP_STATUS_OK);
           ctx.rpc_ctx->set_response_header(
             http::headers::CONTENT_TYPE, http::headervalues::contenttype::TEXT);
-          ctx.rpc_ctx->set_response_body(
-            ccfdns->delegation_registration_policy());
+          ctx.rpc_ctx->set_response_body(ccfdns->delegation_policy());
+          ctx.rpc_ctx->set_response_status(HTTP_STATUS_OK);
         }
         catch (std::exception& ex)
         {
-          ctx.rpc_ctx->set_response_status(HTTP_STATUS_INTERNAL_SERVER_ERROR);
           ctx.rpc_ctx->set_response_body(ex.what());
+          ctx.rpc_ctx->set_response_status(HTTP_STATUS_INTERNAL_SERVER_ERROR);
         }
       };
 

@@ -48,7 +48,7 @@ public:
   std::map<Name, crypto::Pem, RFC4034::CanonicalNameOrdering> zone_signing_keys;
 
   std::string service_registration_policy_str;
-  std::string delegation_registration_policy_str;
+  std::string delegation_policy_str;
 
   Resolver::Configuration configuration;
 
@@ -193,18 +193,17 @@ public:
     return true;
   }
 
-  virtual std::string delegation_registration_policy() const override
+  virtual std::string delegation_policy() const override
   {
-    return delegation_registration_policy_str;
+    return delegation_policy_str;
   }
 
-  virtual void set_delegation_registration_policy(
-    const std::string& new_policy) override
+  virtual void set_delegation_policy(const std::string& new_policy) override
   {
-    delegation_registration_policy_str = new_policy;
+    delegation_policy_str = new_policy;
   }
 
-  virtual bool evaluate_delegation_registration_policy(
+  virtual bool evaluate_delegation_policy(
     const std::string& data) const override
   {
     return true;
@@ -222,11 +221,11 @@ public:
   }
 
   virtual void save_service_registration_request(
-    const RegistrationRequest& rr) override
+    const Name& name, const RegistrationRequest& rr) override
   {}
 
-  virtual void save_delegation_registration_request(
-    const DelegationRequest& rr) override
+  virtual void save_delegation_request(
+    const Name& name, const DelegationRequest& rr) override
   {}
 
   virtual void start_service_acme(

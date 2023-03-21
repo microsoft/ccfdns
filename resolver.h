@@ -281,13 +281,11 @@ namespace aDNS
 
     virtual void register_delegation(const DelegationRequest& req);
 
-    virtual std::string delegation_registration_policy() const = 0;
+    virtual std::string delegation_policy() const = 0;
 
-    virtual void set_delegation_registration_policy(
-      const std::string& new_policy) = 0;
+    virtual void set_delegation_policy(const std::string& new_policy) = 0;
 
-    virtual bool evaluate_delegation_registration_policy(
-      const std::string& data) const = 0;
+    virtual bool evaluate_delegation_policy(const std::string& data) const = 0;
 
     virtual Configuration get_configuration() const = 0;
     virtual void set_configuration(const Configuration& cfg) = 0;
@@ -300,10 +298,10 @@ namespace aDNS
       const std::string& service_dns_name) = 0;
 
     virtual void save_service_registration_request(
-      const RegistrationRequest& rr) = 0;
+      const Name& name, const RegistrationRequest& rr) = 0;
 
-    virtual void save_delegation_registration_request(
-      const DelegationRequest& rr) = 0;
+    virtual void save_delegation_request(
+      const Name& name, const DelegationRequest& rr) = 0;
 
     virtual std::map<std::string, NodeInfo> get_node_information() = 0;
 
