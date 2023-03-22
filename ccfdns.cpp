@@ -257,6 +257,7 @@ namespace ccfdns
       this->account_key_pair = account_key_pair;
 
       active_orders.clear();
+      this->challenges_todo.clear();
       num_failed_attempts = 0;
     }
 
@@ -273,8 +274,8 @@ namespace ccfdns
     virtual void on_challenge(
       const std::string& token, const std::string& response) override
     {
-      CCF_APP_DEBUG(
-        "CCFDNS: ACME: on_challenge for {}", config.service_dns_name);
+      auto sn = config.service_dns_name;
+      CCF_APP_DEBUG("CCFDNS: ACME: on_challenge for {}", sn);
 
       auto digest_b64 = key_authorization_digest(token, response);
 
@@ -282,20 +283,31 @@ namespace ccfdns
       for (const auto& n : config.alternative_names)
         sans.push_back(n + ".");
 
+      {
+        std::lock_guard<std::mutex> lock(challenges_todo_mtx);
+        challenges_todo[sn].insert(token);
+      }
+
       acme_ss->make_http_request(
         "POST",
         node_address + "/app/internal/install-acme-response",
         {},
         to_json_bytes(InstallACMEResponse::In{
           origin, config.service_dns_name + ".", sans, digest_b64}),
-        [this, token](
+        [this, sn, token, sz = sans.size()](
           const http_status& http_status,
           const http::HeaderMap& headers,
           const std::vector<uint8_t>& body) {
           if (
             http_status == HTTP_STATUS_OK ||
             http_status == HTTP_STATUS_NO_CONTENT)
-            start_challenge(token);
+          {
+            std::lock_guard<std::mutex> lock(challenges_todo_mtx);
+            auto it = challenges_todo.find(sn);
+            if (it == challenges_todo.end() || it->second.size() == sz)
+              for (auto& t : it->second)
+                start_challenge(t);
+          }
           else
           {
             std::string sbody(body.begin(), body.end());
@@ -309,16 +321,20 @@ namespace ccfdns
         config.ca_certs,
         ccf::ApplicationProtocol::HTTP1,
         true);
-
-      // TODO: We should wait for some kind of signal to make sure the ACME
-      // responses are fully installed and committed.
     }
 
     virtual void on_challenge_finished(const std::string& token) override
     {
       CCF_APP_DEBUG("CCFDNS: ACME: on_challenge_finished");
 
-      return;
+      {
+        std::lock_guard<std::mutex> lock(challenges_todo_mtx);
+        auto it = challenges_todo.find(config.service_dns_name);
+        if (it != challenges_todo.end())
+          it->second.erase(token);
+      }
+
+      return; // TODO: Remove
 
       acme_ss->make_http_request(
         "POST",
@@ -387,6 +403,8 @@ namespace ccfdns
     std::string node_address;
     std::string origin;
     std::vector<uint8_t> service_csr;
+    std::map<std::string, std::set<std::string>> challenges_todo;
+    std::mutex challenges_todo_mtx;
   };
 
   using namespace ccf::indexing::strategies;
@@ -805,12 +823,13 @@ namespace ccfdns
       auto tbl = ctx->tx.rw<DelegationPolicies>(delegation_policy_table_name);
 
       if (!tbl)
-        throw std::runtime_error("error accessing delegation policy table");
+        throw std::runtime_error(
+          "error accessing parent delegation policy table");
 
       const auto old_policies = tbl->get();
 
       if (!old_policies)
-        throw std::runtime_error("error accessing delegation policy");
+        throw std::runtime_error("error accessing parent delegation policy");
 
       tbl->put(std::make_pair(new_policy, old_policies->second));
     }
