@@ -40,6 +40,7 @@
 #include <ccf/service/tables/nodes.h>
 #include <ccf/version.h>
 #include <kv/version.h>
+#include <llhttp/llhttp.h>
 #include <memory>
 #include <nlohmann/json.hpp>
 #include <optional>
@@ -100,6 +101,123 @@ namespace ccfdns
     return std::vector<uint8_t>(s.data(), s.data() + s.size());
   }
 
+  class HTTPClient
+  {
+  public:
+    HTTPClient(std::shared_ptr<ccf::ACMESubsystemInterface> acme_ss) :
+      acme_ss(acme_ss)
+    {}
+
+    struct HTTPRetryMsg
+    {
+      HTTPRetryMsg(
+        HTTPClient* client,
+        std::string&& method,
+        std::string&& url,
+        http::HeaderMap&& headers,
+        std::string&& body,
+        const std::vector<std::string>& ca_certs,
+        const std::function<bool(
+          http_status, http::HeaderMap&&, std::vector<uint8_t>&&)>& callback,
+        bool use_node_client_cert) :
+        client(client),
+        method(std::move(method)),
+        url(std::move(url)),
+        headers(std::move(headers)),
+        body(body),
+        ca_certs(ca_certs),
+        callback(callback),
+        use_node_client_cert(use_node_client_cert)
+      {}
+
+      HTTPClient* client;
+      std::string method;
+      std::string url;
+      http::HeaderMap headers;
+      std::string body;
+      std::vector<std::string> ca_certs;
+      std::function<bool(
+        http_status, http::HeaderMap&&, std::vector<uint8_t>&&)>
+        callback;
+      bool use_node_client_cert;
+    };
+
+    static void msg_cb(std::unique_ptr<threading::Tmsg<HTTPRetryMsg>> msg)
+    {
+      auto vbody =
+        std::vector<uint8_t>(msg->data.body.begin(), msg->data.body.end());
+      CCF_APP_TRACE("CCFDNS: HTTP: {} {}", msg->data.method, msg->data.url);
+      msg->data.client->acme_ss->make_http_request(
+        msg->data.method,
+        msg->data.url,
+        msg->data.headers,
+        vbody,
+        [msgdata = msg->data](
+          const http_status& status,
+          const http::HeaderMap& headers,
+          const std::vector<uint8_t>& data) {
+          http::HeaderMap hdrs = headers;
+          if (
+            status == HTTP_STATUS_SERVICE_UNAVAILABLE ||
+            status == HTTP_STATUS_REQUEST_TIMEOUT)
+          {
+            size_t wait_seconds = 5;
+            auto rait = hdrs.find("retry-after");
+            if (rait != hdrs.end())
+              wait_seconds = std::atoi(rait->second.c_str());
+
+            CCF_APP_DEBUG(
+              "CCFDNS: ACME: Retrying failed HTTP request in {} sec",
+              wait_seconds);
+
+            auto nmsg =
+              std::make_unique<threading::Tmsg<HTTPRetryMsg>>(msg_cb, msgdata);
+
+            threading::ThreadMessaging::instance().add_task_after(
+              std::move(nmsg), std::chrono::seconds(wait_seconds));
+
+            return false;
+          }
+          else
+          {
+            std::vector<uint8_t> cdata = data;
+            return msgdata.callback(status, std::move(hdrs), std::move(cdata));
+          }
+        },
+        msg->data.ca_certs,
+        ccf::ApplicationProtocol::HTTP1,
+        true);
+    };
+
+    void request(
+      std::string&& method,
+      std::string&& url,
+      http::HeaderMap&& headers,
+      std::string&& body,
+      const std::vector<std::string>& ca_certs,
+      const std::function<
+        bool(http_status, http::HeaderMap&&, std::vector<uint8_t>&&)>& callback,
+      bool use_node_client_cert = false)
+    {
+      auto msg = std::make_unique<threading::Tmsg<HTTPRetryMsg>>(
+        msg_cb,
+        this,
+        std::move(method),
+        std::move(url),
+        std::move(headers),
+        std::move(body),
+        ca_certs,
+        callback,
+        use_node_client_cert);
+
+      threading::ThreadMessaging::instance().add_task_after(
+        std::move(msg), std::chrono::seconds(0));
+    }
+
+  protected:
+    std::shared_ptr<ccf::ACMESubsystemInterface> acme_ss;
+  };
+
   class ACMEClient : public ACME::Client
   {
   public:
@@ -113,6 +231,7 @@ namespace ccfdns
       std::shared_ptr<crypto::KeyPair> account_key_pair = nullptr) :
       ACME::Client(config, account_key_pair),
       acme_ss(acme_ss),
+      http_client(acme_ss),
       resolver(resolver),
       node_address(node_address),
       origin(origin),
@@ -141,7 +260,7 @@ namespace ccfdns
       num_failed_attempts = 0;
     }
 
-    std::string key_authorization_digest(
+    static std::string key_authorization_digest(
       const std::string& token, const std::string& response)
     {
       auto key_authorization = token + "." + response;
@@ -190,6 +309,9 @@ namespace ccfdns
         config.ca_certs,
         ccf::ApplicationProtocol::HTTP1,
         true);
+
+      // TODO: We should wait for some kind of signal to make sure the ACME
+      // responses are fully installed and committed.
     }
 
     virtual void on_challenge_finished(const std::string& token) override
@@ -236,97 +358,31 @@ namespace ccfdns
       return service_csr;
     }
 
-    struct HTTPRetryMsg
-    {
-      HTTPRetryMsg(
-        ACMEClient* client,
-        const http::URL& url,
-        const http::Request& req,
-        std::function<
-          bool(http_status status, http::HeaderMap&&, std::vector<uint8_t>&&)>
-          callback) :
-        client(client),
-        url(url),
-        req(std::move(req)),
-        callback(callback)
-      {}
-      ACMEClient* client;
-      http::URL url;
-      http::Request req;
-      std::function<bool(
-        http_status status, http::HeaderMap&&, std::vector<uint8_t>&&)>
-        callback;
-    };
-
     virtual void on_http_request(
       const http::URL& url,
       http::Request&& req,
       std::function<
-        bool(http_status status, http::HeaderMap&&, std::vector<uint8_t>&&)>
-        callback) override
+        bool(http_status, http::HeaderMap&&, std::vector<uint8_t>&&)> callback)
+      override
     {
-      auto method =
-        req.get_method() == llhttp_method::HTTP_POST ? "POST" : "GET";
-
-      auto url_str = url.scheme + "://" + url.host + ":" + url.port + url.path;
-
-      CCF_APP_DEBUG("CCFDNS: ACME: on_http_request: {}", url_str);
-
-      std::vector<uint8_t> body(
+      std::string method = req.get_method() == HTTP_GET ? "GET" : "POST";
+      std::string body(
         req.get_content_data(),
         req.get_content_data() + req.get_content_length());
-
-      CCF_APP_DEBUG(
-        "CCFDNS: ACME: BODY: {}", std::string(body.begin(), body.end()));
-
-      acme_ss->make_http_request(
-        method,
-        url_str,
-        req.get_headers(),
-        body,
-        [this, url, r2 = req, callback](
-          const http_status& status,
-          const http::HeaderMap& headers,
-          const std::vector<uint8_t>& data) {
-          http::HeaderMap hdrs = headers;
-          if (status == HTTP_STATUS_SERVICE_UNAVAILABLE)
-          {
-            size_t wait_seconds = 5;
-            auto rait = hdrs.find("retry-after");
-            if (rait != hdrs.end())
-              wait_seconds = std::atoi(rait->second.c_str());
-
-            CCF_APP_DEBUG(
-              "CCFDNS: ACME: Retrying failed HTTP request in {} sec",
-              wait_seconds);
-
-            auto msg = std::make_unique<threading::Tmsg<HTTPRetryMsg>>(
-              [](std::unique_ptr<threading::Tmsg<HTTPRetryMsg>> msg) {
-                http::Request r = msg->data.req;
-                msg->data.client->on_http_request(
-                  msg->data.url, std::move(r), msg->data.callback);
-              },
-              this,
-              url,
-              r2,
-              callback);
-
-            threading::ThreadMessaging::instance().add_task_after(
-              std::move(msg), std::chrono::seconds(wait_seconds));
-
-            return true;
-          }
-          else
-          {
-            std::vector<uint8_t> cdata = data;
-            return callback(status, std::move(hdrs), std::move(cdata));
-          }
-        },
-        config.ca_certs);
+      auto url_str = url.scheme + "://" + url.host + ":" + url.port + url.path;
+      http::HeaderMap headers = req.get_headers();
+      http_client.request(
+        std::move(method),
+        std::move(url_str),
+        std::move(headers),
+        std::move(body),
+        config.ca_certs,
+        callback);
     }
 
   private:
     std::shared_ptr<ccf::ACMESubsystemInterface> acme_ss;
+    HTTPClient http_client;
     Resolver& resolver;
     std::string node_address;
     std::string origin;
@@ -380,7 +436,8 @@ namespace ccfdns
       node_id(node_id),
       acme_ss(acme_ss),
       nwid_ss(nwid_ss),
-      nci_ss(nci_ss)
+      nci_ss(nci_ss),
+      http_client(acme_ss)
     {
       acme_account_key_pair = crypto::make_key_pair(crypto::CurveID::SECP384R1);
       registration_index_strategy = std::make_shared<RegistrationRequestsIndex>(
@@ -437,8 +494,8 @@ namespace ccfdns
 
     using DelegationPolicies =
       ccf::ServiceValue<std::pair<std::string, std::string>>;
-    const std::string delegation_registration_policy_table_name =
-      "public:ccf.gov.ccfdns.delegation_registration_policy";
+    const std::string delegation_policy_table_name =
+      "public:ccf.gov.ccfdns.delegation_policy";
 
     using DelegationRequests = ccf::ServiceMap<Name, RegisterDelegation::In>;
     const std::string delegation_requests_table_name =
@@ -709,6 +766,11 @@ namespace ccfdns
 
       auto policy = ctx->tx.rw<ServiceRegistrationPolicy>(
         service_registration_policy_table_name);
+
+      if (!policy)
+        throw std::runtime_error(
+          "error accessing service registration policy table");
+
       policy->put(new_policy);
     }
 
@@ -716,8 +778,7 @@ namespace ccfdns
     {
       check_context();
 
-      auto tbl = ctx->tx.ro<DelegationPolicies>(
-        delegation_registration_policy_table_name);
+      auto tbl = ctx->tx.ro<DelegationPolicies>(delegation_policy_table_name);
       const auto policies = tbl->get();
       if (!policies)
         throw std::runtime_error("no delegation registration policies");
@@ -730,23 +791,45 @@ namespace ccfdns
         throw std::runtime_error("no local delegation policy");
 
       return "function parent() {\n" + parent +
-        "}\n\n"
+        "\n}\n\n"
         "function local() {\n" +
         local + "\n" +
         "}\n\n"
         "parent() && local()";
     }
 
+    virtual void set_parent_delegation_policy(const std::string& new_policy)
+    {
+      check_context();
+
+      auto tbl = ctx->tx.rw<DelegationPolicies>(delegation_policy_table_name);
+
+      if (!tbl)
+        throw std::runtime_error("error accessing delegation policy table");
+
+      const auto old_policies = tbl->get();
+
+      if (!old_policies)
+        throw std::runtime_error("error accessing delegation policy");
+
+      tbl->put(std::make_pair(new_policy, old_policies->second));
+    }
+
     virtual void set_delegation_policy(const std::string& new_policy) override
     {
       check_context();
 
-      auto tbl = ctx->tx.rw<DelegationPolicies>(
-        delegation_registration_policy_table_name);
+      auto tbl = ctx->tx.rw<DelegationPolicies>(delegation_policy_table_name);
+
+      if (!tbl)
+        throw std::runtime_error("error accessing delegation policy table");
+
       const auto old_policies = tbl->get();
 
-      if (old_policies)
-        tbl->put({old_policies->first, new_policy});
+      if (!old_policies)
+        throw std::runtime_error("error accessing delegation policy");
+
+      tbl->put({old_policies->first, new_policy});
     }
 
     static constexpr const size_t default_stack_size = 1024 * 1024;
@@ -976,13 +1059,51 @@ namespace ccfdns
       if (cfg.parent_base_url)
       {
         // When delegating, we now wait until start-delegation-acme-client is
-        // called, before starting the ACME client. Alternatively, we could also
-        // poll via DNS until we see ourselves.
+        // called, before starting the ACME client. Alternatively, we could
+        // also poll via DNS until we see ourselves.
+
+        // Download the parent's delegation policy
+        http_client.request(
+          "GET",
+          *cfg.parent_base_url + "/app/delegation-policy",
+          {},
+          {},
+          cfg.service_ca.ca_certificates,
+          [this](
+            http_status status,
+            http::HeaderMap&&,
+            std::vector<uint8_t>&& body) {
+            if (status != HTTP_STATUS_OK)
+            {
+              CCF_APP_FAIL("CCFDNS: Failed to get parent delegation policy");
+              return false;
+            }
+
+            std::string sbody(body.begin(), body.end());
+            http_client.request(
+              "POST",
+              internal_node_address + "/app/set-parent-delegation-policy",
+              {},
+              std::move(sbody),
+              {nwid_ss->get()->cert.str()},
+              [](
+                http_status status,
+                http::HeaderMap&&,
+                std::vector<uint8_t>&& body) {
+                if (status != HTTP_STATUS_OK)
+                  CCF_APP_FAIL("CCFDNS: Failed to set delegation policy");
+                return true;
+              },
+              true);
+            return true;
+          });
       }
       else
       {
         // No parent, i.e. we are a TLD and need to get our TLS certificate
-        // directly from the CA, instead of another aDNS instance.
+        // directly from the CA, instead of a parent aDNS instance.
+
+        set_parent_delegation_policy("true");
 
         auto cn = cfg.origin.unterminated();
 
@@ -1269,6 +1390,7 @@ namespace ccfdns
     std::shared_ptr<ccf::ACMESubsystemInterface> acme_ss;
     std::shared_ptr<ccf::NetworkIdentitySubsystemInterface> nwid_ss;
     std::shared_ptr<ccf::NodeConfigurationInterface> nci_ss;
+    HTTPClient http_client;
 
     crypto::KeyPairPtr acme_account_key_pair;
     std::string internal_node_address = "https://127.0.0.1";
@@ -1361,8 +1483,6 @@ namespace ccfdns
             HTTP_STATUS_BAD_REQUEST, ccf::errors::InternalError, ex.what());
         }
       };
-
-      // auto configure_committed = [this](auto& ctx, const ccf::TxID& txid) {};
 
       make_endpoint(
         "/configure",
@@ -1519,6 +1639,31 @@ namespace ccfdns
         .set_forwarding_required(ccf::endpoints::ForwardingRequired::Never)
         .install();
 
+      auto set_parent_delegation_policy = [this](auto& ctx) {
+        try
+        {
+          ContextContext cc(ccfdns, ctx);
+          auto new_policy = ctx.rpc_ctx->get_request_body();
+          ccfdns->set_parent_delegation_policy(
+            {new_policy.begin(), new_policy.end()});
+          return ccf::make_success();
+        }
+        catch (std::exception& ex)
+        {
+          return ccf::make_error(
+            HTTP_STATUS_BAD_REQUEST, ccf::errors::InternalError, ex.what());
+        }
+      };
+
+      make_endpoint(
+        "/set-parent-delegation-policy",
+        HTTP_POST,
+        set_parent_delegation_policy,
+        {std::make_shared<ccf::NodeCertAuthnPolicy>()})
+        .set_openapi_hidden(true)
+        .set_forwarding_required(ccf::endpoints::ForwardingRequired::Always)
+        .install();
+
       auto start_acme_client = [this](auto& ctx, nlohmann::json&& params) {
         try
         {
@@ -1567,7 +1712,7 @@ namespace ccfdns
         HTTP_POST,
         ccf::json_adapter(install_acme_response),
         {std::make_shared<ccf::NodeCertAuthnPolicy>()})
-        .set_auto_schema<InstallACMEResponse::In, InstallACMEResponse::Out>()
+        .set_openapi_hidden(true)
         .set_forwarding_required(ccf::endpoints::ForwardingRequired::Always)
         .install();
 
@@ -1591,7 +1736,7 @@ namespace ccfdns
         HTTP_POST,
         ccf::json_adapter(remove_acme_response),
         {std::make_shared<ccf::NodeCertAuthnPolicy>()})
-        .set_auto_schema<RemoveACMEToken::In, RemoveACMEToken::Out>()
+        .set_openapi_hidden(true)
         .install();
 
       auto add = [this](auto& ctx, nlohmann::json&& params) {
@@ -1614,7 +1759,7 @@ namespace ccfdns
         HTTP_POST,
         ccf::json_adapter(add),
         {std::make_shared<ccf::NodeCertAuthnPolicy>()})
-        .set_auto_schema<AddRecord::In, AddRecord::Out>()
+        .set_openapi_hidden(true)
         .set_forwarding_required(ccf::endpoints::ForwardingRequired::Always)
         .install();
 
@@ -1752,7 +1897,7 @@ namespace ccfdns
         HTTP_POST,
         ccf::json_adapter(set_certificate),
         {std::make_shared<ccf::NodeCertAuthnPolicy>()})
-        .set_auto_schema<SetCertificate::In, SetCertificate::Out>()
+        .set_openapi_hidden(true)
         .set_forwarding_required(ccf::endpoints::ForwardingRequired::Always)
         .install();
 
@@ -1810,7 +1955,6 @@ namespace ccfdns
         try
         {
           ContextContext cc(ccfdns, ctx);
-          ctx.rpc_ctx->set_response_status(HTTP_STATUS_OK);
           ctx.rpc_ctx->set_response_header(
             http::headers::CONTENT_TYPE, http::headervalues::contenttype::TEXT);
           ctx.rpc_ctx->set_response_body(ccfdns->dump());
@@ -1831,7 +1975,6 @@ namespace ccfdns
         try
         {
           ContextContext cc(ccfdns, ctx);
-          ctx.rpc_ctx->set_response_status(HTTP_STATUS_OK);
           ctx.rpc_ctx->set_response_header(
             http::headers::CONTENT_TYPE, http::headervalues::contenttype::TEXT);
           ctx.rpc_ctx->set_response_body(ccfdns->service_registration_policy());
@@ -1856,7 +1999,6 @@ namespace ccfdns
         try
         {
           ContextContext cc(ccfdns, ctx);
-          ctx.rpc_ctx->set_response_status(HTTP_STATUS_OK);
           ctx.rpc_ctx->set_response_header(
             http::headers::CONTENT_TYPE, http::headervalues::contenttype::TEXT);
           ctx.rpc_ctx->set_response_body(ccfdns->delegation_policy());

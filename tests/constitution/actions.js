@@ -340,10 +340,18 @@ function setRegistrationPolicy(new_policy) {
 }
 
 function setDelegationPolicy(new_policy) {
-  ccf.kv["public:ccf.gov.ccfdns.delegation_registration_policy"].set(
-    getSingletonKvKey(),
-    ccf.jsonCompatibleToBuf(new_policy)
-  );
+  const rawPolicies = ccf.kv["public:ccf.gov.ccfdns.delegation_policy"].get(getSingletonKvKey());
+  if (rawPolicies === undefined) {
+    ccf.kv["public:ccf.gov.ccfdns.delegation_policy"].set(
+      getSingletonKvKey(),
+      ccf.jsonCompatibleToBuf(["", new_policy]));
+  } else {
+    const policies = ccf.bufToJsonCompatible(rawPolicies);
+    ccf.kv["public:ccf.gov.ccfdns.delegation_policy"].set(
+      getSingletonKvKey(),
+      ccf.jsonCompatibleToBuf([policies.first, new_policy])
+    );
+  }
 }
 
 const actions = new Map([
@@ -761,7 +769,7 @@ const actions = new Map([
   [
     "remove_js_app",
     new Action(
-      function (args) {},
+      function (args) { },
       function (args) {
         const modulesMap = ccf.kv["public:ccf.gov.modules"];
         const modulesQuickJsBytecodeMap =
@@ -797,7 +805,7 @@ const actions = new Map([
   [
     "refresh_js_app_bytecode_cache",
     new Action(
-      function (args) {},
+      function (args) { },
       function (args) {
         ccf.refreshAppBytecodeCache();
       }
@@ -1339,7 +1347,7 @@ const actions = new Map([
   [
     "trigger_ledger_chunk",
     new Action(
-      function (args) {},
+      function (args) { },
       function (args, proposalId) {
         ccf.node.triggerLedgerChunk();
       }
@@ -1348,7 +1356,7 @@ const actions = new Map([
   [
     "trigger_snapshot",
     new Action(
-      function (args) {},
+      function (args) { },
       function (args, proposalId) {
         ccf.node.triggerSnapshot();
       }
@@ -1384,7 +1392,7 @@ const actions = new Map([
           throw new Error("Service identity certificate mismatch");
         }
       },
-      function (args) {}
+      function (args) { }
     ),
   ],
   [
