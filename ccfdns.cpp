@@ -811,7 +811,7 @@ namespace ccfdns
       return "function parent() {\n" + parent +
         "\n}\n\n"
         "function local() {\n" +
-        local + "\n" +
+        local + "\n" + "return r == true;" + "\n" +
         "}\n\n"
         "parent() && local()";
     }
@@ -1123,7 +1123,7 @@ namespace ccfdns
         // No parent, i.e. we are a TLD and need to get our TLS certificate
         // directly from the CA, instead of a parent aDNS instance.
 
-        set_parent_delegation_policy("true");
+        set_parent_delegation_policy("return true;");
 
         auto cn = cfg.origin.unterminated();
 

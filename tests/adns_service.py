@@ -45,7 +45,8 @@ nonzero_mrenclave_policy = """
         r &= claims.sgx_claims.report_body.mr_enclave.length == 32 &&
             JSON.stringify(claims.custom_claims.sgx_report_data) != JSON.stringify([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
     }
-    r == true"""
+    r == true;
+"""
 
 
 class ServiceCAConfig(dict):
