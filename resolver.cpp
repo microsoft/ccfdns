@@ -26,6 +26,7 @@
 #include <cstddef>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <openssl/ec.h>
 #include <openssl/ecdsa.h>
 #include <openssl/ossl_typ.h>
@@ -545,16 +546,16 @@ namespace aDNS
             result.authorities += find_rrsigs(origin, qname, qclass, Type::SOA);
             result.is_authoritative = true;
           }
-          else if (qname != origin)
-          {
-            soa_records = find_records(origin, origin, QType::SOA, qclass);
-            if (soa_records.empty())
-              throw std::runtime_error("no SOA for origin");
-            result.authorities += *soa_records.begin();
-            result.authorities +=
-              find_rrsigs(origin, origin, qclass, Type::SOA);
-            result.is_authoritative = true;
-          }
+        }
+
+        if (result.authorities.empty() && qname != origin)
+        {
+          auto soa_records = find_records(origin, origin, QType::SOA, qclass);
+          if (soa_records.empty())
+            throw std::runtime_error("no SOA for origin");
+          result.authorities += *soa_records.begin();
+          result.authorities += find_rrsigs(origin, origin, qclass, Type::SOA);
+          result.is_authoritative = true;
         }
 
         if (!qname.is_root())
@@ -596,7 +597,8 @@ namespace aDNS
     for (const auto& rr : result_set)
       CCF_APP_TRACE("ADNS:  - {}", string_from_resource_record(rr));
 
-    result.is_authoritative |= result.answers.size() > 0;
+    result.is_authoritative |=
+      result.answers.size() > 0 && !(qtype == QType::NS && qname != origin);
 
     return result;
   }
@@ -787,6 +789,7 @@ namespace aDNS
     assert(nameb32.size() <= 63);
     RFC1035::Name name(nameb32);
     name += suffix;
+    name.lower();
 
     uint8_t flags = 0;
     uint16_t iterations = 2;
@@ -890,6 +893,8 @@ namespace aDNS
   void Resolver::sign(const Name& origin)
   {
     CCF_APP_INFO("ADNS: (Re)signing {}", origin);
+
+    std::lock_guard<std::mutex> lock(sign_mtx);
 
     if (!origin.is_absolute())
       throw std::runtime_error("origin is not absolute");
@@ -1587,8 +1592,7 @@ namespace aDNS
             60,
             TXT(key_authorization)));
 
-    // Challenge TXTs don't necessarily always have to be signed.
-    // sign(origin);
+    sign(origin);
   }
 
   void Resolver::remove_acme_response(const Name& origin, const Name& name)

@@ -311,6 +311,7 @@ namespace aDNS
 
   protected:
     typedef std::set<Name, RFC4034::CanonicalNameOrdering> Names;
+    std::mutex sign_mtx;
 
     small_vector<uint8_t> generate_nsec3_salt(uint8_t length);
 
