@@ -946,7 +946,8 @@ namespace ccfdns
       const std::string& data) const override
     {
       RPJSRuntime rt;
-      return rt.eval(delegation_policy());
+      std::string program = data + "\n\n" + delegation_policy();
+      return rt.eval(program);
     }
 
     using Resolver::register_delegation;
