@@ -304,9 +304,32 @@ namespace ccfdns
           {
             std::lock_guard<std::mutex> lock(challenges_todo_mtx);
             auto it = challenges_todo.find(sn);
-            if (it == challenges_todo.end() || it->second.size() == sz)
-              for (auto& t : it->second)
-                start_challenge(t);
+            if (it == challenges_todo.end() || it->second.size() >= sz)
+            {
+              struct StartChallengeMsg
+              {
+                StartChallengeMsg(ACMEClient* client, const std::string& sn) :
+                  client(client),
+                  sn(sn)
+                {}
+                ACMEClient* client;
+                std::string sn;
+              };
+
+              auto msg = std::make_unique<threading::Tmsg<StartChallengeMsg>>(
+                [](std::unique_ptr<threading::Tmsg<StartChallengeMsg>> msg) {
+                  auto client = msg->data.client;
+                  std::lock_guard<std::mutex> lock(client->challenges_todo_mtx);
+                  auto it = client->challenges_todo.find(msg->data.sn);
+                  for (auto& t : it->second)
+                    client->start_challenge(t);
+                },
+                this,
+                sn);
+
+              threading::ThreadMessaging::instance().add_task_after(
+                std::move(msg), std::chrono::seconds(1));
+            }
           }
           else
           {

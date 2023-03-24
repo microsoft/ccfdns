@@ -222,6 +222,9 @@ namespace aDNS
     RFC4034::CanonicalRRSet find_rrsigs(
       const Name& origin, const Name& name, QClass qclass, Type type_covered);
 
+    RFC4034::CanonicalRRSet find_nsec3_records(
+      const Name& origin, QClass qclass, const Name& qname);
+
     virtual void for_each(
       const Name& origin,
       QClass qclass,

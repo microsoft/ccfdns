@@ -40,25 +40,6 @@ namespace RFC5155
     return hp->Hash(&x[0], x.size(), md_type);
   }
 
-  static std::vector<uint8_t> IH(
-    const small_vector<uint8_t>& salt,
-    const std::vector<uint8_t>& x,
-    uint16_t k)
-  {
-    if (k == 0)
-    {
-      std::vector<uint8_t> x_salt = x;
-      salt.put(x_salt);
-      return H(x_salt);
-    }
-    else
-    {
-      std::vector<uint8_t> tmp_salt = IH(salt, x, k - 1);
-      salt.put(tmp_salt);
-      return H(tmp_salt);
-    }
-  }
-
   // https://datatracker.ietf.org/doc/html/rfc5155#section-5
   small_vector<uint8_t> NSEC3::hash(
     const RFC1035::Name& origin,
@@ -66,9 +47,6 @@ namespace RFC5155
     uint16_t iterations,
     const small_vector<uint8_t>& salt)
   {
-    if (iterations == 0)
-      throw std::runtime_error("NSEC3 requires at least one hash iteration");
-
     auto cname = name;
     if (!cname.is_absolute())
       cname += origin;

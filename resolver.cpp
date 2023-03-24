@@ -465,6 +465,32 @@ namespace aDNS
       });
   }
 
+  RFC4034::CanonicalRRSet Resolver::find_nsec3_records(
+    const Name& origin, QClass qclass, const Name& qname)
+  {
+    RFC4034::CanonicalRRSet r;
+    auto configuration = get_configuration();
+
+    auto nsec3params = find_records(
+      origin, origin, static_cast<QType>(Type::NSEC3PARAM), qclass);
+    if (!nsec3params.empty())
+    {
+      RFC5155::NSEC3PARAM p(nsec3params.begin()->rdata);
+      auto name_hash = RFC5155::NSEC3::hash(
+        origin, qname, configuration.nsec3_hash_iterations, p.salt);
+      std::string nameb32 = base32hex_encode(&name_hash[0], name_hash.size());
+      assert(nameb32.size() <= 63);
+      RFC1035::Name name(nameb32);
+      const RFC1035::Name& suffix = qname;
+      name += suffix;
+      name.lower();
+      r += find_records(origin, name, static_cast<QType>(Type::NSEC3), qclass);
+      r += find_rrsigs(origin, name, qclass, Type::NSEC3);
+    }
+
+    return r;
+  }
+
   Resolver::Resolution Resolver::resolve(
     const Name& qname, QType qtype, QClass qclass)
   {
@@ -525,25 +551,7 @@ namespace aDNS
 
         if (configuration.use_nsec3)
         {
-          auto nsec3params = find_records(
-            origin, qname, static_cast<QType>(Type::NSEC3PARAM), qclass);
-          if (!nsec3params.empty())
-          {
-            RFC5155::NSEC3PARAM p(nsec3params.begin()->rdata);
-            auto name_hash = RFC5155::NSEC3::hash(
-              origin, qname, configuration.nsec3_hash_iterations, p.salt);
-            std::string nameb32 =
-              base32hex_encode(&name_hash[0], name_hash.size());
-            assert(nameb32.size() <= 63);
-            RFC1035::Name name(nameb32);
-            const RFC1035::Name& suffix = qname;
-            name += suffix;
-            name.lower();
-            result.authorities += find_records(
-              origin, name, static_cast<QType>(Type::NSEC3), qclass);
-            result.authorities +=
-              find_rrsigs(origin, name, qclass, Type::NSEC3);
-          }
+          result.authorities += find_nsec3_records(origin, qclass, qname);
         }
         else
         {
@@ -552,6 +560,8 @@ namespace aDNS
           result.authorities += find_rrsigs(origin, qname, qclass, Type::NSEC);
         }
 
+        bool have_soa = false;
+
         if (qtype != QType::SOA)
         {
           auto soa_records = find_records(origin, qname, QType::SOA, qclass);
@@ -559,16 +569,8 @@ namespace aDNS
           {
             result.authorities += *soa_records.begin();
             result.authorities += find_rrsigs(origin, qname, qclass, Type::SOA);
+            have_soa = true;
           }
-        }
-
-        if (result.authorities.empty() && qname != origin)
-        {
-          auto soa_records = find_records(origin, origin, QType::SOA, qclass);
-          if (soa_records.empty())
-            throw std::runtime_error("no SOA for origin");
-          result.authorities += *soa_records.begin();
-          result.authorities += find_rrsigs(origin, origin, qclass, Type::SOA);
         }
 
         for (Name n = qname; n != origin && !n.is_root(); n = n.parent())
@@ -594,7 +596,21 @@ namespace aDNS
         }
 
         if (result.response_code == NO_ERROR && result.authorities.empty())
+        {
           result.response_code = NAME_ERROR; // NXDOMAIN
+          result.authorities +=
+            find_records(origin, origin, static_cast<QType>(Type::SOA), qclass);
+          result.authorities += find_rrsigs(origin, origin, qclass, Type::SOA);
+          if (configuration.use_nsec3)
+            result.authorities += find_nsec3_records(origin, qclass, origin);
+          else
+          {
+            result.authorities += find_records(
+              origin, origin, static_cast<QType>(Type::NSEC), qclass);
+            result.authorities +=
+              find_rrsigs(origin, origin, qclass, Type::NSEC);
+          }
+        }
       }
     }
 
