@@ -694,6 +694,27 @@ namespace ccfdns
       return origins->contains(name.lowered());
     }
 
+    virtual bool is_delegated(
+      const Name& origin, const Name& name) const override
+    {
+      if (!name.ends_with(origin))
+        return false;
+
+      auto delegations =
+        ctx->tx.ro<DelegationRequests>(delegation_requests_table_name);
+
+      if (!delegations)
+        return false;
+
+      for (Name tmp = name; tmp != origin; tmp = tmp.parent())
+      {
+        if (delegations->has(tmp))
+          return true;
+      }
+
+      return false;
+    }
+
     virtual crypto::Pem get_private_key(
       const Name& origin,
       uint16_t tag,

@@ -230,6 +230,8 @@ namespace aDNS
 
     virtual bool origin_exists(const Name& name) const = 0;
 
+    virtual bool is_delegated(const Name& origin, const Name& name) const = 0;
+
     virtual void sign(const Name& origin);
 
     virtual void add(const Name& origin, const ResourceRecord& rr) = 0;
@@ -318,7 +320,7 @@ namespace aDNS
     small_vector<uint8_t> get_nsec3_salt(
       const Name& origin, aDNS::QClass class_);
 
-    void update_nsec3_salt(
+    void update_nsec3_param(
       const Name& origin,
       aDNS::Class class_,
       uint16_t ttl,

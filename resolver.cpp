@@ -488,12 +488,26 @@ namespace aDNS
       }
     }
 
+    result.is_authoritative = false;
     auto& result_set = result.answers;
 
     if (origin.is_absolute())
     {
-      RFC4034::CanonicalRRSet records =
-        find_records(origin, qname, qtype, qclass);
+      RFC4034::CanonicalRRSet records;
+
+      if (!is_delegated(origin, qname) || qtype == QType::DS)
+      {
+        records = find_records(origin, qname, qtype, qclass);
+        result.is_authoritative = true;
+      }
+      else if (qtype == QType::A)
+      {
+        // Direct query for glue records. Not sure queries of this form are
+        // standards compliant.
+        records = find_records(
+          origin + Name("glue."), qname, static_cast<QType>(Type::A), qclass);
+        result.is_authoritative = true;
+      }
 
       if (records.size() > 0)
       {
@@ -524,6 +538,7 @@ namespace aDNS
             RFC1035::Name name(nameb32);
             const RFC1035::Name& suffix = qname;
             name += suffix;
+            name.lower();
             result.authorities += find_records(
               origin, name, static_cast<QType>(Type::NSEC3), qclass);
             result.authorities +=
@@ -544,7 +559,6 @@ namespace aDNS
           {
             result.authorities += *soa_records.begin();
             result.authorities += find_rrsigs(origin, qname, qclass, Type::SOA);
-            result.is_authoritative = true;
           }
         }
 
@@ -555,32 +569,28 @@ namespace aDNS
             throw std::runtime_error("no SOA for origin");
           result.authorities += *soa_records.begin();
           result.authorities += find_rrsigs(origin, origin, qclass, Type::SOA);
-          result.is_authoritative = true;
         }
 
-        if (!qname.is_root())
+        for (Name n = qname; n != origin && !n.is_root(); n = n.parent())
         {
-          for (Name n = qname; n != origin && !n.is_root(); n = n.parent())
-          {
-            // Delegation records
-            result.authorities +=
-              find_records(origin, n, static_cast<QType>(Type::NS), qclass);
+          // Delegation records
+          result.authorities +=
+            find_records(origin, n, static_cast<QType>(Type::NS), qclass);
 
-            result.authorities +=
-              find_records(origin, n, static_cast<QType>(Type::DS), qclass);
-            result.authorities += find_rrsigs(origin, n, qclass, Type::DS);
+          result.authorities +=
+            find_records(origin, n, static_cast<QType>(Type::DS), qclass);
+          result.authorities += find_rrsigs(origin, n, qclass, Type::DS);
 
-            // Glue records
-            for (const auto& rr : result.authorities)
-              if (rr.type == static_cast<uint16_t>(Type::NS))
-              {
-                result.additionals += find_records(
-                  origin + Name("glue."),
-                  NS(rr.rdata).nsdname,
-                  static_cast<QType>(Type::A),
-                  qclass);
-              }
-          }
+          // Glue records
+          for (const auto& rr : result.authorities)
+            if (rr.type == static_cast<uint16_t>(Type::NS))
+            {
+              result.additionals += find_records(
+                origin + Name("glue."),
+                NS(rr.rdata).nsdname,
+                static_cast<QType>(Type::A),
+                qclass);
+            }
         }
 
         if (result.response_code == NO_ERROR && result.authorities.empty())
@@ -596,9 +606,6 @@ namespace aDNS
       result_set.empty() ? " <nothing>" : "");
     for (const auto& rr : result_set)
       CCF_APP_TRACE("ADNS:  - {}", string_from_resource_record(rr));
-
-    result.is_authoritative |=
-      result.answers.size() > 0 && !(qtype == QType::NS && qname != origin);
 
     return result;
   }
@@ -833,7 +840,7 @@ namespace aDNS
         make_signing_function(key),
         key_tag,
         configuration.signing_algorithm,
-        rr.name,
+        origin,
         crrs,
         type2str));
 
@@ -924,17 +931,6 @@ namespace aDNS
       {
         SOA soa_rdata(soa_records.begin()->rdata);
         nsec_ttl = soa_rdata.minimum;
-
-        if (cfg.use_nsec3)
-        {
-          update_nsec3_salt(
-            origin,
-            c,
-            nsec_ttl,
-            cfg.nsec3_hash_algorithm,
-            cfg.nsec3_hash_iterations,
-            cfg.nsec3_salt_length);
-        }
       }
 
       remove(origin, c, Type::RRSIG);
@@ -990,7 +986,7 @@ namespace aDNS
             {
               // https://datatracker.ietf.org/doc/html/rfc5155#section-7.1
               // hash collision, restart with new salt
-              update_nsec3_salt(
+              update_nsec3_param(
                 origin,
                 c,
                 nsec_ttl,
@@ -1160,7 +1156,7 @@ namespace aDNS
     return salt;
   }
 
-  void Resolver::update_nsec3_salt(
+  void Resolver::update_nsec3_param(
     const Name& origin,
     aDNS::Class class_,
     uint16_t ttl,
@@ -1169,6 +1165,10 @@ namespace aDNS
     uint8_t salt_length)
   {
     remove(origin, origin, class_, Type::NSEC3PARAM);
+
+    auto r = generate_nsec3_salt(salt_length);
+
+    CCF_APP_TRACE("CCFDNS: new nsec3 salt: {}", ds::to_hex(r));
 
     add(
       origin,
@@ -1179,7 +1179,7 @@ namespace aDNS
         hash_algorithm,
         0x00,
         hash_iterations,
-        generate_nsec3_salt(salt_length)));
+        r));
   }
 
   Resolver::RegistrationInformation Resolver::configure(
@@ -1187,7 +1187,7 @@ namespace aDNS
   {
     set_configuration(cfg);
 
-    update_nsec3_salt(
+    update_nsec3_param(
       cfg.origin,
       aDNS::Class::IN,
       cfg.default_ttl,

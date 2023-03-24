@@ -69,50 +69,28 @@ namespace RFC5155
     if (iterations == 0)
       throw std::runtime_error("NSEC3 requires at least one hash iteration");
 
-    small_vector<uint8_t> r;
-
     auto cname = name;
     if (!cname.is_absolute())
       cname += origin;
+    cname.lower();
 
     // IH(salt, x, 0) = H(x || salt), and
     // IH(salt, x, k) = H(IH(salt, x, k-1) || salt), if k > 0
     // Then the calculated hash of an owner name is
     // IH(salt, owner name, iterations),
 
-    std::vector<uint8_t> x;
-    name.put(x);
-
-    // std::vector<uint8_t> v = IH(salt, x, iterations);
-    // return small_vector<uint8_t>(v.size(), v.data());
-
-    std::vector<uint8_t> x_salt = x;
-    salt.put(x_salt);
-    std::vector<uint8_t> a = H(x_salt);
-    for (size_t i = 0; i < iterations - 1; i++)
+    std::vector<uint8_t> a;
+    cname.put(a);
+    for (size_t i = 0; i < iterations + 1; i++)
     {
-      std::vector<uint8_t> tmp_salt = a;
-      salt.put(tmp_salt);
-      a = H(tmp_salt);
+      for (size_t i = 0; i < salt.size(); i++)
+        a.push_back(salt[i]);
+      CCF_APP_TRACE("CCFDNS: nsec3 hash a={}", ds::to_hex(a));
+      a = H(a);
     }
+    CCF_APP_TRACE("CCFDNS: nsec3 hash h={}", ds::to_hex(a));
     return small_vector<uint8_t>(a.size(), a.data());
   }
-
-  // bool validate_nsec3(const Name& origin, const Name& name, const NSEC3&
-  // rdata)
-  // {
-  //   if (rdata.hash_algorithm != HashAlgorithm::SHA1)
-  //     // https://datatracker.ietf.org/doc/html/rfc5155#section-8.1
-  //     return true;
-
-  //   if (rdata.flags > 1)
-  //     // https://datatracker.ietf.org/doc/html/rfc5155#section-8.2
-  //     return true;
-
-  //   // https://datatracker.ietf.org/doc/html/rfc5155#section-8.3
-  //   bool flag = false;
-  //   auto sname = name;
-  // }
 
   NSEC3PARAMRR::NSEC3PARAMRR(
     const RFC1035::Name& owner,
