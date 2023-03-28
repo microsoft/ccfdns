@@ -230,9 +230,4 @@ namespace ccfdns
 
   DECLARE_JSON_TYPE(Resign::In);
   DECLARE_JSON_REQUIRED_FIELDS(Resign::In, origin);
-
-  DECLARE_JSON_TYPE(GetEndorsements::In);
-  DECLARE_JSON_REQUIRED_FIELDS(GetEndorsements::In, service_name);
-  DECLARE_JSON_TYPE(GetEndorsements::Out);
-  DECLARE_JSON_REQUIRED_FIELDS(GetEndorsements::Out, endorsements);
 }

@@ -546,7 +546,7 @@ namespace ccfdns
       nullptr;
 
     using Endorsements = ccf::ServiceMap<Name, std::string>;
-    const std::string endorsements_table_name = "public:delegation_requests";
+    const std::string endorsements_table_name = "public:service_endorsements";
 
     void set_endpoint_context(ccf::endpoints::EndpointContext* c)
     {
@@ -2112,26 +2112,29 @@ namespace ccfdns
         .set_forwarding_required(ccf::endpoints::ForwardingRequired::Never)
         .install();
 
-      auto get_endorsements = [this](auto& ctx, nlohmann::json&& params) {
+      auto get_endorsements = [this](auto& ctx) {
         try
         {
           ContextContext cc(ccfdns, ctx);
-          const auto in = params.get<GetEndorsements::In>();
-          return ccf::make_success({ccfdns->get_endorsements(in.service_name)});
+          const auto parsed_query =
+            http::parse_query(ctx.rpc_ctx->get_request_query());
+          Name service_name =
+            Name(get_param(parsed_query, "service_name")).terminated();
+          ctx.rpc_ctx->set_response_header(
+            http::headers::CONTENT_TYPE, http::headervalues::contenttype::TEXT);
+          ctx.rpc_ctx->set_response_body(
+            ccfdns->get_endorsements(service_name));
+          ctx.rpc_ctx->set_response_status(HTTP_STATUS_OK);
         }
         catch (std::exception& ex)
         {
-          return ccf::make_error(
-            HTTP_STATUS_BAD_REQUEST, ccf::errors::InternalError, ex.what());
+          ctx.rpc_ctx->set_response_body(ex.what());
+          ctx.rpc_ctx->set_response_status(HTTP_STATUS_INTERNAL_SERVER_ERROR);
         }
       };
 
       make_endpoint(
-        "/endorsements",
-        HTTP_POST,
-        ccf::json_adapter(get_endorsements),
-        ccf::no_auth_required)
-        .set_auto_schema<GetEndorsements::In, GetEndorsements::Out>()
+        "/endorsements", HTTP_GET, get_endorsements, ccf::no_auth_required)
         .set_forwarding_required(ccf::endpoints::ForwardingRequired::Never)
         .install();
     }
