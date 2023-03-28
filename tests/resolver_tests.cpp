@@ -135,6 +135,11 @@ public:
     return origins.contains(origin.lowered());
   }
 
+  virtual bool is_delegated(const Name& origin, const Name& name) const override
+  {
+    return false;
+  }
+
   virtual crypto::Pem get_private_key(
     const Name& origin,
     uint16_t tag,
@@ -351,7 +356,7 @@ TEST_CASE("Basic lookups")
 
   {
     RFC1035::Message msg = mk_question("example.com.", aDNS::QType::SOA);
-    auto response = s.reply(msg);
+    auto response = s.reply(msg).message;
     REQUIRE(response.answers.size() > 0);
     size_t num_soa = 0;
     for (const auto& rr : response.answers)
@@ -400,7 +405,7 @@ TEST_CASE("Basic lookups")
 
   {
     RFC1035::Message msg = mk_question("www.example.com.", aDNS::QType::A);
-    auto response = s.reply(msg);
+    auto response = s.reply(msg).message;
     REQUIRE(response.answers.size() > 0);
     REQUIRE(
       response.answers[0].rdata == small_vector<uint16_t>{93, 184, 216, 34});
@@ -408,7 +413,7 @@ TEST_CASE("Basic lookups")
 
   {
     RFC1035::Message msg = mk_question("WwW.ExAmPlE.CoM.", aDNS::QType::A);
-    auto response = s.reply(msg);
+    auto response = s.reply(msg).message;
     REQUIRE(response.answers.size() > 0);
     REQUIRE(
       response.answers[0].rdata == small_vector<uint16_t>{93, 184, 216, 34});
@@ -416,7 +421,7 @@ TEST_CASE("Basic lookups")
 
   {
     RFC1035::Message msg = mk_question("wwwv6.example.com.", aDNS::QType::AAAA);
-    auto response = s.reply(msg);
+    auto response = s.reply(msg).message;
     REQUIRE(response.answers.size() > 0);
     /* clang-format off */
     REQUIRE(
@@ -428,7 +433,7 @@ TEST_CASE("Basic lookups")
 
   {
     RFC1035::Message msg = mk_question("www.example.com.", aDNS::QType::AAAA);
-    auto response = s.reply(msg);
+    auto response = s.reply(msg).message;
     REQUIRE(response.answers.size() > 0);
     /* clang-format off */
     REQUIRE(
@@ -440,7 +445,7 @@ TEST_CASE("Basic lookups")
 
   {
     RFC1035::Message msg = mk_question("sub.example.com.", aDNS::QType::NS);
-    auto response = s.reply(msg);
+    auto response = s.reply(msg).message;
     REQUIRE(response.answers.size() > 0);
     NS ns(response.answers[0].rdata);
     REQUIRE(Name(response.answers[0].rdata) == Name("ns1.elsewhere.com."));
@@ -459,7 +464,7 @@ TEST_CASE("Basic lookups")
   {
     RFC1035::Message msg =
       mk_question("_AcMe-CHAllENGE.sErvice42.eXaMple.com.", aDNS::QType::TXT);
-    auto response = s.reply(msg);
+    auto response = s.reply(msg).message;
     REQUIRE(response.answers.size() >= 2);
     auto rr = first(response.answers, aDNS::Type::TXT);
     TXT txt(rr.rdata);
@@ -480,7 +485,7 @@ TEST_CASE("Basic lookups")
   {
     RFC1035::Message msg =
       mk_question("AnOther.eXaMple.com.", aDNS::QType::TXT);
-    auto response = s.reply(msg);
+    auto response = s.reply(msg).message;
     REQUIRE(response.answers.size() >= 2);
     auto rr = first(response.answers, aDNS::Type::TXT);
     TXT txt(rr.rdata);
@@ -493,7 +498,7 @@ TEST_CASE("Basic lookups")
     // Test unsupported type
     RFC1035::Message msg =
       mk_question("www.example.com.", static_cast<aDNS::QType>(9999));
-    auto response = s.reply(msg);
+    auto response = s.reply(msg).message;
     REQUIRE(response.answers.size() == 0);
     REQUIRE(response.header.rcode == ResponseCode::NO_ERROR);
   }
@@ -525,7 +530,7 @@ TEST_CASE("DNSKEY RR Example")
   {
     RFC1035::Message msg =
       mk_question("mykey.example.com.", aDNS::QType::DNSKEY);
-    auto response = s.reply(msg);
+    auto response = s.reply(msg).message;
     REQUIRE(response.answers.size() == 2);
     auto& a = response.answers;
     auto& key =

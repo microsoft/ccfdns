@@ -109,4 +109,16 @@ namespace ccfdns
     };
     using Out = void;
   };
+
+  struct GetEndorsements
+  {
+    struct In
+    {
+      std::string service_name;
+    };
+    struct Out
+    {
+      std::string endorsements;
+    };
+  };
 }

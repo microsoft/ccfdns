@@ -1571,6 +1571,9 @@ namespace aDNS
 
     sign(origin);
 
+    save_endorsements(
+      service_name, rr.node_information.begin()->second.attestation);
+
     start_service_acme(origin, service_name, rr.csr, rr.contact);
   }
 
@@ -1741,6 +1744,9 @@ namespace aDNS
           cfg.default_ttl,
           RFC1035::A(info.address.ip)));
     }
+
+    save_endorsements(
+      dr.subdomain, dr.node_information.begin()->second.attestation);
   }
 
   const std::map<uint16_t, Type>& Resolver::get_supported_types()

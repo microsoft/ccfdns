@@ -121,6 +121,9 @@ if (VIRTUAL)
   target_compile_definitions(resolver_tests PRIVATE ATTESTATION_VERIFICATION_FAILURE_OK)  
 endif()
 
+add_executable(queryperf ../tests/queryperf.cpp)
+target_link_libraries(queryperf PRIVATE resolv)
+
 add_ccf_app(ccf_demo_service
   SRCS tests/ccf_demo_service.cpp
   LINK_LIBS_ENCLAVE ravl

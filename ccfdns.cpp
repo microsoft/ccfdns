@@ -545,6 +545,9 @@ namespace ccfdns
     std::shared_ptr<DelegationRequestsIndex> delegation_index_strategy =
       nullptr;
 
+    using Endorsements = ccf::ServiceMap<Name, std::string>;
+    const std::string endorsements_table_name = "public:delegation_requests";
+
     void set_endpoint_context(ccf::endpoints::EndpointContext* c)
     {
       ctx = c;
@@ -1447,6 +1450,32 @@ namespace ccfdns
       return r;
     }
 
+    virtual void save_endorsements(
+      const Name& service_name, const std::string& endorsements) override
+    {
+      check_context();
+
+      auto tbl =
+        ctx->tx.template rw<CCFDNS::Endorsements>(endorsements_table_name);
+      if (!tbl)
+        throw std::runtime_error("could not access endorsements table");
+      tbl->put(service_name, endorsements);
+    }
+
+    virtual std::string get_endorsements(const Name& service_name) override
+    {
+      check_context();
+
+      auto tbl =
+        ctx->tx.template ro<CCFDNS::Endorsements>(endorsements_table_name);
+      if (!tbl)
+        throw std::runtime_error("could not access endorsements table");
+      auto r = tbl->get(service_name);
+      if (!r)
+        throw std::runtime_error("no endorsements found for service");
+      return *r;
+    }
+
   protected:
     ccf::endpoints::EndpointContext* ctx = nullptr;
     std::map<std::string, std::shared_ptr<ccfdns::ACMEClient>> acme_clients;
@@ -2080,6 +2109,29 @@ namespace ccfdns
         HTTP_GET,
         delegation_policy,
         ccf::no_auth_required)
+        .set_forwarding_required(ccf::endpoints::ForwardingRequired::Never)
+        .install();
+
+      auto get_endorsements = [this](auto& ctx, nlohmann::json&& params) {
+        try
+        {
+          ContextContext cc(ccfdns, ctx);
+          const auto in = params.get<GetEndorsements::In>();
+          return ccf::make_success({ccfdns->get_endorsements(in.service_name)});
+        }
+        catch (std::exception& ex)
+        {
+          return ccf::make_error(
+            HTTP_STATUS_BAD_REQUEST, ccf::errors::InternalError, ex.what());
+        }
+      };
+
+      make_endpoint(
+        "/endorsements",
+        HTTP_POST,
+        ccf::json_adapter(get_endorsements),
+        ccf::no_auth_required)
+        .set_auto_schema<GetEndorsements::In, GetEndorsements::Out>()
         .set_forwarding_required(ccf::endpoints::ForwardingRequired::Never)
         .install();
     }

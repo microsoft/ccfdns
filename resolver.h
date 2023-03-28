@@ -314,6 +314,15 @@ namespace aDNS
 
     const std::map<uint16_t, Class>& get_supported_classes();
 
+    virtual void save_endorsements(
+      const Name& service_name, const std::string& endorsements)
+    {}
+
+    virtual std::string get_endorsements(const Name& service_name)
+    {
+      return "";
+    }
+
   protected:
     typedef std::set<Name, RFC4034::CanonicalNameOrdering> Names;
     std::mutex sign_mtx;
