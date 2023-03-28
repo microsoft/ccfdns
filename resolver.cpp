@@ -1261,12 +1261,15 @@ namespace aDNS
     {
       remove(cfg.origin, info.address.name, Class::IN, Type::ATTEST);
 
+      auto att = ravl::parse_attestation(info.attestation);
+      att->endorsements.clear();
+
       auto attest_rr = mk_rr(
         info.address.name,
         Type::ATTEST,
         Class::IN,
         cfg.default_ttl,
-        Types::ATTEST(info.attestation));
+        Types::ATTEST(att));
       add(cfg.origin, attest_rr);
 
       Name attest_name = Name("attest") + info.address.name;
@@ -1471,12 +1474,15 @@ namespace aDNS
           service_name));
 
       // ATTEST RR
+      auto att = ravl::parse_attestation(info.attestation);
+      att->endorsements.clear();
+
       ResourceRecord att_rr = mk_rr(
         name,
         Type::ATTEST,
         Class::IN,
         configuration.default_ttl,
-        Types::ATTEST(info.attestation));
+        Types::ATTEST(att));
 
       remove(origin, name, Class::IN, Type::ATTEST);
       add(origin, att_rr);
