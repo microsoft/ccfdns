@@ -490,6 +490,25 @@ namespace aDNS
     return r;
   }
 
+  Name Resolver::find_preceding(
+    const Names& ns, const Name& origin, const Name& sname)
+  {
+    for (auto it = ns.rbegin(); it != ns.rend();)
+    {
+      auto next = it;
+      next++;
+
+      if (
+        RFC4034::operator<(*it, sname) &&
+        (next == ns.rend() || !RFC4034::operator<(sname, *next)))
+        return *it;
+
+      it = next;
+    }
+
+    return origin;
+  }
+
   RFC1035::ResponseCode Resolver::find_nsec_records(
     const Name& origin,
     QClass sclass,
@@ -533,24 +552,13 @@ namespace aDNS
 
     const auto& ns = get_ordered_names(origin, static_cast<Class>(sclass));
 
-    Name preceding = *ns.begin();
-    for (auto it = ns.begin(); it != ns.end(); it++)
-    {
-      if (*it == sname)
-      {
-        if (it != ns.begin())
-        {
-          auto last = it;
-          last--;
-          preceding = *(last);
-        }
-        else
-          preceding = origin; // TODO: correct?
-      }
-    }
+    auto preceding = find_preceding(ns, origin, sname);
 
     r += find_records(origin, preceding, QType::NSEC, sclass);
     r += find_rrsigs(origin, preceding, sclass, Type::NSEC);
+
+    // TODO: Wildcard expansion. Since we don't support wildcards, we can't
+    // easily search for one.
 
     return RFC1035::ResponseCode::NAME_ERROR;
   }

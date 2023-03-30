@@ -330,6 +330,28 @@ TEST_CASE("Name ordering")
   REQUIRE(names.size() == shuffled.size());
   for (size_t i = 0; i < names.size(); i++)
     REQUIRE(names[i] == shuffled[i]);
+
+  Resolver::Names ns;
+  for (const auto& n : names)
+    ns.insert(n);
+  size_t i = 0;
+  for (const auto& n : ns)
+    REQUIRE(names[i++] == n);
+}
+
+TEST_CASE("Name ordering 2")
+{
+  Resolver::Names names;
+  names.insert(Name("adns.ccf.dev."));
+  names.insert(Name("_acme-challenge.adns.ccf.dev."));
+  names.insert(Name("ns1.adns.ccf.dev."));
+  names.insert(Name("_acme-challenge.ns1.adns.ccf.dev."));
+  names.insert(Name("_0.attest.ns1.adns.ccf.dev."));
+
+  auto r = Resolver::find_preceding(
+    names, Name("adns.ccf.dev."), Name("kr79a5s1m6.adns.ccf.dev."));
+  std::cout << "preceding: " << (std::string)r << std::endl;
+  REQUIRE(r == Name("_acme-challenge.adns.ccf.dev."));
 }
 
 const ResourceRecord& first(

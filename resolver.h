@@ -195,6 +195,8 @@ namespace aDNS
       bool is_authoritative = false;
     };
 
+    typedef std::set<Name, RFC4034::CanonicalNameOrdering> Names;
+
     Resolver();
 
     virtual ~Resolver();
@@ -329,8 +331,10 @@ namespace aDNS
       return "";
     }
 
+    static Name find_preceding(
+      const Names& ns, const Name& origin, const Name& sname);
+
   protected:
-    typedef std::set<Name, RFC4034::CanonicalNameOrdering> Names;
     Names name_cache;
     bool name_cache_dirty = true;
     std::mutex sign_mtx;
