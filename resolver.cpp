@@ -471,8 +471,7 @@ namespace aDNS
     RFC4034::CanonicalRRSet r;
     auto configuration = get_configuration();
 
-    auto nsec3params = find_records(
-      origin, origin, static_cast<QType>(Type::NSEC3PARAM), qclass);
+    auto nsec3params = find_records(origin, origin, QType::NSEC3PARAM, qclass);
     if (!nsec3params.empty())
     {
       RFC5155::NSEC3PARAM p(nsec3params.begin()->rdata);
@@ -489,6 +488,71 @@ namespace aDNS
     }
 
     return r;
+  }
+
+  RFC1035::ResponseCode Resolver::find_nsec_records(
+    const Name& origin,
+    QClass sclass,
+    const Name& sname,
+    RFC4034::CanonicalRRSet& r)
+  {
+    // NODATA:
+
+    // If the zone contains RRsets matching <SNAME, SCLASS> but contains no
+    // RRset matching <SNAME, SCLASS, STYPE>, then the name server MUST include
+    // the NSEC RR for <SNAME, SCLASS> along with its associated RRSIG RR(s) in
+    // the Authority section of the response (see Section 3.1.1).  If space
+    // does not permit inclusion of the NSEC RR or its associated RRSIG RR(s),
+    // the name server MUST set the TC bit (see Section 3.1.1).
+
+    // Since the search name exists, wildcard name expansion does not apply to
+    // this query, and a single signed NSEC RR suffices to prove that the
+    // requested RR type does not exist.
+
+    // For NODATA, we would find an NSEC record for sname
+    auto nsec = find_records(origin, sname, QType::NSEC, sclass);
+
+    if (!nsec.empty())
+    {
+      r += nsec;
+      r += find_rrsigs(origin, sname, sclass, Type::NSEC);
+      return RFC1035::ResponseCode::NO_ERROR;
+    }
+
+    // NXDOMAIN:
+
+    // If the zone does not contain any RRsets matching <SNAME, SCLASS> either
+    // exactly or via wildcard name expansion, then the name server MUST include
+    // the following NSEC RRs in the Authority section, along with their
+    // associated RRSIG RRs:
+
+    // o  An NSEC RR proving that there is no exact match for <SNAME, SCLASS>.
+
+    // o  An NSEC RR proving that the zone contains no RRsets that would match
+    // <SNAME, SCLASS> via wildcard name expansion.
+
+    const auto& ns = get_ordered_names(origin, static_cast<Class>(sclass));
+
+    Name preceding = *ns.begin();
+    for (auto it = ns.begin(); it != ns.end(); it++)
+    {
+      if (*it == sname)
+      {
+        if (it != ns.begin())
+        {
+          auto last = it;
+          last--;
+          preceding = *(last);
+        }
+        else
+          preceding = origin; // TODO: correct?
+      }
+    }
+
+    r += find_records(origin, preceding, QType::NSEC, sclass);
+    r += find_rrsigs(origin, preceding, sclass, Type::NSEC);
+
+    return RFC1035::ResponseCode::NAME_ERROR;
   }
 
   Resolver::Resolution Resolver::resolve(
@@ -530,8 +594,7 @@ namespace aDNS
       {
         // Direct query for glue records. Not sure queries of this form are
         // standards compliant.
-        records = find_records(
-          origin + Name("glue."), qname, static_cast<QType>(Type::A), qclass);
+        records = find_records(origin + Name("glue."), qname, QType::A, qclass);
         result.is_authoritative = true;
       }
 
@@ -550,15 +613,10 @@ namespace aDNS
         auto configuration = get_configuration();
 
         if (configuration.use_nsec3)
-        {
           result.authorities += find_nsec3_records(origin, qclass, qname);
-        }
-        else
-        {
-          result.authorities +=
-            find_records(origin, qname, static_cast<QType>(Type::NSEC), qclass);
-          result.authorities += find_rrsigs(origin, qname, qclass, Type::NSEC);
-        }
+        // else
+        //   result.response_code =
+        //     find_nsec_records(origin, qclass, qname, result.authorities);
 
         bool have_soa = false;
 
@@ -576,11 +634,9 @@ namespace aDNS
         for (Name n = qname; n != origin && !n.is_root(); n = n.parent())
         {
           // Delegation records
-          result.authorities +=
-            find_records(origin, n, static_cast<QType>(Type::NS), qclass);
+          result.authorities += find_records(origin, n, QType::NS, qclass);
 
-          result.authorities +=
-            find_records(origin, n, static_cast<QType>(Type::DS), qclass);
+          result.authorities += find_records(origin, n, QType::DS, qclass);
           result.authorities += find_rrsigs(origin, n, qclass, Type::DS);
 
           // Glue records
@@ -595,31 +651,28 @@ namespace aDNS
             }
         }
 
-        if (result.response_code == NO_ERROR && result.authorities.empty())
+        if (result.authorities.empty())
         {
           result.response_code = NAME_ERROR; // NXDOMAIN
           result.authorities +=
-            find_records(origin, origin, static_cast<QType>(Type::SOA), qclass);
+            find_records(origin, origin, QType::SOA, qclass);
           result.authorities += find_rrsigs(origin, origin, qclass, Type::SOA);
           if (configuration.use_nsec3)
             result.authorities += find_nsec3_records(origin, qclass, origin);
-          else
-          {
-            result.authorities += find_records(
-              origin, origin, static_cast<QType>(Type::NSEC), qclass);
-            result.authorities +=
-              find_rrsigs(origin, origin, qclass, Type::NSEC);
-          }
         }
+
+        if (!configuration.use_nsec3)
+          result.response_code =
+            find_nsec_records(origin, qclass, qname, result.authorities);
       }
     }
 
     CCF_APP_TRACE(
       "ADNS: Resolve: {} type {} class {}:{}",
       qname,
-      string_from_qtype(static_cast<QType>(qtype)),
-      string_from_qclass(static_cast<QClass>(qclass)),
-      result_set.empty() ? " <nothing>" : "");
+      string_from_qtype(qtype),
+      string_from_qclass(qclass),
+      std::to_string(result_set.size()));
     for (const auto& rr : result_set)
       CCF_APP_TRACE("ADNS:  - {}", string_from_resource_record(rr));
 
@@ -640,30 +693,44 @@ namespace aDNS
     return r;
   }
 
-  Resolver::Names Resolver::get_ordered_names(
-    const Name& origin, QClass c, QType t) const
+  const Resolver::Names& Resolver::get_ordered_names(
+    const Name& origin, Class c)
   {
-    Names r;
+    if (name_cache_dirty)
+    {
+      name_cache.clear();
 
-    for_each(origin, c, static_cast<QType>(t), [&origin, &r](const auto& rr) {
-      r.insert(rr.name);
-      return true;
-    });
+      for (const auto& [_, t] : supported_types)
+      {
+        for_each(
+          origin,
+          static_cast<QClass>(c),
+          static_cast<QType>(t),
+          [this, &origin](const auto& rr) {
+            name_cache.insert(rr.name);
+            return true;
+          });
+      }
 
-    return r;
+      name_cache_dirty = false;
+    }
+
+    return name_cache;
   }
 
-  Resolver::Names Resolver::names(const Name& origin, QClass c) const
+  Resolver::Names Resolver::get_ordered_names(
+    const Name& origin, Class c, Type t)
   {
     Names r;
-
-    for (const auto& [_, t] : supported_types)
-    {
-      for_each(origin, c, static_cast<QType>(t), [&origin, &r](const auto& rr) {
+    for_each(
+      origin,
+      static_cast<QClass>(c),
+      static_cast<QType>(t),
+      [&origin, &r](const auto& rr) {
         r.insert(rr.name);
         return true;
       });
-    }
+
     return r;
   }
 
@@ -924,6 +991,8 @@ namespace aDNS
 
     const auto& cfg = get_configuration();
 
+    name_cache_dirty = true;
+
     for (const auto& [_, c] : supported_classes)
     {
       // Note: the following may trigger addition of RRs
@@ -964,8 +1033,7 @@ namespace aDNS
           t == Type::NSEC3)
           continue; // These are not signed but recreated
 
-        auto names = get_ordered_names(
-          origin, static_cast<QClass>(c), static_cast<QType>(t));
+        auto names = get_ordered_names(origin, c, t);
 
         for (auto it = names.begin(); it != names.end(); it++)
         {
@@ -1764,5 +1832,4 @@ namespace aDNS
   {
     return supported_classes;
   }
-
 }

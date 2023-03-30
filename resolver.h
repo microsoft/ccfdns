@@ -225,6 +225,12 @@ namespace aDNS
     RFC4034::CanonicalRRSet find_nsec3_records(
       const Name& origin, QClass qclass, const Name& qname);
 
+    RFC1035::ResponseCode find_nsec_records(
+      const Name& origin,
+      QClass sclass,
+      const Name& sname,
+      RFC4034::CanonicalRRSet& r);
+
     virtual void for_each(
       const Name& origin,
       QClass qclass,
@@ -325,6 +331,8 @@ namespace aDNS
 
   protected:
     typedef std::set<Name, RFC4034::CanonicalNameOrdering> Names;
+    Names name_cache;
+    bool name_cache_dirty = true;
     std::mutex sign_mtx;
 
     small_vector<uint8_t> generate_nsec3_salt(uint8_t length);
@@ -346,10 +354,9 @@ namespace aDNS
       QType t,
       std::optional<Name> match_name = std::nullopt) const;
 
-    Resolver::Names get_ordered_names(
-      const Name& origin, QClass c, QType t) const;
+    const Resolver::Names& get_ordered_names(const Name& origin, Class c);
 
-    Names names(const Name& origin, QClass c) const;
+    Names get_ordered_names(const Name& origin, Class c, Type t);
 
     RFC4034::CanonicalRRSet get_record_set(
       const Name& origin, const Name& name, QClass c, QType t) const;
