@@ -160,7 +160,8 @@ namespace RFC4034
 
     auto now = std::chrono::system_clock::now();
     auto tp = now.time_since_epoch();
-    uint32_t sig_inception = duration_cast<std::chrono::seconds>(tp).count();
+    uint32_t sig_inception =
+      duration_cast<std::chrono::seconds>(tp - std::chrono::hours(1)).count();
     uint32_t sig_expiration =
       duration_cast<std::chrono::seconds>(tp + std::chrono::days(90)).count();
 
