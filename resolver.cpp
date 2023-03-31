@@ -896,13 +896,12 @@ namespace aDNS
 
     uint8_t flags = 0;
     uint16_t iterations = 2;
-    small_vector<uint8_t> salt;
 
     RFC5155::NSEC3 rdata(
       configuration.nsec3_hash_algorithm,
       flags,
       configuration.nsec3_hash_iterations,
-      salt,
+      get_nsec3_salt(origin, static_cast<QClass>(c)),
       next_hashed_owner_name,
       type2str);
 
