@@ -135,7 +135,7 @@ def register_delegation(
 
             sub_primary, _ = sub_adns_network.find_primary()
             with sub_primary.client("user0") as client:
-                client.post("/app/start-delegation-acme-client", {})
+                client.get("/app/start-delegation-acme-client", {})
 
             return receipt
         except Exception as ex:

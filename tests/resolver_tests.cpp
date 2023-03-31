@@ -350,7 +350,6 @@ TEST_CASE("Name ordering 2")
 
   auto r = Resolver::find_preceding(
     names, Name("adns.ccf.dev."), Name("kr79a5s1m6.adns.ccf.dev."));
-  std::cout << "preceding: " << (std::string)r << std::endl;
   REQUIRE(r == Name("_acme-challenge.adns.ccf.dev."));
 }
 

@@ -218,7 +218,8 @@ namespace ccfdns
     std::shared_ptr<ccf::ACMESubsystemInterface> acme_ss;
   };
 
-  class ACMEClient : public ACME::Client
+  class ACMEClient : public ACME::Client,
+                     public std::enable_shared_from_this<ACMEClient>
   {
   public:
     ACMEClient(
@@ -308,11 +309,12 @@ namespace ccfdns
             {
               struct StartChallengeMsg
               {
-                StartChallengeMsg(ACMEClient* client, const std::string& sn) :
+                StartChallengeMsg(
+                  std::shared_ptr<ACMEClient> client, const std::string& sn) :
                   client(client),
                   sn(sn)
                 {}
-                ACMEClient* client;
+                std::shared_ptr<ACMEClient> client;
                 std::string sn;
               };
 
@@ -324,11 +326,11 @@ namespace ccfdns
                   for (auto& t : it->second)
                     client->start_challenge(t);
                 },
-                this,
+                shared_from_this(),
                 sn);
 
               threading::ThreadMessaging::instance().add_task_after(
-                std::move(msg), std::chrono::seconds(1));
+                std::move(msg), std::chrono::seconds(3));
             }
           }
           else
@@ -1080,6 +1082,65 @@ namespace ccfdns
       return r;
     }
 
+    void start_acme_client()
+    {
+      const auto& cfg = get_configuration();
+
+      if (!cfg.parent_base_url)
+      {
+        // No parent, i.e. we are a TLD and need to get our TLS certificate
+        // directly from the CA, instead of a parent aDNS instance.
+
+        set_parent_delegation_policy("return true;");
+
+        auto cn = cfg.origin.unterminated();
+
+        std::vector<std::string> acme_contact;
+        for (const auto& email : cfg.contact)
+          acme_contact.push_back("mailto:" + email);
+
+        ACME::ClientConfig acme_client_config = {
+          .ca_certs = cfg.service_ca.ca_certificates,
+          .directory_url = cfg.service_ca.directory,
+          .service_dns_name = cn,
+          .alternative_names = {cn},
+          .contact = acme_contact,
+          .terms_of_service_agreed = true,
+          .challenge_type = "dns-01"};
+
+        acme_client_config.ca_certs.push_back(nwid_ss->get()->cert.str());
+
+        std::vector<crypto::SubjectAltName> sans;
+        sans.push_back({cn, false});
+
+        for (const auto& [id, addr] : cfg.node_addresses)
+        {
+          auto name = addr.name.unterminated();
+          acme_client_config.alternative_names.push_back(name);
+          sans.push_back({name, false});
+        }
+
+        auto tls_key = get_tls_key();
+        auto csr =
+          tls_key->create_csr_der("CN=" + cn, sans, tls_key->public_key_pem());
+
+        CCF_APP_DEBUG("CCFDNS: Starting ACME client");
+
+        auto acme_client = std::make_shared<ccfdns::ACMEClient>(
+          *this,
+          cfg.origin,
+          acme_client_config,
+          csr,
+          internal_node_address,
+          acme_ss,
+          acme_account_key_pair);
+
+        acme_client->get_certificate(acme_account_key_pair);
+
+        acme_clients[cn] = acme_client;
+      }
+    }
+
     virtual RegistrationInformation configure(const Configuration& cfg) override
     {
       check_context();
@@ -1123,7 +1184,9 @@ namespace ccfdns
         CCF_APP_DEBUG("MY NAME: {}", my_name);
       }
 
-      if (cfg.parent_base_url)
+      if (!cfg.parent_base_url)
+        start_acme_client();
+      else
       {
         // When delegating, we now wait until start-delegation-acme-client is
         // called, before starting the ACME client. Alternatively, we could
@@ -1164,57 +1227,6 @@ namespace ccfdns
               true);
             return true;
           });
-      }
-      else
-      {
-        // No parent, i.e. we are a TLD and need to get our TLS certificate
-        // directly from the CA, instead of a parent aDNS instance.
-
-        set_parent_delegation_policy("return true;");
-
-        auto cn = cfg.origin.unterminated();
-
-        std::vector<std::string> acme_contact;
-        for (const auto& email : cfg.contact)
-          acme_contact.push_back("mailto:" + email);
-
-        ACME::ClientConfig acme_client_config = {
-          .ca_certs = cfg.service_ca.ca_certificates,
-          .directory_url = cfg.service_ca.directory,
-          .service_dns_name = cn,
-          .alternative_names = {cn},
-          .contact = acme_contact,
-          .terms_of_service_agreed = true,
-          .challenge_type = "dns-01"};
-
-        acme_client_config.ca_certs.push_back(nwid_ss->get()->cert.str());
-
-        std::vector<crypto::SubjectAltName> sans;
-        sans.push_back({cn, false});
-
-        for (const auto& [id, addr] : cfg.node_addresses)
-        {
-          auto name = addr.name.unterminated();
-          acme_client_config.alternative_names.push_back(name);
-          sans.push_back({name, false});
-        }
-
-        auto tls_key = get_tls_key();
-        auto csr =
-          tls_key->create_csr_der("CN=" + cn, sans, tls_key->public_key_pem());
-
-        auto acme_client = std::make_shared<ccfdns::ACMEClient>(
-          *this,
-          cfg.origin,
-          acme_client_config,
-          csr,
-          internal_node_address,
-          acme_ss,
-          acme_account_key_pair);
-
-        acme_client->get_certificate(acme_account_key_pair);
-
-        acme_clients[cn] = acme_client;
       }
 
       return reginfo;
@@ -1757,7 +1769,7 @@ namespace ccfdns
         .set_forwarding_required(ccf::endpoints::ForwardingRequired::Always)
         .install();
 
-      auto start_acme_client = [this](auto& ctx, nlohmann::json&& params) {
+      auto start_acme_client = [this](auto& ctx) {
         try
         {
           ContextContext cc(ccfdns, ctx);
@@ -1773,10 +1785,9 @@ namespace ccfdns
 
       make_endpoint(
         "/start-delegation-acme-client",
-        HTTP_POST,
-        ccf::json_adapter(start_acme_client),
+        HTTP_GET,
+        start_acme_client,
         {std::make_shared<ccf::UserCertAuthnPolicy>()})
-        .set_auto_schema<void, void>()
         .set_forwarding_required(ccf::endpoints::ForwardingRequired::Always)
         .install();
 
@@ -1853,6 +1864,28 @@ namespace ccfdns
         ccf::json_adapter(add),
         {std::make_shared<ccf::NodeCertAuthnPolicy>()})
         .set_openapi_hidden(true)
+        .set_forwarding_required(ccf::endpoints::ForwardingRequired::Always)
+        .install();
+
+      auto acme_refresh = [this](auto& ctx) {
+        try
+        {
+          ContextContext cc(ccfdns, ctx);
+          ccfdns->start_acme_client();
+          return ccf::make_success();
+        }
+        catch (std::exception& ex)
+        {
+          return ccf::make_error(
+            HTTP_STATUS_BAD_REQUEST, ccf::errors::InternalError, ex.what());
+        }
+      };
+
+      make_endpoint(
+        "/acme_refresh",
+        HTTP_GET,
+        acme_refresh,
+        {std::make_shared<ccf::UserCertAuthnPolicy>()})
         .set_forwarding_required(ccf::endpoints::ForwardingRequired::Always)
         .install();
 
