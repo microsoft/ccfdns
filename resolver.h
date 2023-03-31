@@ -224,8 +224,11 @@ namespace aDNS
     RFC4034::CanonicalRRSet find_rrsigs(
       const Name& origin, const Name& name, QClass qclass, Type type_covered);
 
-    RFC4034::CanonicalRRSet find_nsec3_records(
-      const Name& origin, QClass qclass, const Name& qname);
+    RFC1035::ResponseCode find_nsec3_records(
+      const Name& origin,
+      QClass qclass,
+      const Name& qname,
+      RFC4034::CanonicalRRSet& r);
 
     RFC1035::ResponseCode find_nsec_records(
       const Name& origin,

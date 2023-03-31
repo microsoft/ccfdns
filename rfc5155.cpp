@@ -47,10 +47,10 @@ namespace RFC5155
     uint16_t iterations,
     const small_vector<uint8_t>& salt)
   {
-    auto cname = name;
-    if (!cname.is_absolute())
-      cname += origin;
-    cname.lower();
+    auto canonical_name = name;
+    if (!canonical_name.is_absolute())
+      canonical_name += origin;
+    canonical_name.lower();
 
     // IH(salt, x, 0) = H(x || salt), and
     // IH(salt, x, k) = H(IH(salt, x, k-1) || salt), if k > 0
@@ -58,7 +58,7 @@ namespace RFC5155
     // IH(salt, owner name, iterations),
 
     std::vector<uint8_t> a;
-    cname.put(a);
+    canonical_name.put(a);
     for (size_t i = 0; i < iterations + 1; i++)
     {
       for (size_t i = 0; i < salt.size(); i++)

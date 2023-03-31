@@ -465,29 +465,51 @@ namespace aDNS
       });
   }
 
-  RFC4034::CanonicalRRSet Resolver::find_nsec3_records(
-    const Name& origin, QClass qclass, const Name& qname)
+  RFC1035::ResponseCode Resolver::find_nsec3_records(
+    const Name& origin,
+    QClass qclass,
+    const Name& qname,
+    RFC4034::CanonicalRRSet& r)
   {
-    RFC4034::CanonicalRRSet r;
     auto configuration = get_configuration();
 
     auto nsec3params = find_records(origin, origin, QType::NSEC3PARAM, qclass);
-    if (!nsec3params.empty())
+    if (nsec3params.empty())
+      return RFC1035::SERVER_FAILURE;
+
+    RFC5155::NSEC3PARAM p(nsec3params.begin()->rdata);
+    auto name_hash = RFC5155::NSEC3::hash(
+      origin, qname, configuration.nsec3_hash_iterations, p.salt);
+    std::string nameb32 = base32hex_encode(&name_hash[0], name_hash.size());
+    assert(nameb32.size() <= 63);
+    RFC1035::Name name(nameb32);
+    const RFC1035::Name& suffix = qname;
+    name += suffix;
+    name.lower();
+
+    auto nsec3 = find_records(origin, name, QType::NSEC3, qclass);
+
+    if (!nsec3.empty())
     {
-      RFC5155::NSEC3PARAM p(nsec3params.begin()->rdata);
-      auto name_hash = RFC5155::NSEC3::hash(
-        origin, qname, configuration.nsec3_hash_iterations, p.salt);
-      std::string nameb32 = base32hex_encode(&name_hash[0], name_hash.size());
-      assert(nameb32.size() <= 63);
-      RFC1035::Name name(nameb32);
-      const RFC1035::Name& suffix = qname;
-      name += suffix;
-      name.lower();
-      r += find_records(origin, name, static_cast<QType>(Type::NSEC3), qclass);
+      CCF_APP_DEBUG("ADNS: Found NSEC3: {}", name);
+      r += nsec3;
       r += find_rrsigs(origin, name, qclass, Type::NSEC3);
+      return RFC1035::NO_ERROR;
     }
 
-    return r;
+    // TODO: This is wrong. We need to find the closest encloser. See
+    // https://www.rfc-editor.org/rfc/rfc5155#section-7.2.1
+
+    const auto& ns = get_ordered_names(origin, static_cast<Class>(qclass));
+
+    auto preceding = find_preceding(ns, origin, name);
+
+    CCF_APP_DEBUG("ADNS: Preceding: {}", preceding);
+
+    r += find_records(origin, preceding, QType::NSEC3, qclass);
+    r += find_rrsigs(origin, preceding, qclass, Type::NSEC3);
+
+    return RFC1035::NAME_ERROR; // NXDOMAIN
   }
 
   Name Resolver::find_preceding(
@@ -586,14 +608,16 @@ namespace aDNS
       }
     }
 
-    result.is_authoritative = false;
     auto& result_set = result.answers;
+    result.is_authoritative = false;
 
     if (origin.is_absolute())
     {
       RFC4034::CanonicalRRSet records;
 
-      if (!is_delegated(origin, qname) || qtype == QType::DS)
+      bool delegated = is_delegated(origin, qname);
+
+      if (!delegated || qtype == QType::DS)
       {
         records = find_records(origin, qname, qtype, qclass);
         result.is_authoritative = true;
@@ -606,72 +630,53 @@ namespace aDNS
         result.is_authoritative = true;
       }
 
-      if (records.size() > 0)
-      {
-        for (const auto& rr : records)
-          if (rr.name == qname)
-            result_set +=
-              find_rrsigs(origin, rr.name, qclass, static_cast<Type>(rr.type));
+      for (const auto& rr : records)
+        if (rr.name == qname)
+          result_set +=
+            find_rrsigs(origin, rr.name, qclass, static_cast<Type>(rr.type));
 
-        result_set += records;
-      }
+      result_set += records;
 
       if (result_set.empty())
       {
-        auto configuration = get_configuration();
+        auto cfg = get_configuration();
+        auto& ra = result.authorities;
 
-        if (configuration.use_nsec3)
-          result.authorities += find_nsec3_records(origin, qclass, qname);
-        // else
-        //   result.response_code =
-        //     find_nsec_records(origin, qclass, qname, result.authorities);
-
-        bool have_soa = false;
-
-        if (qtype != QType::SOA)
+        if (delegated)
         {
-          auto soa_records = find_records(origin, qname, QType::SOA, qclass);
-          if (!soa_records.empty())
+          for (Name n = qname; n != origin && !n.is_root(); n = n.parent())
           {
-            result.authorities += *soa_records.begin();
-            result.authorities += find_rrsigs(origin, qname, qclass, Type::SOA);
-            have_soa = true;
+            // Delegation records
+            ra += find_records(origin, n, QType::NS, qclass);
+
+            ra += find_records(origin, n, QType::DS, qclass);
+            ra += find_rrsigs(origin, n, qclass, Type::DS);
+
+            // Glue records
+            for (const auto& rr : ra)
+              if (rr.type == static_cast<uint16_t>(Type::NS))
+              {
+                result.additionals += find_records(
+                  origin + Name("glue."),
+                  NS(rr.rdata).nsdname,
+                  static_cast<QType>(Type::A),
+                  qclass);
+              }
           }
-        }
 
-        for (Name n = qname; n != origin && !n.is_root(); n = n.parent())
+          result.response_code = ResponseCode::NO_ERROR;
+        }
+        else
         {
-          // Delegation records
-          result.authorities += find_records(origin, n, QType::NS, qclass);
+          ra += find_records(origin, origin, QType::SOA, qclass);
+          ra += find_rrsigs(origin, origin, qclass, Type::SOA);
 
-          result.authorities += find_records(origin, n, QType::DS, qclass);
-          result.authorities += find_rrsigs(origin, n, qclass, Type::DS);
-
-          // Glue records
-          for (const auto& rr : result.authorities)
-            if (rr.type == static_cast<uint16_t>(Type::NS))
-            {
-              result.additionals += find_records(
-                origin + Name("glue."),
-                NS(rr.rdata).nsdname,
-                static_cast<QType>(Type::A),
-                qclass);
-            }
+          if (cfg.use_nsec3)
+            result.response_code =
+              find_nsec3_records(origin, qclass, qname, ra);
+          else
+            result.response_code = find_nsec_records(origin, qclass, qname, ra);
         }
-
-        if (result.authorities.empty())
-        {
-          result.response_code = NAME_ERROR; // NXDOMAIN
-          result.authorities +=
-            find_records(origin, origin, QType::SOA, qclass);
-          result.authorities += find_rrsigs(origin, origin, qclass, Type::SOA);
-          if (configuration.use_nsec3)
-            result.authorities += find_nsec3_records(origin, qclass, origin);
-        }
-
-        if (!configuration.use_nsec3)
-          result.response_code =
-            find_nsec_records(origin, qclass, qname, result.authorities);
       }
     }
 
