@@ -43,6 +43,7 @@ public:
     RFC4034::CanonicalNameOrdering>
     zones;
   std::set<Name, RFC4034::CanonicalNameOrdering> origins;
+  std::set<Name, RFC4034::CanonicalNameOrdering> delegated_zones;
 
   std::map<Name, crypto::Pem, RFC4034::CanonicalNameOrdering> key_signing_keys;
   std::map<Name, crypto::Pem, RFC4034::CanonicalNameOrdering> zone_signing_keys;
@@ -130,6 +131,27 @@ public:
     }
   }
 
+  virtual void for_each(
+    const Name& origin,
+    const Name& qname,
+    aDNS::QClass qclass,
+    aDNS::QType qtype,
+    const std::function<bool(const ResourceRecord&)>& f) const override
+  {
+    auto oit = zones.find(origin);
+    if (oit != zones.end())
+    {
+      for (const auto& rr : oit->second)
+      {
+        if (
+          rr.name == qname && is_type_in_qtype(rr.type, qtype) &&
+          is_class_in_qclass(rr.class_, qclass))
+          if (!f(rr))
+            break;
+      }
+    }
+  }
+
   virtual bool origin_exists(const Name& origin) const override
   {
     return origins.contains(origin.lowered());
@@ -137,7 +159,7 @@ public:
 
   virtual bool is_delegated(const Name& origin, const Name& name) const override
   {
-    return false;
+    return delegated_zones.contains(name.lowered());
   }
 
   virtual crypto::Pem get_private_key(
@@ -231,7 +253,9 @@ public:
 
   virtual void save_delegation_request(
     const Name& name, const DelegationRequest& rr) override
-  {}
+  {
+    delegated_zones.insert(name);
+  }
 
   virtual void start_service_acme(
     const Name& origin,
@@ -774,13 +798,15 @@ TEST_CASE("Delegation")
   auto r = main.resolve(sub_cfg.origin, aDNS::QType::A, aDNS::QClass::IN);
 
   REQUIRE(r.answers.size() == 0);
-  REQUIRE(r.authorities.size() == 4); // NS + DS + NSEC3 + RRSIG (over NSEC3)
+  REQUIRE(r.authorities.size() == 3); // NS + DS + RRSIG (over DS)
   REQUIRE(r.additionals.size() == 1); // Glue record
   // Note: verify_rrsigs would fail here because the delegation record (NS) is
   // not signed.
 
   r = main.resolve(sub_cfg.origin, aDNS::QType::NS, aDNS::QClass::IN);
-  REQUIRE(r.answers.size() == 1); // _unsigned_ NS record
+  REQUIRE(r.answers.size() == 0); // _unsigned_ NS record
+  REQUIRE(r.authorities.size() == 3);
+  REQUIRE(r.additionals.size() == 1);
 }
 
 int main(int argc, char** argv)

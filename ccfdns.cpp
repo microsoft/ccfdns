@@ -516,8 +516,10 @@ namespace ccfdns
       ccf::ServiceValue<aDNS::Resolver::Configuration>;
     const std::string configuration_table_name = "public:adns_configuration";
 
+    using Names = ccf::ServiceSet<Name>;
+
     using Records = ccf::ServiceSet<ResourceRecord>;
-    using Origins = ccf::ServiceSet<RFC1035::Name>;
+    using Origins = ccf::ServiceSet<Name>;
     const std::string origins_table_name = "public:ccfdns.origins";
 
     using ServiceCertificates = ccf::ServiceMap<std::string, std::string>;
@@ -603,8 +605,35 @@ namespace ccfdns
       if (!rs.name.is_absolute())
         rs.name += origin;
 
-      auto records = ctx->tx.rw<Records>(table_name(origin, c, t));
+      auto records = ctx->tx.rw<Records>(table_name(origin, rr.name, c, t));
       records->insert(rs);
+      auto names = ctx->tx.rw<Names>(names_table_name(origin));
+      names->insert(rs.name);
+    }
+
+    bool name_exists(const Name& origin, const Name& name) const
+    {
+      check_context();
+
+      // TODO: keep a map of name -> class/type?
+      for (const auto& [_, c] : get_supported_classes())
+        for (const auto& [_, t] : get_supported_types())
+        {
+          auto rrs = ctx->tx.rw<Records>(table_name(origin, name, c, t));
+          if (rrs && rrs->size() != 0)
+            return true;
+        }
+
+      return false;
+    }
+
+    void remove_name_if_unused(const Name& origin, const Name& name)
+    {
+      if (!name_exists(origin, name))
+      {
+        auto names = ctx->tx.rw<Names>(names_table_name(origin));
+        names->remove(name);
+      }
     }
 
     virtual void remove(const Name& origin, const ResourceRecord& rr)
@@ -629,9 +658,12 @@ namespace ccfdns
       if (!rs.name.is_absolute())
         rs.name += origin;
 
-      auto records = ctx->tx.rw<Records>(table_name(origin, c, t));
+      auto records = ctx->tx.rw<Records>(table_name(origin, rs.name, c, t));
       if (records)
+      {
         records->remove(rs);
+        remove_name_if_unused(origin, rs.name);
+      }
     }
 
     virtual void remove(
@@ -649,16 +681,13 @@ namespace ccfdns
       if (!aname.is_absolute())
         aname += origin;
 
-      auto records = ctx->tx.rw<Records>(table_name(origin, c, t));
+      auto records = ctx->tx.rw<Records>(table_name(origin, aname, c, t));
       if (records)
       {
-        records->foreach([origin, t, &aname, &records](
-                           const ResourceRecord& rr) {
-          if (rr.type == static_cast<uint16_t>(t) && rr.name == aname)
-          {
-            CCF_APP_TRACE("CCFDNS: Remove {}", string_from_resource_record(rr));
-            records->remove(rr);
-          }
+        records->foreach([this, origin, t, &records](const ResourceRecord& rr) {
+          CCF_APP_TRACE("CCFDNS: Remove {}", string_from_resource_record(rr));
+          records->remove(rr);
+          remove_name_if_unused(origin, rr.name);
           return true;
         });
       }
@@ -675,9 +704,14 @@ namespace ccfdns
       if (!origin.is_absolute())
         throw std::runtime_error("origin not absolute");
 
-      auto records = ctx->tx.rw<Records>(table_name(origin, c, t));
-      if (records)
-        records->clear();
+      auto names = ctx->tx.rw<Names>(names_table_name(origin));
+      names->foreach([this, c, t, &origin](const Name& name) {
+        auto records = ctx->tx.rw<Records>(table_name(origin, name, c, t));
+        if (records)
+          records->clear();
+        remove_name_if_unused(origin, name);
+        return true;
+      });
     }
 
     using Resolver::reply;
@@ -701,18 +735,36 @@ namespace ccfdns
 
       auto c = static_cast<aDNS::Class>(qclass);
       auto t = static_cast<aDNS::Type>(qtype);
-      std::string tn = table_name(origin, c, t);
+
+      auto names = ctx->tx.ro<Names>(names_table_name(origin));
+      names->foreach([this, &origin, c, t, &f](const Name& name) {
+        std::string tn = table_name(origin, name, c, t);
+        auto records = ctx->tx.ro<Records>(tn);
+        if (records)
+          records->foreach([&f](const auto& rr) { return f(rr); });
+        return true;
+      });
+    }
+
+    virtual void for_each(
+      const Name& origin,
+      const Name& qname,
+      aDNS::QClass qclass,
+      aDNS::QType qtype,
+      const std::function<bool(const ResourceRecord&)>& f) const override
+    {
+      check_context();
+
+      if (qtype == aDNS::QType::ASTERISK || qclass == aDNS::QClass::ASTERISK)
+        throw std::runtime_error("for_each cannot handle wildcards");
+
+      auto c = static_cast<aDNS::Class>(qclass);
+      auto t = static_cast<aDNS::Type>(qtype);
+      std::string tn = table_name(origin, qname, c, t);
 
       auto records = ctx->tx.ro<Records>(tn);
-      records->foreach([&qclass, &qtype, &f](const auto& rr) {
-        if (
-          !is_type_in_qtype(rr.type, qtype) ||
-          !is_class_in_qclass(rr.class_, qclass))
-        {
-          return true;
-        }
-        return f(rr);
-      });
+      records->foreach(
+        [&qclass, &qname, &qtype, &f](const auto& rr) { return f(rr); });
     }
 
     virtual bool origin_exists(const Name& name) const override
@@ -1429,29 +1481,36 @@ namespace ccfdns
       origins->foreach([this, &r, &cfg](const Name& origin) {
         r += "$ORIGIN " + (std::string)origin + "\n";
         r += "$TTL " + std::to_string(cfg.default_ttl) + "\n\n";
+
         for (const auto& [_, c] : get_supported_classes())
           for (const auto& [_, t] : get_supported_types())
           {
-            auto records = ctx->tx.ro<Records>(table_name(origin, c, t));
-            records->foreach([&r](const ResourceRecord& rr) {
-              if (static_cast<aDNS::Type>(rr.type) == aDNS::Type::ATTEST)
-                r += "; ";
-              auto tmp = string_from_resource_record(rr) + "\n";
-              if (static_cast<aDNS::Type>(rr.type) == aDNS::Type::NSEC3)
-                r += std::regex_replace(tmp, std::regex("ATTEST"), "");
-              else if (static_cast<aDNS::Type>(rr.type) == aDNS::Type::RRSIG)
-              {
-                auto type2str = [](const auto& x) {
-                  return string_from_type(static_cast<aDNS::Type>(x));
-                };
-                RFC4034::RRSIG sd(rr.rdata, type2str);
-                if (
-                  sd.type_covered == static_cast<uint16_t>(aDNS::Type::ATTEST))
+            auto names = ctx->tx.ro<CCFDNS::Names>(names_table_name(origin));
+            names->foreach([this, &r, &origin, c = c, t = t](const Name& name) {
+              auto records =
+                ctx->tx.ro<Records>(table_name(origin, name, c, t));
+              records->foreach([&r](const ResourceRecord& rr) {
+                if (static_cast<aDNS::Type>(rr.type) == aDNS::Type::ATTEST)
                   r += "; ";
-                r += tmp;
-              }
-              else
-                r += tmp;
+                auto tmp = string_from_resource_record(rr) + "\n";
+                if (static_cast<aDNS::Type>(rr.type) == aDNS::Type::NSEC3)
+                  r += std::regex_replace(tmp, std::regex("ATTEST"), "");
+                else if (static_cast<aDNS::Type>(rr.type) == aDNS::Type::RRSIG)
+                {
+                  auto type2str = [](const auto& x) {
+                    return string_from_type(static_cast<aDNS::Type>(x));
+                  };
+                  RFC4034::RRSIG sd(rr.rdata, type2str);
+                  if (
+                    sd.type_covered ==
+                    static_cast<uint16_t>(aDNS::Type::ATTEST))
+                    r += "; ";
+                  r += tmp;
+                }
+                else
+                  r += tmp;
+                return true;
+              });
               return true;
             });
           }
@@ -1501,11 +1560,20 @@ namespace ccfdns
     std::string internal_node_address = "https://127.0.0.1";
     std::string acme_config_name;
 
-    std::string table_name(
-      const Name& origin, aDNS::Class class_, aDNS::Type type) const
+    std::string names_table_name(const Name& origin) const
     {
-      return "public:" + (std::string)origin.lowered() + "-" +
-        string_from_type(type) + "-" + string_from_class(class_);
+      return "public:names:" + (std::string)origin.lowered();
+    }
+
+    std::string table_name(
+      const Name& origin,
+      const Name& name,
+      aDNS::Class class_,
+      aDNS::Type type) const
+    {
+      return "public:" + (std::string)origin.lowered() + ":" +
+        (std::string)name.lowered() + "-" + string_from_type(type) + "-" +
+        string_from_class(class_);
     }
 
     void check_context() const

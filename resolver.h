@@ -215,7 +215,7 @@ namespace aDNS
 
     virtual RFC4034::CanonicalRRSet find_records(
       const Name& origin,
-      const Name& name,
+      const Name& qname,
       QType qtype,
       QClass qclass,
       std::optional<std::function<bool(const ResourceRecord&)>> condition =
@@ -238,6 +238,13 @@ namespace aDNS
 
     virtual void for_each(
       const Name& origin,
+      QClass qclass,
+      QType qtype,
+      const std::function<bool(const ResourceRecord&)>& f) const = 0;
+
+    virtual void for_each(
+      const Name& origin,
+      const Name& qname,
       QClass qclass,
       QType qtype,
       const std::function<bool(const ResourceRecord&)>& f) const = 0;
@@ -321,9 +328,9 @@ namespace aDNS
 
     virtual std::map<std::string, NodeInfo> get_node_information() = 0;
 
-    const std::map<uint16_t, Type>& get_supported_types();
+    const std::map<uint16_t, Type>& get_supported_types() const;
 
-    const std::map<uint16_t, Class>& get_supported_classes();
+    const std::map<uint16_t, Class>& get_supported_classes() const;
 
     virtual void save_endorsements(
       const Name& service_name, const std::string& endorsements)
@@ -356,10 +363,7 @@ namespace aDNS
       uint8_t salt_length);
 
     RFC4034::CanonicalRRSet get_ordered_records(
-      const Name& origin,
-      QClass c,
-      QType t,
-      std::optional<Name> match_name = std::nullopt) const;
+      const Name& origin, QClass c, QType t, const Name& name) const;
 
     const Resolver::Names& get_ordered_names(const Name& origin, Class c);
 

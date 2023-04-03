@@ -35,7 +35,8 @@ int main(int argc, char** argv)
   inet_aton("10.1.0.4", &_res.nsaddr_list[0].sin_addr);
   // _res.nsaddr_list[0].sin_port = htons(1054);
 
-  for (size_t i = 0; i < n; i++)
+  size_t i = 0;
+  for (; i < n; i++)
   {
     if (
       (r = res_query(
@@ -50,11 +51,13 @@ int main(int argc, char** argv)
     }
   }
 
+  printf("last answer:\n");
   printf("flags=%02x%02x\n", res.buf[2], res.buf[3]);
   printf("qdcount=%u\n", ntohs(res.h.qdcount));
   printf("ancount=%u\n", ntohs(res.h.ancount));
   printf("ancount=%u\n", ntohs(res.h.nscount));
   printf("qdcount=%u\n", ntohs(res.h.arcount));
 
+  printf("# queries: %zu\n", i);
   return 0;
 }

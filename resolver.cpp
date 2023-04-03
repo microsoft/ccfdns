@@ -426,7 +426,7 @@ namespace aDNS
 
   RFC4034::CanonicalRRSet Resolver::find_records(
     const Name& origin,
-    const Name& name,
+    const Name& qname,
     QType qtype,
     QClass qclass,
     std::optional<std::function<bool(const ResourceRecord&)>> condition)
@@ -434,17 +434,18 @@ namespace aDNS
     CCF_APP_TRACE(
       "ADNS: Find: {} {} {} {}",
       origin,
-      name,
+      qname,
       string_from_qtype(qtype),
       string_from_qclass(qclass));
     RFC4034::CanonicalRRSet records;
     for_each(
       origin,
+      qname,
       qclass,
       qtype,
-      [this, &origin, &name, &qclass, &records, &condition](const auto& rr) {
+      [this, &origin, &records, &condition](const auto& rr) {
         // CCF_APP_TRACE("ADNS:  - {}", string_from_resource_record(rr));
-        if (rr.name == name && (!condition || (*condition)(rr)))
+        if ((!condition || (*condition)(rr)))
           records.insert(rr);
         return true;
       });
@@ -608,75 +609,73 @@ namespace aDNS
       }
     }
 
+    if (!origin.is_absolute())
+      return result;
+
     auto& result_set = result.answers;
-    result.is_authoritative = false;
 
-    if (origin.is_absolute())
+    RFC4034::CanonicalRRSet records;
+
+    bool delegated = is_delegated(origin, qname);
+
+    if (!delegated || qtype == QType::DS)
     {
-      RFC4034::CanonicalRRSet records;
+      records = find_records(origin, qname, qtype, qclass);
+      result.is_authoritative = true;
+    }
+    else if (qtype == QType::A)
+    {
+      // Direct query for glue records. Not sure queries of this form are
+      // standards compliant.
+      records = find_records(origin + Name("glue."), qname, QType::A, qclass);
+      result.is_authoritative = true;
+    }
 
-      bool delegated = is_delegated(origin, qname);
+    for (const auto& rr : records)
+      if (rr.name == qname)
+        result_set +=
+          find_rrsigs(origin, rr.name, qclass, static_cast<Type>(rr.type));
 
-      if (!delegated || qtype == QType::DS)
+    result_set += records;
+
+    if (result_set.empty())
+    {
+      auto cfg = get_configuration();
+      auto& ra = result.authorities;
+
+      if (delegated)
       {
-        records = find_records(origin, qname, qtype, qclass);
-        result.is_authoritative = true;
-      }
-      else if (qtype == QType::A)
-      {
-        // Direct query for glue records. Not sure queries of this form are
-        // standards compliant.
-        records = find_records(origin + Name("glue."), qname, QType::A, qclass);
-        result.is_authoritative = true;
-      }
-
-      for (const auto& rr : records)
-        if (rr.name == qname)
-          result_set +=
-            find_rrsigs(origin, rr.name, qclass, static_cast<Type>(rr.type));
-
-      result_set += records;
-
-      if (result_set.empty())
-      {
-        auto cfg = get_configuration();
-        auto& ra = result.authorities;
-
-        if (delegated)
+        for (Name n = qname; n != origin && !n.is_root(); n = n.parent())
         {
-          for (Name n = qname; n != origin && !n.is_root(); n = n.parent())
-          {
-            // Delegation records
-            ra += find_records(origin, n, QType::NS, qclass);
+          // Delegation records
+          ra += find_records(origin, n, QType::NS, qclass);
 
-            ra += find_records(origin, n, QType::DS, qclass);
-            ra += find_rrsigs(origin, n, qclass, Type::DS);
+          ra += find_records(origin, n, QType::DS, qclass);
+          ra += find_rrsigs(origin, n, qclass, Type::DS);
 
-            // Glue records
-            for (const auto& rr : ra)
-              if (rr.type == static_cast<uint16_t>(Type::NS))
-              {
-                result.additionals += find_records(
-                  origin + Name("glue."),
-                  NS(rr.rdata).nsdname,
-                  static_cast<QType>(Type::A),
-                  qclass);
-              }
-          }
-
-          result.response_code = ResponseCode::NO_ERROR;
+          // Glue records
+          for (const auto& rr : ra)
+            if (rr.type == static_cast<uint16_t>(Type::NS))
+            {
+              result.additionals += find_records(
+                origin + Name("glue."),
+                NS(rr.rdata).nsdname,
+                static_cast<QType>(Type::A),
+                qclass);
+            }
         }
+
+        result.response_code = ResponseCode::NO_ERROR;
+      }
+      else
+      {
+        ra += find_records(origin, origin, QType::SOA, qclass);
+        ra += find_rrsigs(origin, origin, qclass, Type::SOA);
+
+        if (cfg.use_nsec3)
+          result.response_code = find_nsec3_records(origin, qclass, qname, ra);
         else
-        {
-          ra += find_records(origin, origin, QType::SOA, qclass);
-          ra += find_rrsigs(origin, origin, qclass, Type::SOA);
-
-          if (cfg.use_nsec3)
-            result.response_code =
-              find_nsec3_records(origin, qclass, qname, ra);
-          else
-            result.response_code = find_nsec_records(origin, qclass, qname, ra);
-        }
+          result.response_code = find_nsec_records(origin, qclass, qname, ra);
       }
     }
 
@@ -693,13 +692,12 @@ namespace aDNS
   }
 
   RFC4034::CanonicalRRSet Resolver::get_ordered_records(
-    const Name& origin, QClass c, QType t, std::optional<Name> match_name) const
+    const Name& origin, QClass c, QType t, const Name& name) const
   {
     RFC4034::CanonicalRRSet r;
 
-    for_each(origin, c, t, [&origin, &r, &match_name](const auto& rr) {
-      if (!match_name || *match_name == rr.name)
-        r += RFC4034::canonicalize(origin, rr, type2str);
+    for_each(origin, name, c, t, [&origin, &r](const auto& rr) {
+      r += RFC4034::canonicalize(origin, rr, type2str);
       return true;
     });
 
@@ -1234,12 +1232,26 @@ namespace aDNS
   small_vector<uint8_t> Resolver::get_nsec3_salt(
     const Name& origin, aDNS::QClass class_)
   {
-    auto params_rrs = find_records(
-      origin, origin, static_cast<QType>(Type::NSEC3PARAM), class_);
+    auto params_rrs = find_records(origin, origin, QType::NSEC3PARAM, class_);
 
     if (params_rrs.empty())
-      throw std::runtime_error(
-        fmt::format("missing NSEC3PARAM record for {}", origin));
+    {
+      auto cfg = get_configuration();
+
+      update_nsec3_param(
+        origin,
+        static_cast<Class>(class_),
+        cfg.default_ttl,
+        cfg.nsec3_hash_algorithm,
+        cfg.nsec3_hash_iterations,
+        cfg.nsec3_salt_length);
+
+      params_rrs = find_records(origin, origin, QType::NSEC3PARAM, class_);
+
+      if (params_rrs.empty())
+        throw std::runtime_error(
+          fmt::format("failed to add NSEC3PARAM record for {}", origin));
+    }
 
     return RFC5155::NSEC3PARAM(params_rrs.begin()->rdata).salt;
   }
@@ -1835,12 +1847,12 @@ namespace aDNS
       dr.subdomain, dr.node_information.begin()->second.attestation);
   }
 
-  const std::map<uint16_t, Type>& Resolver::get_supported_types()
+  const std::map<uint16_t, Type>& Resolver::get_supported_types() const
   {
     return supported_types;
   }
 
-  const std::map<uint16_t, Class>& Resolver::get_supported_classes()
+  const std::map<uint16_t, Class>& Resolver::get_supported_classes() const
   {
     return supported_classes;
   }
