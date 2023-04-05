@@ -587,15 +587,17 @@ namespace aDNS
   }
 
   Resolver::Resolution Resolver::resolve(
-    const Name& qname, QType qtype, QClass qclass)
+    const Name& qnameu, QType qtype, QClass qclass)
   {
     Resolution result;
 
     if (qtype == QType::ASTERISK || qclass == QClass::ASTERISK)
       return {ResponseCode::NOT_IMPLEMENTED, {}, {}, {}};
 
-    if (!qname.is_absolute())
+    if (!qnameu.is_absolute())
       throw std::runtime_error("cannot resolve relative names");
+
+    Name qname = qnameu.lowered();
 
     // Find an origin
     Name origin;
