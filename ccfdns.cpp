@@ -609,6 +609,7 @@ namespace ccfdns
       records->insert(rs);
       auto names = ctx->tx.rw<Names>(names_table_name(origin));
       names->insert(rs.name);
+      name_cache_dirty = true;
     }
 
     bool name_exists(const Name& origin, const Name& name) const
@@ -664,6 +665,8 @@ namespace ccfdns
         records->remove(rs);
         remove_name_if_unused(origin, rs.name);
       }
+
+      name_cache_dirty = true;
     }
 
     virtual void remove(
@@ -691,6 +694,8 @@ namespace ccfdns
           return true;
         });
       }
+
+      name_cache_dirty = true;
     }
 
     virtual void remove(
@@ -712,6 +717,8 @@ namespace ccfdns
         remove_name_if_unused(origin, name);
         return true;
       });
+
+      name_cache_dirty = true;
     }
 
     using Resolver::reply;
