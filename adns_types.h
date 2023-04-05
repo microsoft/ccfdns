@@ -51,7 +51,7 @@ namespace aDNS::Types
 
     virtual operator std::string() const override
     {
-      return *attestation;
+      return ds::to_hex((std::string)*attestation);
     }
 
     static ravl::Attestation generate_quote_info(
