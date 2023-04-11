@@ -1900,6 +1900,28 @@ namespace ccfdns
         tc_reply.header.tc = true;
         tc_reply.header.aa = true;
 
+#  ifdef CCFDNS_STATIC_ANSWER
+        RFC1035::Message reply;
+        reply.header.id = id;
+        reply.header.qr = true;
+        reply.header.tc = false;
+        reply.header.aa = true;
+        static auto rr = ResourceRecord(
+          Name("test.adns.ccf.dev."),
+          static_cast<uint16_t>(RFC1035::Type::A),
+          RFC1035::Class::IN,
+          60,
+          RFC1035::A("192.168.0.1"));
+        reply.answers.push_back(rr);
+        reply.questions = msg.questions;
+        reply.header.qdcount = msg.questions.size();
+        reply.header.ancount = 1;
+        outbuf = (std::vector<uint8_t>)reply;
+
+        send_data(outbuf);
+        return;
+#  endif
+
         tc_reply.questions = msg.questions;
         tc_reply.header.qdcount = msg.questions.size();
 
