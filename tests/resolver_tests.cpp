@@ -714,13 +714,14 @@ TEST_CASE("Service registration")
   s.register_service(
     {csr,
      {"joe@example.com"},
-     {{"id", {{url_name, address, "tcp", 8000}, dummy_attestation}}}});
+     {{"id", {{url_name, address, "tcp", 443}, dummy_attestation}}}});
 
   auto dnskey_rrs =
     s.resolve(cfg.origin, aDNS::QType::DNSKEY, aDNS::QClass::IN).answers;
   REQUIRE(RFC4034::verify_rrsigs(dnskey_rrs, dnskey_rrs, type2str));
 
-  auto r = s.resolve(service_name, aDNS::QType::TLSA, aDNS::QClass::IN);
+  auto r = s.resolve(
+    Name("_443._tcp") + service_name, aDNS::QType::TLSA, aDNS::QClass::IN);
   REQUIRE(RFC4034::verify_rrsigs(r.answers, dnskey_rrs, type2str));
 
   r = s.resolve(service_name, aDNS::QType::ATTEST, aDNS::QClass::IN);

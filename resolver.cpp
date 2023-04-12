@@ -1415,12 +1415,14 @@ namespace aDNS
   void Resolver::add_fragmented(
     const Name& origin,
     const Name& name,
-    const ResourceRecord& rr,
+    uint32_t ttl,
+    aDNS::Class class_,
+    const small_vector<uint16_t>& rrdata,
     uint8_t records_per_name)
   {
     // TODO: remove old records?
 
-    uint16_t rsz = rr.rdata.size();
+    uint16_t rsz = rrdata.size();
     size_t num_rrs = rsz / 15;
 
     if ((rsz % 15) != 0)
@@ -1435,7 +1437,7 @@ namespace aDNS
       throw std::runtime_error(
         "too many names/record for AAAA fragmented record");
 
-    small_vector<uint16_t> data(16);
+    small_vector<uint16_t> tdata(16);
 
     size_t bytes_encoded = 0;
     for (size_t n = 0; n < num_names; n++)
@@ -1446,39 +1448,48 @@ namespace aDNS
 
       for (size_t i = 0; i < records_per_name; i++)
       {
-        data[0] = i;
+        tdata[0] = i;
 
         size_t bytes_per_fragment = records_per_name * 15;
 
         if (n == 0 && i == 0)
         {
-          data[1] = rsz >> 8;
-          data[2] = rsz & 0xFF;
-          data[3] = num_names >> 8;
-          data[4] = num_names & 0xFF;
+          tdata[1] = rsz >> 8;
+          tdata[2] = rsz & 0xFF;
+          tdata[3] = num_names >> 8;
+          tdata[4] = num_names & 0xFF;
 
           for (size_t j = 5; j < 16; j++)
-            data[j] = bytes_encoded >= rsz ? 0 : rr.rdata[bytes_encoded++];
+            tdata[j] = bytes_encoded >= rsz ? 0 : rrdata[bytes_encoded++];
         }
         else
         {
           for (size_t j = 1; j < 16; j++)
-            data[j] = bytes_encoded >= rsz ? 0 : rr.rdata[bytes_encoded++];
+            tdata[j] = bytes_encoded >= rsz ? 0 : rrdata[bytes_encoded++];
         }
 
         add(
-          origin,
-          mk_rr(
-            fname,
-            Type::AAAA,
-            static_cast<aDNS::Class>(rr.class_),
-            rr.ttl,
-            RFC3596::AAAA(data)));
+          origin, mk_rr(fname, Type::AAAA, class_, ttl, RFC3596::AAAA(tdata)));
 
         if (bytes_encoded >= rsz)
           break;
       }
     }
+  }
+
+  void Resolver::add_fragmented(
+    const Name& origin,
+    const Name& name,
+    const ResourceRecord& rr,
+    uint8_t records_per_name)
+  {
+    add_fragmented(
+      origin,
+      name,
+      rr.ttl,
+      static_cast<aDNS::Class>(rr.class_),
+      rr.rdata,
+      records_per_name);
   }
 
   Name Resolver::find_zone(const Name& name)
@@ -1557,9 +1568,24 @@ namespace aDNS
     auto pk_der = public_key.der_pubkey();
     small_vector<uint16_t> public_key_sv(pk_der.size(), pk_der.data());
 
+    remove(origin, service_name, Class::IN, Type::ATTEST);
+
+    nlohmann::json j_att_set =
+      nlohmann::json::array(); // JSON array of attestations
+
+    auto service_protocol =
+      rr.node_information.begin()->second.address.protocol;
+    auto service_port = rr.node_information.begin()->second.address.port;
+    bool protocol_port_same_forall = true;
+
     for (const auto& [id, info] : rr.node_information)
     {
       const auto& name = info.address.name.terminated();
+
+      if (
+        info.address.protocol != service_protocol ||
+        info.address.port != service_port)
+        protocol_port_same_forall = false;
 
       if (!name.ends_with(service_name))
         throw std::runtime_error(fmt::format(
@@ -1567,19 +1593,28 @@ namespace aDNS
           name,
           service_name));
 
-      // ATTEST RR
+      // Attestations
       auto att = ravl::parse_attestation(info.attestation);
       att->endorsements.clear();
+      j_att_set.push_back(*att);
+
+      // ATTEST record for each node
+      auto attest_rdata = Types::ATTEST(att);
 
       ResourceRecord att_rr = mk_rr(
-        name,
-        Type::ATTEST,
-        Class::IN,
-        configuration.default_ttl,
-        Types::ATTEST(att));
+        name, Type::ATTEST, Class::IN, configuration.default_ttl, attest_rdata);
 
       remove(origin, name, Class::IN, Type::ATTEST);
       add(origin, att_rr);
+
+      // Service-name ATTEST record for each node
+      auto service_att_rr = mk_rr(
+        service_name,
+        Type::ATTEST,
+        Class::IN,
+        configuration.default_ttl,
+        attest_rdata);
+      add(origin, service_att_rr);
 
       // Fragmented ATTEST RR
       auto attest_name = Name("attest") + name;
@@ -1633,39 +1668,43 @@ namespace aDNS
       add_caa_records(origin, name, configuration.service_ca.name, rr.contact);
     }
 
-    auto it = rr.node_information.begin();
-    std::string tlsa_prolow = it->second.address.protocol;
-    uint16_t tlsa_port = it->second.address.port;
-    for (it++; it != rr.node_information.end(); it++)
+    if (protocol_port_same_forall)
     {
-      if (it->second.address.protocol != tlsa_prolow)
-        throw std::runtime_error("node protocol mismatch");
-      if (it->second.address.port != tlsa_port)
-        throw std::runtime_error("node port mismatch");
+      // TLSA RR for service
+      std::string prolow = service_protocol;
+      std::transform(prolow.begin(), prolow.end(), prolow.begin(), ::tolower);
+      auto service_tlsa_name = Name("_" + std::to_string(service_port)) +
+        Name(std::string("_") + prolow) + service_name;
+
+      auto tlsa_rr = mk_rr(
+        service_tlsa_name,
+        Type::TLSA,
+        Class::IN,
+        configuration.default_ttl,
+        TLSA(
+          CertificateUsage::DANE_EE,
+          Selector::SPKI,
+          MatchingType::Full,
+          public_key_sv));
+
+      remove(origin, service_tlsa_name, Class::IN, Type::TLSA);
+      add(origin, tlsa_rr);
+
+      // Fragmented version
+      remove(origin, service_tlsa_name, Class::IN, Type::AAAA);
+      add_fragmented(origin, service_tlsa_name, tlsa_rr);
     }
 
-    // TLSA RR for service
-    auto tlsa_rr = mk_rr(
-      service_name,
-      Type::TLSA,
-      Class::IN,
-      configuration.default_ttl,
-      TLSA(
-        CertificateUsage::DANE_EE,
-        Selector::SPKI,
-        MatchingType::Full,
-        public_key_sv));
-
-    remove(origin, service_name, Class::IN, Type::TLSA);
-    add(origin, tlsa_rr);
-
-    auto tlsa_name = Name("tlsa") + service_name;
-    remove(origin, tlsa_name, Class::IN, Type::AAAA);
-    add_fragmented(origin, tlsa_name, tlsa_rr);
+    // Fragmented ATTEST RR set for service
+    auto att_set_name = Name("attest") + service_name;
+    remove(origin, att_set_name, Class::IN, Type::AAAA);
+    auto jd = j_att_set.dump();
+    CCF_APP_DEBUG("ATTEST set for service: {}", jd);
+    add_fragmented(
+      origin, att_set_name, configuration.default_ttl, Class::IN, jd);
 
     // CAA RR for service
     remove(origin, service_name, Class::IN, Type::CAA);
-
     add_caa_records(
       origin, service_name, configuration.service_ca.name, rr.contact);
 

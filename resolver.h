@@ -418,6 +418,14 @@ namespace aDNS
     void add_fragmented(
       const Name& origin,
       const Name& name,
+      uint32_t ttl,
+      aDNS::Class class_,
+      const small_vector<uint16_t>& rrdata,
+      uint8_t records_per_name = 64);
+
+    void add_fragmented(
+      const Name& origin,
+      const Name& name,
       const ResourceRecord& rr,
       uint8_t records_per_name = 64);
 
