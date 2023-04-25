@@ -2,6 +2,7 @@
 // Licensed under the Apache 2.0 License.
 #pragma once
 
+#include "compression.h"
 #include "rfc1035.h"
 #include "rfc4034.h"
 #include "serialization.h"
@@ -32,26 +33,29 @@ namespace aDNS::Types
 
     ATTEST(const std::string& data)
     {
-      attestation = ravl::parse_attestation(data);
+      auto d = ds::from_hex(data);
+      attestation = ravl::parse_attestation_cbor({d.begin(), d.end()});
     }
 
     ATTEST(const small_vector<uint16_t>& data)
     {
+      auto ud = decompress(data.raw(), data.size());
       attestation =
-        ravl::parse_attestation({data.raw(), data.raw() + data.size()});
+        ravl::parse_attestation_cbor({ud.data(), ud.data() + ud.size()});
     }
 
     virtual ~ATTEST() = default;
 
     virtual operator small_vector<uint16_t>() const override
     {
-      std::string s = *attestation;
-      return small_vector<uint16_t>(s.size(), (unsigned char*)s.data());
+      std::vector<uint8_t> s = attestation->cbor();
+      std::vector<uint8_t> cs = compress(s, 9);
+      return small_vector<uint16_t>(cs.size(), (unsigned char*)cs.data());
     }
 
     virtual operator std::string() const override
     {
-      return ds::to_hex((std::string)*attestation);
+      return ds::to_hex(attestation->cbor());
     }
 
     static ravl::Attestation generate_quote_info(
