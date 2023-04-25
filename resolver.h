@@ -333,12 +333,12 @@ namespace aDNS
     const std::map<uint16_t, Class>& get_supported_classes() const;
 
     virtual void save_endorsements(
-      const Name& service_name, const std::string& endorsements)
+      const Name& service_name, const std::vector<uint8_t>& endorsements)
     {}
 
-    virtual std::string get_endorsements(const Name& service_name)
+    virtual std::vector<uint8_t> get_endorsements(const Name& service_name)
     {
-      return "";
+      return {};
     }
 
     static Name find_preceding(
@@ -421,12 +421,14 @@ namespace aDNS
       uint32_t ttl,
       aDNS::Class class_,
       const small_vector<uint16_t>& rrdata,
+      bool compress = false,
       uint8_t records_per_name = 64);
 
     void add_fragmented(
       const Name& origin,
       const Name& name,
       const ResourceRecord& rr,
+      bool compress = false,
       uint8_t records_per_name = 64);
 
     ResourceRecord mk_rr(

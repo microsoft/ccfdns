@@ -87,6 +87,11 @@ public:
     }
   }
 
+  small_vector(const std::vector<uint8_t>& bytes)
+  {
+    *this = bytes;
+  }
+
   small_vector(const std::string& s)
   {
     size_ = s.size();
@@ -181,6 +186,22 @@ public:
     data = other.data;
     other.size_ = 0;
     other.data = nullptr;
+    return *this;
+  }
+
+  small_vector<T, E>& operator=(const std::vector<E>& other)
+  {
+    if (other.size() >= 1 << (sizeof(T) * 8))
+      throw std::runtime_error("data too large for small_vector");
+    if (data)
+      delete[] data;
+    size_ = other.size();
+    if (size_ > 0)
+    {
+      data = new E[size_ * sizeof(E)];
+      for (T i = 0; i < size_; i++)
+        data[i] = other[i];
+    }
     return *this;
   }
 

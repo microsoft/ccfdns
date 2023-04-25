@@ -36,13 +36,21 @@ target_compile_definitions(ravl INTERFACE RAVL_HAVE_OPENSSL RAVL_LIBRARY_BUILD)
 target_include_directories(ravl INTERFACE ${RAVL_DIR}/../include)
 target_sources(ravl INTERFACE ${RAVL_SRC}/attestation.cpp ${RAVL_SRC}/ravl.cpp ${RAVL_SRC}/request_tracker.cpp ${RAVL_SRC}/http_client.cpp)
 
+set(ZLIB_DIR ${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/zlib)
+set(ZLIB_SRC ${ZLIB_DIR}/compress.c ${ZLIB_DIR}/deflate.c ${ZLIB_DIR}/inflate.c ${ZLIB_DIR}/trees.c ${ZLIB_DIR}/adler32.c ${ZLIB_DIR}/crc32.c ${ZLIB_DIR}/zutil.c ${ZLIB_DIR}/infback.c ${ZLIB_DIR}/inftrees.c ${ZLIB_DIR}/inffast.c)
+
+add_library(zlib ${ZLIB_SRC})
+target_include_directories(zlib PRIVATE ${ZLIB_DIR})
+target_compile_options(zlib PRIVATE -fPIC)
+target_compile_definitions(zlib PRIVATE)
+
 set(CCFDNS_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 
 add_ccf_app(ccfdns
-  SRCS ccfdns.cpp resolver.cpp rfc4034.cpp rfc5155.cpp base32.cpp
+  SRCS ccfdns.cpp resolver.cpp rfc4034.cpp rfc5155.cpp base32.cpp 
   INCLUDE_DIRS ${CCFDNS_DIR}/3rdparty
-  LINK_LIBS_VIRTUAL ravl
-  LINK_LIBS_ENCLAVE ravl
+  LINK_LIBS_VIRTUAL ravl zlib
+  LINK_LIBS_ENCLAVE ravl zlib
 )
 
 target_include_directories(${ENCLAVE_TARGET} PRIVATE ${CCF_PKG_DIR}/../include/ccf/_private)
@@ -55,12 +63,12 @@ sign_app_library(
 endif()
 
 if (TRACE_LOGGING)
-  target_compile_definitions(${ENCLAVE_TARGET} PRIVATE -DTRACE_LOGGING -DVERBOSE_LOGGING)  
+  target_compile_definitions(${ENCLAVE_TARGET} PRIVATE -DTRACE_LOGGING -DVERBOSE_LOGGING)
 elseif (VERBOSE_LOGGING)
-  target_compile_definitions(${ENCLAVE_TARGET} PRIVATE -DVERBOSE_LOGGING)  
+  target_compile_definitions(${ENCLAVE_TARGET} PRIVATE -DVERBOSE_LOGGING)
 endif()
 
-if (VIRTUAL)  
+if (VIRTUAL)
   if (CMAKE_BUILD_TYPE MATCHES Debug)
     target_compile_definitions(${ENCLAVE_TARGET} PRIVATE ATTESTATION_VERIFICATION_FAILURE_OK)
     target_compile_options(${ENCLAVE_TARGET} PRIVATE -fstandalone-debug)
@@ -99,16 +107,16 @@ add_test(NAME e2e_simple_tests COMMAND python ../tests/e2e_simple.py -b "${CCF_P
 function(add_unit_test name)
   add_executable(${name} ${ARGN})
   target_include_directories(${name} PRIVATE "." "${CCF_PKG_INC}" "${CCF_PKG_INC}/ccf/_private" "${CCF_PKG_INC}/3rdparty" ${CCFDNS_DIR}/3rdparty)
-  target_link_libraries(${name} PRIVATE ravl)
+  target_link_libraries(${name} PRIVATE ravl zlib)
   if (VIRTUAL)
     target_link_libraries(${name} PRIVATE ccfcrypto.host)
   endif()
   add_test(NAME ${name} COMMAND ${name})
   set_property(TEST ${name} APPEND PROPERTY LABELS unit_test)
   if (TRACE_LOGGING)
-    target_compile_definitions(${name} PRIVATE -DTRACE_LOGGING -DVERBOSE_LOGGING)   
+    target_compile_definitions(${name} PRIVATE -DTRACE_LOGGING -DVERBOSE_LOGGING)
   elseif (VERBOSE_LOGGING)
-    target_compile_definitions(${name} PRIVATE -DVERBOSE_LOGGING)  
+    target_compile_definitions(${name} PRIVATE -DVERBOSE_LOGGING)
   endif()
 
   if (CMAKE_BUILD_TYPE MATCHES Debug)
@@ -118,7 +126,7 @@ endfunction()
 
 if (VIRTUAL)
   add_unit_test(resolver_tests ../tests/resolver_tests.cpp resolver.cpp rfc4034.cpp rfc5155.cpp base32.cpp)
-  target_compile_definitions(resolver_tests PRIVATE ATTESTATION_VERIFICATION_FAILURE_OK)  
+  target_compile_definitions(resolver_tests PRIVATE ATTESTATION_VERIFICATION_FAILURE_OK)
 endif()
 
 add_executable(queryperf ../tests/queryperf.cpp)
@@ -130,9 +138,9 @@ add_ccf_app(ccf_demo_service
   LINK_LIBS_VIRTUAL ravl)
 target_include_directories(${DEMO_ENCLAVE_TARGET} PRIVATE "${CCF_PKG_INC}/ccf/_private")
 if (TRACE_LOGGING)
-  target_compile_definitions(${DEMO_ENCLAVE_TARGET} PRIVATE -DTRACE_LOGGING -DVERBOSE_LOGGING)  
+  target_compile_definitions(${DEMO_ENCLAVE_TARGET} PRIVATE -DTRACE_LOGGING -DVERBOSE_LOGGING)
 elseif (VERBOSE_LOGGING)
-  target_compile_definitions(${DEMO_ENCLAVE_TARGET} PRIVATE -DVERBOSE_LOGGING)  
+  target_compile_definitions(${DEMO_ENCLAVE_TARGET} PRIVATE -DVERBOSE_LOGGING)
 endif()
 if (CMAKE_BUILD_TYPE MATCHES Debug)
   target_compile_definitions(${DEMO_ENCLAVE_TARGET} PRIVATE ATTESTATION_VERIFICATION_FAILURE_OK)

@@ -549,7 +549,7 @@ namespace ccfdns
     std::shared_ptr<DelegationRequestsIndex> delegation_index_strategy =
       nullptr;
 
-    using Endorsements = ccf::ServiceMap<Name, std::string>;
+    using Endorsements = ccf::ServiceMap<Name, std::vector<uint8_t>>;
     const std::string endorsements_table_name = "public:service_endorsements";
 
     void set_endpoint_context(ccf::endpoints::EndpointContext* c)
@@ -1529,9 +1529,15 @@ namespace ccfdns
     }
 
     virtual void save_endorsements(
-      const Name& service_name, const std::string& endorsements) override
+      const Name& service_name,
+      const std::vector<uint8_t>& endorsements) override
     {
       check_context();
+
+      CCF_APP_INFO(
+        "CCFDNS: Saving endorsements for {} ({} bytes)",
+        service_name,
+        endorsements.size());
 
       auto tbl =
         ctx->tx.template rw<CCFDNS::Endorsements>(endorsements_table_name);
@@ -1540,7 +1546,8 @@ namespace ccfdns
       tbl->put(service_name, endorsements);
     }
 
-    virtual std::string get_endorsements(const Name& service_name) override
+    virtual std::vector<uint8_t> get_endorsements(
+      const Name& service_name) override
     {
       check_context();
 

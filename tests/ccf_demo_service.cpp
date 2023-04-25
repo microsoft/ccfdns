@@ -12,8 +12,6 @@
 #include <service/tables/nodes.h>
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
 
-#include "../ccfdns_rpc_types.h"
-
 #include <ccf/_private/ds/thread_messaging.h>
 #include <ccf/_private/http/http_builder.h>
 #include <ccf/_private/http/http_parser.h>

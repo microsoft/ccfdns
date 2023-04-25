@@ -5,6 +5,7 @@
 
 #include "adns_types.h"
 #include "base32.h"
+#include "compression.h"
 #include "formatting.h"
 #include "rfc1035.h"
 #include "rfc3596.h"
@@ -1368,7 +1369,7 @@ namespace aDNS
 
       Name attest_name = Name("attest") + info.address.name;
       remove(cfg.origin, attest_name, Class::IN, Type::AAAA);
-      add_fragmented(cfg.origin, attest_name, attest_rr);
+      add_fragmented(cfg.origin, attest_name, attest_rr, true);
     }
 
     sign(cfg.origin);
@@ -1418,11 +1419,23 @@ namespace aDNS
     uint32_t ttl,
     aDNS::Class class_,
     const small_vector<uint16_t>& rrdata,
+    bool compress,
     uint8_t records_per_name)
   {
     // TODO: remove old records?
 
+    std::vector<uint8_t> tmp;
+
     uint16_t rsz = rrdata.size();
+    const uint8_t* crrdata = rrdata.raw();
+
+    if (compress)
+    {
+      tmp = aDNS::compress(rrdata, 9);
+      crrdata = tmp.data();
+      rsz = tmp.size();
+    }
+
     size_t num_rrs = rsz / 15;
 
     if ((rsz % 15) != 0)
@@ -1456,16 +1469,14 @@ namespace aDNS
         {
           tdata[1] = rsz >> 8;
           tdata[2] = rsz & 0xFF;
-          tdata[3] = num_names >> 8;
-          tdata[4] = num_names & 0xFF;
 
-          for (size_t j = 5; j < 16; j++)
-            tdata[j] = bytes_encoded >= rsz ? 0 : rrdata[bytes_encoded++];
+          for (size_t j = 3; j < 16; j++)
+            tdata[j] = bytes_encoded >= rsz ? 0 : crrdata[bytes_encoded++];
         }
         else
         {
           for (size_t j = 1; j < 16; j++)
-            tdata[j] = bytes_encoded >= rsz ? 0 : rrdata[bytes_encoded++];
+            tdata[j] = bytes_encoded >= rsz ? 0 : crrdata[bytes_encoded++];
         }
 
         add(
@@ -1481,6 +1492,7 @@ namespace aDNS
     const Name& origin,
     const Name& name,
     const ResourceRecord& rr,
+    bool compress,
     uint8_t records_per_name)
   {
     add_fragmented(
@@ -1489,6 +1501,7 @@ namespace aDNS
       rr.ttl,
       static_cast<aDNS::Class>(rr.class_),
       rr.rdata,
+      compress,
       records_per_name);
   }
 
@@ -1499,6 +1512,28 @@ namespace aDNS
         return t;
     throw std::runtime_error(
       fmt::format("no suitable zone found for {}", name));
+  }
+
+  static std::shared_ptr<ravl::Attestation> der_compress(
+    const std::shared_ptr<ravl::Attestation>& att)
+  {
+    switch (att->source)
+    {
+      case ravl::Source::SGX:
+      {
+        auto sgx_att = dynamic_pointer_cast<ravl::sgx::Attestation>(att);
+        sgx_att->compress_pck_certificate_chain();
+        return sgx_att;
+      }
+      case ravl::Source::OPEN_ENCLAVE:
+      {
+        auto oe_att = dynamic_pointer_cast<ravl::oe::Attestation>(att);
+        oe_att->compress_pck_certificate_chain();
+        return oe_att;
+      }
+      default:
+        return att;
+    }
   }
 
   void Resolver::register_service(const RegistrationRequest& rr)
@@ -1529,6 +1564,7 @@ namespace aDNS
 
     bool policy_ok = false;
     std::vector<std::shared_ptr<ravl::Claims>> claims;
+    std::optional<std::vector<uint8_t>> endorsements;
 #ifdef ATTESTATION_VERIFICATION_FAILURE_OK
     try
 #endif
@@ -1546,6 +1582,9 @@ namespace aDNS
         claims.push_back(c);
         policy_data +=
           "\"" + (std::string)info.address.name + "\": " + c->to_json() + ",";
+
+        if (!endorsements)
+          endorsements = att->endorsements;
       }
 
       policy_data += "  }};";
@@ -1593,17 +1632,14 @@ namespace aDNS
           name,
           service_name));
 
-      // Attestations
+      // ATTEST record for each node
       auto att = ravl::parse_attestation(info.attestation);
       att->endorsements.clear();
+      att = der_compress(att);
       j_att_set.push_back(*att);
-
-      // ATTEST record for each node
-      auto attest_rdata = Types::ATTEST(att);
-
+      small_vector<uint16_t> attest_rdata = Types::ATTEST(att);
       ResourceRecord att_rr = mk_rr(
         name, Type::ATTEST, Class::IN, configuration.default_ttl, attest_rdata);
-
       remove(origin, name, Class::IN, Type::ATTEST);
       add(origin, att_rr);
 
@@ -1698,10 +1734,13 @@ namespace aDNS
     // Fragmented ATTEST RR set for service
     auto att_set_name = Name("attest") + service_name;
     remove(origin, att_set_name, Class::IN, Type::AAAA);
-    auto jd = j_att_set.dump();
-    CCF_APP_DEBUG("ATTEST set for service: {}", jd);
     add_fragmented(
-      origin, att_set_name, configuration.default_ttl, Class::IN, jd);
+      origin,
+      att_set_name,
+      configuration.default_ttl,
+      Class::IN,
+      nlohmann::json::to_cbor(j_att_set),
+      true);
 
     // CAA RR for service
     remove(origin, service_name, Class::IN, Type::CAA);
@@ -1710,8 +1749,8 @@ namespace aDNS
 
     sign(origin);
 
-    save_endorsements(
-      service_name, rr.node_information.begin()->second.attestation);
+    if (endorsements)
+      save_endorsements(service_name, compress(*endorsements, 9));
 
     start_service_acme(origin, service_name, rr.csr, rr.contact);
   }
@@ -1792,6 +1831,7 @@ namespace aDNS
 
     bool policy_ok = false;
     std::vector<std::shared_ptr<ravl::Claims>> claims;
+    std::optional<std::vector<uint8_t>> endorsements;
 #ifdef ATTESTATION_VERIFICATION_FAILURE_OK
     try
 #endif
@@ -1809,6 +1849,13 @@ namespace aDNS
         claims.push_back(c);
         policy_data +=
           "\"" + (std::string)info.address.name + "\": " + c->to_json() + ",";
+
+        if (!endorsements)
+        {
+          std::shared_ptr<ravl::Attestation> att =
+            ravl::parse_attestation(info.attestation);
+          endorsements = att->endorsements;
+        }
       }
 
       policy_data += "  }};";
@@ -1827,6 +1874,9 @@ namespace aDNS
 
     remove(origin, dr.subdomain, Class::IN, Type::NS);
 
+    nlohmann::json j_att_set =
+      nlohmann::json::array(); // JSON array of attestations
+
     for (const auto& [id, info] : dr.node_information)
     {
       add(
@@ -1837,6 +1887,26 @@ namespace aDNS
           Class::IN,
           cfg.default_ttl,
           NS(info.address.name)));
+
+      // ATTEST record for each node
+      auto att = ravl::parse_attestation(info.attestation);
+      att->endorsements.clear();
+      att = der_compress(att);
+      auto attest_rdata = Types::ATTEST(att);
+      j_att_set.push_back(*att);
+      ResourceRecord att_rr = mk_rr(
+        info.address.name,
+        Type::ATTEST,
+        Class::IN,
+        cfg.default_ttl,
+        attest_rdata);
+      remove(origin, info.address.name, Class::IN, Type::ATTEST);
+      add(origin, att_rr);
+
+      // Subdomain ATTEST record for each node
+      auto service_att_rr = mk_rr(
+        dr.subdomain, Type::ATTEST, Class::IN, cfg.default_ttl, attest_rdata);
+      add(origin, service_att_rr);
     }
 
     for (const auto& dnskey_rr : dr.dnskey_records)
@@ -1862,6 +1932,17 @@ namespace aDNS
           dnskey_rr.rdata));
     }
 
+    // Fragmented ATTEST RR set for service
+    auto att_set_name = Name("attest") + dr.subdomain;
+    remove(origin, att_set_name, Class::IN, Type::AAAA);
+    add_fragmented(
+      origin,
+      att_set_name,
+      cfg.default_ttl,
+      Class::IN,
+      nlohmann::json::to_cbor(j_att_set),
+      true);
+
     sign(origin);
 
     // Glue records are not signed
@@ -1884,8 +1965,8 @@ namespace aDNS
           RFC1035::A(info.address.ip)));
     }
 
-    save_endorsements(
-      dr.subdomain, dr.node_information.begin()->second.attestation);
+    if (endorsements)
+      save_endorsements(dr.subdomain, compress(*endorsements, 9));
   }
 
   const std::map<uint16_t, Type>& Resolver::get_supported_types() const
