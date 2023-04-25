@@ -1517,6 +1517,9 @@ namespace aDNS
   static std::shared_ptr<ravl::Attestation> der_compress(
     const std::shared_ptr<ravl::Attestation>& att)
   {
+#ifdef ATTESTATION_VERIFICATION_FAILURE_OK
+    return att;
+#else
     switch (att->source)
     {
       case ravl::Source::SGX:
@@ -1534,6 +1537,7 @@ namespace aDNS
       default:
         return att;
     }
+#endif
   }
 
   void Resolver::register_service(const RegistrationRequest& rr)
@@ -1907,6 +1911,11 @@ namespace aDNS
       auto service_att_rr = mk_rr(
         dr.subdomain, Type::ATTEST, Class::IN, cfg.default_ttl, attest_rdata);
       add(origin, service_att_rr);
+
+      // Fragmented ATTEST RR
+      auto attest_name = Name("attest") + info.address.name;
+      remove(origin, attest_name, Class::IN, Type::AAAA);
+      add_fragmented(origin, attest_name, att_rr);
     }
 
     for (const auto& dnskey_rr : dr.dnskey_records)

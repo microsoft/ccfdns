@@ -87,7 +87,7 @@ public:
     }
   }
 
-  small_vector(const std::vector<uint8_t>& bytes)
+  small_vector(const std::vector<uint8_t>& bytes) : size_(0), data(nullptr)
   {
     *this = bytes;
   }
