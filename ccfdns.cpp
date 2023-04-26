@@ -2236,7 +2236,7 @@ namespace ccfdns
           Name service_name =
             Name(get_param(parsed_query, "service_name")).terminated();
           ctx.rpc_ctx->set_response_header(
-            http::headers::CONTENT_TYPE, http::headervalues::contenttype::TEXT);
+            http::headers::CONTENT_TYPE, "application/zlib");
           ctx.rpc_ctx->set_response_body(
             ccfdns->get_endorsements(service_name));
           ctx.rpc_ctx->set_response_status(HTTP_STATUS_OK);
