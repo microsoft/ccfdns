@@ -57,9 +57,6 @@ namespace aDNS::Types
     {
       return ds::to_hex(attestation->cbor());
     }
-
-    static ravl::Attestation generate_quote_info(
-      const std::vector<uint8_t>& node_public_key_der);
   };
 
   class TLSKEY : public RFC4034::DNSKEY

@@ -32,6 +32,7 @@
 #include <openssl/ecdsa.h>
 #include <openssl/ossl_typ.h>
 #include <openssl/x509.h>
+#include <ravl/json.h>
 #include <ravl/oe.h> // TODO: abstract details away
 #include <ravl/openssl.hpp>
 #include <ravl/ravl.h>
@@ -1613,8 +1614,7 @@ namespace aDNS
 
     remove(origin, service_name, Class::IN, Type::ATTEST);
 
-    nlohmann::json j_att_set =
-      nlohmann::json::array(); // JSON array of attestations
+    ravl::json j_att_set = ravl::json::array(); // JSON array of attestations
 
     auto service_protocol =
       rr.node_information.begin()->second.address.protocol;
@@ -1640,7 +1640,7 @@ namespace aDNS
       auto att = ravl::parse_attestation(info.attestation);
       att->endorsements.clear();
       att = der_compress(att);
-      j_att_set.push_back(*att);
+      j_att_set.push_back(ravl::json::from_cbor(att->cbor()));
       small_vector<uint16_t> attest_rdata = Types::ATTEST(att);
       ResourceRecord att_rr = mk_rr(
         name, Type::ATTEST, Class::IN, configuration.default_ttl, attest_rdata);
@@ -1743,7 +1743,7 @@ namespace aDNS
       att_set_name,
       configuration.default_ttl,
       Class::IN,
-      nlohmann::json::to_cbor(j_att_set),
+      ravl::json::to_cbor(j_att_set),
       true);
 
     // CAA RR for service
@@ -1855,11 +1855,7 @@ namespace aDNS
           "\"" + (std::string)info.address.name + "\": " + c->to_json() + ",";
 
         if (!endorsements)
-        {
-          std::shared_ptr<ravl::Attestation> att =
-            ravl::parse_attestation(info.attestation);
           endorsements = att->endorsements;
-        }
       }
 
       policy_data += "  }};";
@@ -1878,8 +1874,7 @@ namespace aDNS
 
     remove(origin, dr.subdomain, Class::IN, Type::NS);
 
-    nlohmann::json j_att_set =
-      nlohmann::json::array(); // JSON array of attestations
+    ravl::json j_att_set = ravl::json::array(); // JSON array of attestations
 
     for (const auto& [id, info] : dr.node_information)
     {
@@ -1896,8 +1891,8 @@ namespace aDNS
       auto att = ravl::parse_attestation(info.attestation);
       att->endorsements.clear();
       att = der_compress(att);
-      auto attest_rdata = Types::ATTEST(att);
-      j_att_set.push_back(*att);
+      j_att_set.push_back(ravl::json::from_cbor(att->cbor()));
+      small_vector<uint16_t> attest_rdata = Types::ATTEST(att);
       ResourceRecord att_rr = mk_rr(
         info.address.name,
         Type::ATTEST,
@@ -1949,7 +1944,7 @@ namespace aDNS
       att_set_name,
       cfg.default_ttl,
       Class::IN,
-      nlohmann::json::to_cbor(j_att_set),
+      ravl::json::to_cbor(j_att_set),
       true);
 
     sign(origin);
