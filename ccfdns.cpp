@@ -1309,6 +1309,9 @@ namespace ccfdns
         throw std::runtime_error("configuration TX ID not found");
       auto receipt = ccf::describe_receipt_v1(*historical_state->receipt);
 
+      CCF_APP_INFO(
+        "CCFDNS: Configuration receipt size: {}", receipt.dump().size());
+
       nlohmann::json j;
       j["txid"] = txid.value();
       j["configuration"] = cfg.value();
@@ -1331,6 +1334,9 @@ namespace ccfdns
         throw std::runtime_error("service registration not found");
       auto receipt = ccf::describe_receipt_v1(*historical_state->receipt);
 
+      CCF_APP_INFO(
+        "CCFDNS: Registration receipt size: {}", receipt.dump().size());
+
       nlohmann::json j;
       j["registration"] = reg.value();
       j["receipt"] = receipt;
@@ -1352,6 +1358,9 @@ namespace ccfdns
       if (!dr)
         throw std::runtime_error("delegation request not found");
       auto receipt = ccf::describe_receipt_v1(*historical_state->receipt);
+
+      CCF_APP_INFO(
+        "CCFDNS: Delegation receipt size: {}", receipt.dump().size());
 
       nlohmann::json j;
       j["delegation"] = dr.value();
@@ -1661,6 +1670,9 @@ namespace ccfdns
         {
           ContextContext cc(ccfdns, ctx);
           const auto in = params.get<Configure::In>();
+          CCF_APP_INFO(
+            "CCFDNS: Configuration request size: {}",
+            ctx.rpc_ctx->get_request_body().size());
           Configure::Out out = {ccfdns->configure(in)};
           return ccf::make_success(out);
         }
@@ -2039,6 +2051,9 @@ namespace ccfdns
         try
         {
           ContextContext cc(ccfdns, ctx);
+          CCF_APP_INFO(
+            "CCFDNS: Registration request size: {}",
+            ctx.rpc_ctx->get_request_body().size());
           const auto in = params.get<RegisterService::In>();
           ccfdns->register_service(in);
           ctx.rpc_ctx->set_response_status(HTTP_STATUS_OK);
@@ -2064,6 +2079,9 @@ namespace ccfdns
         try
         {
           ContextContext cc(ccfdns, ctx);
+          CCF_APP_INFO(
+            "CCFDNS: Delegation request size: {}",
+            ctx.rpc_ctx->get_request_body().size());
           const auto in = params.get<RegisterDelegation::In>();
           ccfdns->register_delegation(in);
           ctx.rpc_ctx->set_response_status(HTTP_STATUS_OK);
