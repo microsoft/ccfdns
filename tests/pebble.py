@@ -115,6 +115,15 @@ def make_pebble_config(
         json.dump(pebble_config, f)
 
 
+def get_pebble_ca_certs(mgmt_address):
+    """Get the pebble CA certificate(s)"""
+    ca = get_without_cert_check("https://" + mgmt_address + "/roots/0")
+    intermediate = get_without_cert_check(
+        "https://" + mgmt_address + "/intermediates/0"
+    )
+    return [intermediate, ca]
+
+
 class Arguments:
     """Pebble arguments"""
 
@@ -221,6 +230,12 @@ def run_pebble_proc(args):
         out,
         err,
     )
+
+    with open("pebble.pem", "w", encoding="ascii") as f:
+        cs = get_pebble_ca_certs(args.mgmt_address)
+        if cs:
+            for c in cs:
+                f.write(c)
 
     return proc, out, err
 
