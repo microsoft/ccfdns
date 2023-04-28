@@ -14,13 +14,15 @@ static PyObject* py_verify_attestation_json(PyObject* self, PyObject* args)
   if (!PyArg_ParseTuple(args, "s", &attestation))
     return NULL;
 
-  ravl_options_t options = {.verbosity = 2, .fresh_endorsements = 0};
+  ravl_options_t options = {0};
+  options.fresh_endorsements = 0;
 
   ravl_status_t r =
     verify_attestation_json(attestation, strlen(attestation), &options);
 
-  if (r != RAVL_OK && last_exception_message)
-    printf("%s\n", last_exception_message);
+  // TODO: figure out how to create exceptions from C
+  // if (r != RAVL_OK && last_exception_message)
+  //   printf("%s\n", last_exception_message);
 
   return r == RAVL_OK ? Py_True : Py_False;
 }
@@ -33,12 +35,14 @@ static PyObject* py_verify_attestation_cbor(PyObject* self, PyObject* args)
   if (!PyArg_ParseTuple(args, "y#", &attestation, &size))
     return NULL;
 
-  ravl_options_t options = {.verbosity = 2, .fresh_endorsements = 1};
+  ravl_options_t options = {0};
+  options.fresh_endorsements = 0;
 
   ravl_status_t r = verify_attestation_cbor(attestation, size, &options);
 
-  if (r != RAVL_OK && last_exception_message)
-    printf("%s\n", last_exception_message);
+  // TODO: figure out how to create exceptions from C
+  // if (r != RAVL_OK && last_exception_message)
+  //   printf("%s\n", last_exception_message);
 
   return r == RAVL_OK ? Py_True : Py_False;
 }
