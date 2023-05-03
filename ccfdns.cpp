@@ -101,6 +101,26 @@ namespace ccfdns
     return std::vector<uint8_t>(s.data(), s.data() + s.size());
   }
 
+  struct RegisterServiceWithPreviousVersion
+  {
+    RegisterService::In request;
+    std::optional<kv::Version> previous_version;
+  };
+
+  DECLARE_JSON_TYPE(RegisterServiceWithPreviousVersion);
+  DECLARE_JSON_REQUIRED_FIELDS(
+    RegisterServiceWithPreviousVersion, request, previous_version);
+
+  struct RegisterDelegationWithPreviousVersion
+  {
+    RegisterDelegation::In request;
+    std::optional<kv::Version> previous_version;
+  };
+
+  DECLARE_JSON_TYPE(RegisterDelegationWithPreviousVersion);
+  DECLARE_JSON_REQUIRED_FIELDS(
+    RegisterDelegationWithPreviousVersion, request, previous_version);
+
   class HTTPClient
   {
   public:
@@ -530,7 +550,8 @@ namespace ccfdns
     const std::string service_registration_policy_table_name =
       "public:ccf.gov.ccfdns.service_registration_policy";
 
-    using RegistrationRequests = ccf::ServiceMap<Name, RegisterService::In>;
+    using RegistrationRequests =
+      ccf::ServiceMap<Name, RegisterServiceWithPreviousVersion>;
     const std::string registration_requests_table_name =
       "public:service_registration_requests";
     using RegistrationRequestsIndex = LastWriteTxIDByKey;
@@ -542,7 +563,8 @@ namespace ccfdns
     const std::string delegation_policy_table_name =
       "public:ccf.gov.ccfdns.delegation_policy";
 
-    using DelegationRequests = ccf::ServiceMap<Name, RegisterDelegation::In>;
+    using DelegationRequests =
+      ccf::ServiceMap<Name, RegisterDelegationWithPreviousVersion>;
     const std::string delegation_requests_table_name =
       "public:delegation_requests";
     using DelegationRequestsIndex = LastWriteTxIDByKey;
@@ -1329,6 +1351,7 @@ namespace ccfdns
         registration_requests_table_name);
       if (!tbl)
         throw std::runtime_error("service registration table not found");
+      auto prev = tbl->get_version_of_previous_write(service_name);
       const auto reg = tbl->get(service_name);
       if (!reg)
         throw std::runtime_error("service registration not found");
@@ -1338,8 +1361,10 @@ namespace ccfdns
         "CCFDNS: Registration receipt size: {}", receipt.dump().size());
 
       nlohmann::json j;
-      j["registration"] = reg.value();
+      j["registration"] = reg->request;
       j["receipt"] = receipt;
+      if (reg->previous_version)
+        j["previous_version"] = *reg->previous_version;
       return j.dump();
     }
 
@@ -1363,8 +1388,10 @@ namespace ccfdns
         "CCFDNS: Delegation receipt size: {}", receipt.dump().size());
 
       nlohmann::json j;
-      j["delegation"] = dr.value();
+      j["delegation"] = dr->request;
       j["receipt"] = receipt;
+      if (dr->previous_version)
+        j["previous_version"] = *dr->previous_version;
       return j.dump();
     }
 
@@ -1388,12 +1415,13 @@ namespace ccfdns
     {
       check_context();
 
-      auto lrr = ctx->tx.template rw<CCFDNS::RegistrationRequests>(
+      auto rrtbl = ctx->tx.template rw<CCFDNS::RegistrationRequests>(
         registration_requests_table_name);
-      if (!lrr)
+      if (!rrtbl)
         throw std::runtime_error(
           "could not access service registration request table");
-      lrr->put(name, rr);
+
+      rrtbl->put(name, {rr, rrtbl->get_version_of_previous_write(name)});
     }
 
     virtual void save_delegation_request(
@@ -1401,12 +1429,12 @@ namespace ccfdns
     {
       check_context();
 
-      auto lrr = ctx->tx.template rw<CCFDNS::DelegationRequests>(
+      auto drtbl = ctx->tx.template rw<CCFDNS::DelegationRequests>(
         delegation_requests_table_name);
-      if (!lrr)
+      if (!drtbl)
         throw std::runtime_error(
           "could not access delegation registration request table");
-      lrr->put(name, dr);
+      drtbl->put(name, {dr, drtbl->get_version_of_previous_write(name)});
     }
 
     virtual void start_service_acme(
@@ -1640,6 +1668,18 @@ namespace ccfdns
       }
     };
 
+    std::optional<ccf::TxID> txid_from_query(http::ParsedQuery pq)
+    {
+      if (!pq.contains("version"))
+        return std::nullopt;
+
+      ccf::View view;
+      ccf::SeqNo seqno = stol(get_param(pq, "version"));
+      if (get_view_for_seqno_v1(seqno, view) == ccf::ApiResult::OK)
+        return ccf::TxID{view, seqno};
+      return std::nullopt;
+    }
+
   public:
     Handlers(ccfapp::AbstractNodeContext& context) :
       ccf::UserEndpointRegistry(context)
@@ -1721,7 +1761,10 @@ namespace ccfdns
         auto version = tbl->get_version_of_previous_write();
         if (!version || *version == kv::NoVersion)
           return std::nullopt;
-        return ccf::TxID{.view = consensus->get_view(), .seqno = *version};
+        ccf::View view;
+        if (get_view_for_seqno_v1(*version, view) != ccf::ApiResult::OK)
+          return std::nullopt;
+        return ccf::TxID{.view = view, .seqno = *version};
       };
 
       make_read_only_endpoint(
@@ -1765,6 +1808,9 @@ namespace ccfdns
         -> std::optional<ccf::TxID> {
         const auto parsed_query =
           http::parse_query(ctx.rpc_ctx->get_request_query());
+        auto txid = txid_from_query(parsed_query);
+        if (txid)
+          return *txid;
         Name service_name =
           Name(get_param(parsed_query, "service-name")).terminated();
         auto sn = CCFDNS::RegistrationRequests::KeySerialiser::to_serialised(
@@ -1815,6 +1861,9 @@ namespace ccfdns
         -> std::optional<ccf::TxID> {
         const auto parsed_query =
           http::parse_query(ctx.rpc_ctx->get_request_query());
+        auto txid = txid_from_query(parsed_query);
+        if (txid)
+          return *txid;
         Name subdomain =
           Name(get_param(parsed_query, "subdomain")).terminated();
         auto ssub =
@@ -2288,7 +2337,7 @@ namespace ccfapp
 #if defined(TRACE_LOGGING)
     logger::config::level() = logger::TRACE;
 #elif defined(VERBOSE_LOGGING)
-    logger::config::level() = logger::TRACE;
+    logger::config::level() = logger::DEBUG;
 #else
     logger::config::level() = logger::INFO;
 #endif
