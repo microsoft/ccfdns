@@ -2288,7 +2288,7 @@ namespace ccfapp
 #if defined(TRACE_LOGGING)
     logger::config::level() = logger::TRACE;
 #elif defined(VERBOSE_LOGGING)
-    logger::config::level() = logger::DEBUG;
+    logger::config::level() = logger::TRACE;
 #else
     logger::config::level() = logger::INFO;
 #endif
