@@ -1,23 +1,25 @@
 import argparse
 import base64
-import cbor2
-import dns.resolver
-import dns.dnssec
 import json
 import ssl
-import requests
 import tempfile
 import urllib
 import zlib
 import time
 import http
 import sys
+import traceback
+from typing import List, Tuple
+
+import cbor2
+import dns.resolver
+import dns.dnssec
+from dns.rdatatype import RdataType as rd
+import dns.rdtypes
+import requests
 
 import ravl
 
-import dns
-from dns.rdatatype import RdataType as rd
-import dns.rdtypes
 
 from urllib.parse import urlparse, urlunparse, urlunsplit
 
@@ -29,6 +31,9 @@ from hashlib import sha256
 import ccf.receipt
 
 ATTEST = 32771  # RR type
+MAX_ENTRIES_PER_AAAA_NAME = 64
+
+rslvr = dns.resolver.Resolver()
 
 
 def split_pem(pem):
@@ -66,10 +71,14 @@ def default_port_protocol(scheme: str):
 
 def get_records(name: str, dt: rd):
     """Get DNS records for a name and type"""
-    rslvr = dns.resolver.Resolver()
+
+    global rslvr
+    if not rslvr:
+        rslvr = dns.resolver.Resolver()
+
     rslvr.use_edns(0, dns.flags.DO, 4096)
     answer = rslvr.resolve(name, dt, raise_on_no_answer=False)
-    if not answer.response.ednsflags & dns.flags.DO:
+    if not (answer.response.ednsflags & dns.flags.DO):
         raise ValueError("DNSSEC flag not set in answer")
     return answer
 
@@ -90,6 +99,33 @@ def get_addresses(service_name: str, indent=2) -> dns.resolver.Answer:
     print(f"{' '*indent}- A/AAAA Addresses")
     for address in r:
         print(f"{' '*(indent+2)}- {address}")
+
+    return r
+
+
+def get_ns_records(domain: str, indent=2) -> List[Tuple[str, str]]:
+    """Get all addresses for a host/service name"""
+
+    names = []
+    rrs = get_records(domain, rd.NS)
+    if rrs is not None and rrs.response is not None:
+        if rrs.response.authority:
+            for rra in rrs:
+                if rra.rdtype == rd.NS:
+                    for rr in rra.items:
+                        names.append(str(rr))
+        else:
+            for rr in rrs:
+                names.append(str(rr))
+
+    r = []
+    for name in names:
+        r += [(name, str(rr)) for rr in get_records(name, rd.A)]
+        r += [(name, str(rr)) for rr in get_records(name, rd.AAAA)]
+
+    print(f"{' '*indent}- Nameserver addresses")
+    for n, a in r:
+        print(f"{' '*(indent+2)}- {n}: {a}")
 
     return r
 
@@ -199,20 +235,21 @@ def get_shared_endorsements(
     return r
 
 
-def find_adns_server(args, service_name):
-    """Find the aDNS server for a service"""
+def find_adns_parent(args, subdomain):
+    """Find the aDNS parent for a subdomain"""
 
-    if args.server:
-        return args.server
+    if "parent" in args and args.parent:
+        return args.parent
     else:
         num = 0
-        while num == 0 and service_name != "":
-            rrs = get_records(service_name, rd.NS)
+        subdomain = ".".join(subdomain.split(".")[1:])
+        while num == 0 and subdomain != "":
+            rrs = get_records(subdomain, rd.NS)
             num = len(rrs)
             if num == 0:
-                service_name = ".".join(service_name.split(".")[1:])
+                subdomain = ".".join(subdomain.split(".")[1:])
         if num != 0:
-            return service_name
+            return subdomain
         else:
             raise ValueError("could not determine aDNS server")
 
@@ -226,21 +263,24 @@ def recombine(name: str):
     i = 0
     bytes_seen = 0
     while num_bytes == 0 or bytes_seen < num_bytes:
-        r += bytearray(64 * 15)
+        r += bytearray(MAX_ENTRIES_PER_AAAA_NAME * 15)
         rrs = get_records(f"_{i}." + name, rd.AAAA)
-        for rr in rrs:
-            b = rr.to_digestable()
-            assert len(b) == 16
-            index = b[0]
-            if i == 0 and index == 0:
-                num_bytes = b[1] << 8 | b[2]
-                r[0:13] = b[3:]
-                bytes_seen += 13
-            else:
-                start = (i * 64 * 15) - 2 + index * 15
-                r[start : start + 15] = b[1:]
-                bytes_seen += 15
-        i = i + 1
+        if len(rrs) == 0:
+            break
+        else:
+            for rr in rrs:
+                b = rr.to_digestable()
+                assert len(b) == 16
+                index = b[0]
+                if i == 0 and index == 0:
+                    num_bytes = b[1] << 8 | b[2]
+                    r[0:13] = b[3:]
+                    bytes_seen += 13
+                else:
+                    start = (i * MAX_ENTRIES_PER_AAAA_NAME * 15) - 2 + index * 15
+                    r[start : start + 15] = b[1:]
+                    bytes_seen += 15
+            i = i + 1
 
     r = r[:num_bytes]
     return r
@@ -284,6 +324,8 @@ def verify_attest(service_url, endorsements, indent=2):
 
     print(f"{' '*indent}- ATTEST records")
     rrs = get_records(service_url.hostname, ATTEST)
+    if len(rrs) <= 0:
+        raise ValueError("no attestation to verify")
     print(f"{' '*(indent+2)}- {len(rrs)} attestations")
 
     i = 1
@@ -418,6 +460,57 @@ def verify_service_registration(
         verify_ccf_receipt(receipt, adns_https_url, ca_certificates, indent + 2)
 
 
+def verify_delegation_registration(
+    subdomain,
+    service_certificate,
+    adns_https_url,
+    ca_certificates,
+    receipt_checks=True,
+    indent=2,
+):
+    """Verify service registration"""
+
+    print(f"{' '*indent}- Registration")
+    url = adns_https_url.geturl() + "/delegation-receipt"
+    link = url + f"?subdomain={subdomain}"
+    print(f"{' '*(indent+2)}- See {link}")
+
+    response = get(
+        url,
+        {"subdomain": subdomain},
+        ca_certificates,
+    )
+
+    reg_info = json.loads(response.text)
+
+    reg = reg_info["delegation"]
+    print(f"{' '*(indent+2)}- Contact: {reg['contact']}")
+
+    service_cert_pem = service_certificate.encode("ascii")
+    service_x509 = x509.load_pem_x509_certificate(service_cert_pem)
+    service_key_bytes = service_x509.public_key().public_bytes(
+        encoding=serialization.Encoding.DER,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+
+    csr = x509.load_der_x509_csr(base64.b64decode(reg["csr"]))
+    print(f"{' '*(indent+2)}- CSR subject: {csr.subject}")
+
+    csr_key_bytes = csr.public_key().public_bytes(
+        encoding=serialization.Encoding.DER,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+
+    if service_key_bytes == csr_key_bytes:
+        print(f"{' '*(indent+2)}- CSR public key matches service key")
+    else:
+        print(f"{' '*(indent+2)}- CSR public key **does not match** service key")
+
+    if receipt_checks:
+        receipt = reg_info["receipt"]
+        verify_ccf_receipt(receipt, adns_https_url, ca_certificates, indent + 2)
+
+
 def show_policy_links(adns_https_url, indent=2):
     """Show links to the registration and delegation policies"""
 
@@ -427,18 +520,30 @@ def show_policy_links(adns_https_url, indent=2):
     print(f"{' '*indent}- Delegation policy: {url}")
 
 
+def verify_node_addresses(node_addresses, addresses, indent=2):
+    """Verify that a set of node addresses is included in a set of addresses"""
+
+    for n in node_addresses:
+        if n not in addresses:
+            raise ValueError(f"node address {n} not in address list")
+    print(f"{' '*(indent)}- Appears in address records")
+
+
 def service(args):
     """Service registration verification"""
 
     indent = 2
     try:
+        if args.nameservers:
+            rslvr.nameservers = args.nameservers
+
         service_url = urlparse(args.url)
 
         print(f"* Service: {args.url}")
 
         adns_https_url = urlparse(
             "https://"
-            + find_adns_server(args, service_url.hostname)
+            + find_adns_parent(args, service_url.hostname)
             + ":"
             + str(args.https_port)
             + "/app"
@@ -466,7 +571,8 @@ def service(args):
         # Verify service records
         exwrap(verify_tlsa, service_url, service_certificate)
         exwrap(verify_attest, service_url, endorsements)
-        exwrap(verify_fragmented_attest, service_url, endorsements)
+        if not args.no_fragmented_checks:
+            exwrap(verify_fragmented_attest, service_url, endorsements)
         exwrap(
             verify_service_registration,
             service_url,
@@ -476,21 +582,17 @@ def service(args):
             args.receipt_checks,
         )
 
-        # Verify node records
         print(f"{' '*indent}- Individual node records")
         for n in node_names:
             print(f"{' '*(indent*2)}- {n}")
             node_url = urlparse("https://" + n)
-            node_addresses = get_addresses(node_url.hostname, indent=3 * indent)
+            node_addresses = get_addresses(n, indent=3 * indent)
             exwrap(verify_attest, node_url, endorsements, indent=3 * indent)
-            exwrap(verify_fragmented_attest, node_url, endorsements, indent=3 * indent)
-
-            for node_address in node_addresses:
-                if node_address not in addresses:
-                    raise ValueError(
-                        f"node address {node_address} not in service address list"
-                    )
-                print(f"{' '*(indent*3)}- Appears in service address records")
+            if not args.no_fragmented_checks:
+                exwrap(
+                    verify_fragmented_attest, node_url, endorsements, indent=3 * indent
+                )
+            exwrap(verify_node_addresses, node_addresses, addresses, indent=3 * indent)
 
         return 0
     except Exception as ex:
@@ -504,10 +606,72 @@ def delegation(args):
 
     indent = 2
     try:
-        raise ValueError("Not implemented yet")
+        if args.nameservers:
+            rslvr.nameservers = args.nameservers
+
+        child_url = urlparse(args.domain)
+
+        print(f"* Delegation: {args.domain}")
+
+        parent_url = urlparse(
+            "https://"
+            + find_adns_parent(args, args.domain)
+            + ":"
+            + str(args.https_port)
+            + "/app"
+        )
+
+        print(f"{' '*indent}- Parent at {parent_url.hostname}")
+        show_policy_links(parent_url, indent=2 * indent)
+
+        child_url = urlparse(
+            "https://" + args.domain + ":" + str(args.https_port) + "/"
+        )
+        parent_certificate = get_server_certificate(parent_url)
+        child_certificate = get_server_certificate(child_url)
+
+        ca_certificates = []
+        if args.ca_certificate_files:
+            for f in args.ca_certificate_files:
+                ca_certificates += split_pem(open(f, "r", encoding="ascii").read())
+
+        # ca_certificates = get_pebble_ca_certs("localhost:1025")
+
+        ns_names_addr = get_ns_records(args.domain)
+        node_names = extract_node_names(child_url, child_certificate)
+        endorsements = get_shared_endorsements(parent_url, args.domain, ca_certificates)
+
+        exwrap(verify_attest, child_url, endorsements)
+        if not args.no_fragmented_checks:
+            exwrap(verify_fragmented_attest, child_url, endorsements)
+        exwrap(
+            verify_delegation_registration,
+            args.domain,
+            child_certificate,
+            parent_url,
+            ca_certificates,
+            args.receipt_checks,
+        )
+
+        print(f"{' '*indent}- Individual node records")
+        ns_addresses = [a for _, a in ns_names_addr]
+        for n in node_names:
+            print(f"{' '*(indent*2)}- {n}")
+            node_url = urlparse("https://" + n)
+            node_addresses = get_addresses(n, indent=3 * indent)
+            exwrap(verify_attest, node_url, endorsements, indent=3 * indent)
+            if not args.no_fragmented_checks:
+                exwrap(
+                    verify_fragmented_attest, node_url, endorsements, indent=3 * indent
+                )
+            exwrap(
+                verify_node_addresses, node_addresses, ns_addresses, indent=3 * indent
+            )
+
         return 0
     except Exception as ex:
         print(f"{' '*(indent*2)}- **Error**: {str(ex)}")
+        traceback.print_exc()
 
     return 1
 
@@ -530,8 +694,18 @@ if __name__ == "__main__":
         "--server",
         type=str,
         required=False,
-        help="URL of the aDNS server to use",
+        help="URL of the aDNS server to check against",
         default=None,
+    )
+    service_parser.add_argument(
+        "-n",
+        "--name-server",
+        type=str,
+        required=False,
+        nargs="+",
+        help="Nameserver IP addresses",
+        default=None,
+        dest="nameservers",
     )
     service_parser.add_argument(
         "-p",
@@ -554,7 +728,16 @@ if __name__ == "__main__":
         "--no-receipt-checks",
         dest="receipt_checks",
         default=True,
+        action="store_true",
         help="Do not check receipts (e.g. if they are not in CCF format)",
+    )
+    service_parser.add_argument(
+        "-f",
+        "--no-fragmented-checks",
+        dest="no_fragmented_checks",
+        default=False,
+        action="store_true",
+        help="Do not check AAAA-fragmented records",
     )
     service_parser.set_defaults(func=service)
 
@@ -565,6 +748,56 @@ if __name__ == "__main__":
         "domain",
         type=str,
         help="aDNS-registered domain name",
+    )
+    delegation_parser.add_argument(
+        "-c",
+        "--ca-certificate",
+        dest="ca_certificate_files",
+        type=str,
+        required=False,
+        nargs="+",
+        help="CA certificate filename",
+    )
+    delegation_parser.add_argument(
+        "-p",
+        "--https-port",
+        type=str,
+        help="aDNS server HTTPS (management) port",
+        default=8443,
+    )
+    delegation_parser.add_argument(
+        "-a",
+        "--parent",
+        type=str,
+        required=False,
+        help="Parent aDNS server",
+        default=None,
+    )
+    delegation_parser.add_argument(
+        "-n",
+        "--name-server",
+        type=str,
+        required=False,
+        nargs="+",
+        help="Nameserver IP addresses",
+        default=None,
+        dest="nameservers",
+    )
+    delegation_parser.add_argument(
+        "-r",
+        "--no-receipt-checks",
+        dest="receipt_checks",
+        default=True,
+        action="store_true",
+        help="Do not check receipts (e.g. if they are not in CCF format)",
+    )
+    delegation_parser.add_argument(
+        "-f",
+        "--no-fragmented-checks",
+        dest="no_fragmented_checks",
+        default=False,
+        action="store_true",
+        help="Do not check AAAA-fragmented records",
     )
     delegation_parser.set_defaults(func=delegation)
 

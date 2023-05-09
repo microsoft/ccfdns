@@ -622,16 +622,19 @@ namespace aDNS
 
     bool delegated = is_delegated(origin, qname);
 
-    if (!delegated || qtype == QType::DS)
+    if (
+      !delegated || qtype == QType::DS || qtype == QType::ATTEST ||
+      qtype == QType::AAAA)
     {
       records = find_records(origin, qname, qtype, qclass);
-      result.is_authoritative = true;
+      if (!records.empty())
+        result.is_authoritative = true;
     }
-    else if (qtype == QType::A)
+    else if (qtype == QType::A || qtype == QType::AAAA)
     {
       // Direct query for glue records. Not sure queries of this form are
       // standards compliant.
-      records = find_records(origin + Name("glue."), qname, QType::A, qclass);
+      records = find_records(origin + Name("glue."), qname, qtype, qclass);
       result.is_authoritative = true;
     }
 

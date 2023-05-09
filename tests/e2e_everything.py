@@ -330,7 +330,7 @@ def main():
         )
     else:
         pebble_args = pebble.Arguments(
-            # dns_address="10.50.50.50:53",
+            # dns_address="10.1.0.4:53",
             wait_forever=False,
             http_port=8080,
             ca_cert_filename="pebble-tls-cert.pem",
@@ -386,7 +386,7 @@ def main():
                 rdt.SOA,
                 mname="ns1.adns.ccf.dev.",
                 rname="some-dev.adns.ccf.dev.",
-                serial=4,
+                serial=8,
                 refresh=604800,
                 retry=21600,
                 expire=2419200,
@@ -478,9 +478,9 @@ def main():
             SOA.SOA(
                 rdc.IN,
                 rdt.SOA,
-                mname="ns1.sub.adns.ccf.dev.",
+                mname=sub_adns_args.node_addresses[0][2] + ".",
                 rname="some-dev.sub.adns.ccf.dev.",
-                serial=4,
+                serial=8,
                 refresh=604800,
                 retry=21600,
                 expire=2419200,
