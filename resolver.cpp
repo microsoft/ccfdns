@@ -627,7 +627,7 @@ namespace aDNS
       qtype == QType::AAAA)
     {
       records = find_records(origin, qname, qtype, qclass);
-      if (!records.empty())
+      if (!delegated)
         result.is_authoritative = true;
     }
     else if (qtype == QType::A || qtype == QType::AAAA)
