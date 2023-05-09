@@ -1297,6 +1297,32 @@ namespace aDNS
         r));
   }
 
+  static std::shared_ptr<ravl::Attestation> der_compress(
+    const std::shared_ptr<ravl::Attestation>& att)
+  {
+#ifdef ATTESTATION_VERIFICATION_FAILURE_OK
+    return att;
+#else
+    switch (att->source)
+    {
+      case ravl::Source::SGX:
+      {
+        auto sgx_att = dynamic_pointer_cast<ravl::sgx::Attestation>(att);
+        sgx_att->compress_pck_certificate_chain();
+        return sgx_att;
+      }
+      case ravl::Source::OPEN_ENCLAVE:
+      {
+        auto oe_att = dynamic_pointer_cast<ravl::oe::Attestation>(att);
+        oe_att->compress_pck_certificate_chain();
+        return oe_att;
+      }
+      default:
+        return att;
+    }
+#endif
+  }
+
   Resolver::RegistrationInformation Resolver::configure(
     const Configuration& cfg)
   {
@@ -1362,18 +1388,20 @@ namespace aDNS
 
       auto att = ravl::parse_attestation(info.attestation);
       att->endorsements.clear();
+      att = der_compress(att);
 
+      small_vector<uint16_t> attest_rdata = Types::ATTEST(att);
       auto attest_rr = mk_rr(
         info.address.name,
         Type::ATTEST,
         Class::IN,
         cfg.default_ttl,
-        Types::ATTEST(att));
+        attest_rdata);
       add(cfg.origin, attest_rr);
 
       Name attest_name = Name("attest") + info.address.name;
       remove(cfg.origin, attest_name, Class::IN, Type::AAAA);
-      add_fragmented(cfg.origin, attest_name, attest_rr, true);
+      add_fragmented(cfg.origin, attest_name, attest_rr);
     }
 
     sign(cfg.origin);
@@ -1516,32 +1544,6 @@ namespace aDNS
         return t;
     throw std::runtime_error(
       fmt::format("no suitable zone found for {}", name));
-  }
-
-  static std::shared_ptr<ravl::Attestation> der_compress(
-    const std::shared_ptr<ravl::Attestation>& att)
-  {
-#ifdef ATTESTATION_VERIFICATION_FAILURE_OK
-    return att;
-#else
-    switch (att->source)
-    {
-      case ravl::Source::SGX:
-      {
-        auto sgx_att = dynamic_pointer_cast<ravl::sgx::Attestation>(att);
-        sgx_att->compress_pck_certificate_chain();
-        return sgx_att;
-      }
-      case ravl::Source::OPEN_ENCLAVE:
-      {
-        auto oe_att = dynamic_pointer_cast<ravl::oe::Attestation>(att);
-        oe_att->compress_pck_certificate_chain();
-        return oe_att;
-      }
-      default:
-        return att;
-    }
-#endif
   }
 
   void Resolver::register_service(const RegistrationRequest& rr)

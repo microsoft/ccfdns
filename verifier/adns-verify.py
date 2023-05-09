@@ -470,7 +470,7 @@ def verify_delegation_registration(
 ):
     """Verify service registration"""
 
-    print(f"{' '*indent}- Registration")
+    print(f"{' '*indent}- Delegation registration")
     url = adns_https_url.geturl() + "/delegation-receipt"
     link = url + f"?subdomain={subdomain}"
     print(f"{' '*(indent+2)}- See {link}")
@@ -520,6 +520,23 @@ def show_policy_links(adns_https_url, indent=2):
     print(f"{' '*indent}- Delegation policy: {url}")
 
 
+def show_certificate(certificate, indent=2):
+    """Show certificate information"""
+
+    sx509 = x509.load_pem_x509_certificate(certificate.encode("ascii"))
+    print(f"{' '*indent}- TLS certificate")
+    print(f"{' '*indent*2}- Subject: {sx509.subject}")
+    print(f"{' '*indent*2}- Issuer: {sx509.issuer}")
+    print(f"{' '*indent*2}- Alternative names")
+
+    san_ext = sx509.extensions.get_extension_for_oid(
+        x509.ExtensionOID.SUBJECT_ALTERNATIVE_NAME
+    )
+
+    for san in san_ext.value:
+        print(f"{' '*indent*3}- {str(san)}")
+
+
 def verify_node_addresses(node_addresses, addresses, indent=2):
     """Verify that a set of node addresses is included in a set of addresses"""
 
@@ -537,6 +554,9 @@ def service(args):
         if args.nameservers:
             rslvr.nameservers = args.nameservers
 
+        if not "://" in args.url:
+            args.url = "https://" + args.url
+
         service_url = urlparse(args.url)
 
         print(f"* Service: {args.url}")
@@ -549,11 +569,13 @@ def service(args):
             + "/app"
         )
 
-        print(f"{' '*indent}- Registered at {adns_https_url.hostname}")
+        print(f"{' '*indent}- Registered with {adns_https_url.hostname}")
         show_policy_links(adns_https_url, indent=2 * indent)
 
         # adns_server_certificate = get_server_certificate(adns_https_url)
         service_certificate = get_server_certificate(service_url)
+
+        show_certificate(service_certificate)
 
         ca_certificates = []
         if args.ca_certificate_files:
@@ -564,12 +586,12 @@ def service(args):
 
         addresses = get_addresses(service_url.hostname)
         node_names = extract_node_names(service_url, service_certificate)
-        endorsements = get_shared_endorsements(
-            adns_https_url, service_url.hostname, ca_certificates
-        )
 
         # Verify service records
         exwrap(verify_tlsa, service_url, service_certificate)
+        endorsements = get_shared_endorsements(
+            adns_https_url, service_url.hostname, ca_certificates
+        )
         exwrap(verify_attest, service_url, endorsements)
         if not args.no_fragmented_checks:
             exwrap(verify_fragmented_attest, service_url, endorsements)
@@ -621,14 +643,17 @@ def delegation(args):
             + "/app"
         )
 
-        print(f"{' '*indent}- Parent at {parent_url.hostname}")
+        print(f"{' '*indent}- Parent: {parent_url.hostname}")
         show_policy_links(parent_url, indent=2 * indent)
 
         child_url = urlparse(
             "https://" + args.domain + ":" + str(args.https_port) + "/"
         )
+
         parent_certificate = get_server_certificate(parent_url)
         child_certificate = get_server_certificate(child_url)
+
+        show_certificate(child_certificate)
 
         ca_certificates = []
         if args.ca_certificate_files:
