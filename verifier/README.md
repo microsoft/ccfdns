@@ -23,7 +23,8 @@ export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/path/to/ravl/build
 Run verifier:
 
 ```
-python adns-verify.py https://service43.test.attested.name:443/
+python adns-verify.py service https://service43.test.attested.name:443/
+python adns-verify.py delegation sub.test.attested.name
 ```
 
 You may need a .pem file with CA certificates, e.g.

@@ -622,13 +622,10 @@ namespace aDNS
 
     bool delegated = is_delegated(origin, qname);
 
-    if (
-      !delegated || qtype == QType::DS || qtype == QType::ATTEST ||
-      qtype == QType::AAAA)
+    if (!delegated || qtype == QType::DS)
     {
       records = find_records(origin, qname, qtype, qclass);
-      if (!delegated)
-        result.is_authoritative = true;
+      result.is_authoritative = true;
     }
     else if (qtype == QType::A || qtype == QType::AAAA)
     {
@@ -1323,6 +1320,57 @@ namespace aDNS
 #endif
   }
 
+  void Resolver::add_attestation_records(
+    const Name& origin,
+    const Name& service_name,
+    const std::map<std::string, NodeInfo>& node_info)
+  {
+    auto cfg = get_configuration();
+    ravl::json j_att_set = ravl::json::array(); // JSON array of attestations
+
+    remove(origin, origin, Class::IN, Type::ATTEST);
+
+    for (const auto& [id, info] : node_info)
+    {
+      // ATTEST record for each node
+      auto att = ravl::parse_attestation(info.attestation);
+      att->endorsements.clear();
+      att = der_compress(att);
+      j_att_set.push_back(ravl::json::from_cbor(att->cbor()));
+
+      small_vector<uint16_t> attest_rdata = Types::ATTEST(att);
+      ResourceRecord att_rr = mk_rr(
+        info.address.name,
+        Type::ATTEST,
+        Class::IN,
+        cfg.default_ttl,
+        attest_rdata);
+      remove(origin, info.address.name, Class::IN, Type::ATTEST);
+      add(origin, att_rr);
+
+      // Service name/subdomain ATTEST record for each node
+      auto service_att_rr = mk_rr(
+        service_name, Type::ATTEST, Class::IN, cfg.default_ttl, attest_rdata);
+      add(origin, service_att_rr);
+
+      // Fragmented ATTEST RR
+      auto attest_name = Name("attest") + info.address.name;
+      remove(origin, attest_name, Class::IN, Type::AAAA);
+      add_fragmented(origin, attest_name, att_rr);
+    }
+
+    // Fragmented ATTEST RR set for service
+    auto att_set_name = Name("attest") + service_name;
+    remove(origin, att_set_name, Class::IN, Type::AAAA);
+    add_fragmented(
+      origin,
+      att_set_name,
+      cfg.default_ttl,
+      Class::IN,
+      ravl::json::to_cbor(j_att_set),
+      true);
+  }
+
   Resolver::RegistrationInformation Resolver::configure(
     const Configuration& cfg)
   {
@@ -1382,27 +1430,7 @@ namespace aDNS
       add_caa_records(cfg.origin, addr.name, cfg.service_ca.name, cfg.contact);
     }
 
-    for (const auto& [_, info] : out.node_information)
-    {
-      remove(cfg.origin, info.address.name, Class::IN, Type::ATTEST);
-
-      auto att = ravl::parse_attestation(info.attestation);
-      att->endorsements.clear();
-      att = der_compress(att);
-
-      small_vector<uint16_t> attest_rdata = Types::ATTEST(att);
-      auto attest_rr = mk_rr(
-        info.address.name,
-        Type::ATTEST,
-        Class::IN,
-        cfg.default_ttl,
-        attest_rdata);
-      add(cfg.origin, attest_rr);
-
-      Name attest_name = Name("attest") + info.address.name;
-      remove(cfg.origin, attest_name, Class::IN, Type::AAAA);
-      add_fragmented(cfg.origin, attest_name, attest_rr);
-    }
+    add_attestation_records(cfg.origin, cfg.origin, out.node_information);
 
     sign(cfg.origin);
 
@@ -1617,10 +1645,6 @@ namespace aDNS
     auto pk_der = public_key.der_pubkey();
     small_vector<uint16_t> public_key_sv(pk_der.size(), pk_der.data());
 
-    remove(origin, service_name, Class::IN, Type::ATTEST);
-
-    ravl::json j_att_set = ravl::json::array(); // JSON array of attestations
-
     auto service_protocol =
       rr.node_information.begin()->second.address.protocol;
     auto service_port = rr.node_information.begin()->second.address.port;
@@ -1640,31 +1664,6 @@ namespace aDNS
           "node name '{}' outside of service sub-zone '{}'",
           name,
           service_name));
-
-      // ATTEST record for each node
-      auto att = ravl::parse_attestation(info.attestation);
-      att->endorsements.clear();
-      att = der_compress(att);
-      j_att_set.push_back(ravl::json::from_cbor(att->cbor()));
-      small_vector<uint16_t> attest_rdata = Types::ATTEST(att);
-      ResourceRecord att_rr = mk_rr(
-        name, Type::ATTEST, Class::IN, configuration.default_ttl, attest_rdata);
-      remove(origin, name, Class::IN, Type::ATTEST);
-      add(origin, att_rr);
-
-      // Service-name ATTEST record for each node
-      auto service_att_rr = mk_rr(
-        service_name,
-        Type::ATTEST,
-        Class::IN,
-        configuration.default_ttl,
-        attest_rdata);
-      add(origin, service_att_rr);
-
-      // Fragmented ATTEST RR
-      auto attest_name = Name("attest") + name;
-      remove(origin, attest_name, Class::IN, Type::AAAA);
-      add_fragmented(origin, attest_name, att_rr);
 
       add(
         origin,
@@ -1713,6 +1712,8 @@ namespace aDNS
       add_caa_records(origin, name, configuration.service_ca.name, rr.contact);
     }
 
+    add_attestation_records(origin, service_name, rr.node_information);
+
     if (protocol_port_same_forall)
     {
       // TLSA RR for service
@@ -1739,17 +1740,6 @@ namespace aDNS
       remove(origin, service_tlsa_name, Class::IN, Type::AAAA);
       add_fragmented(origin, service_tlsa_name, tlsa_rr);
     }
-
-    // Fragmented ATTEST RR set for service
-    auto att_set_name = Name("attest") + service_name;
-    remove(origin, att_set_name, Class::IN, Type::AAAA);
-    add_fragmented(
-      origin,
-      att_set_name,
-      configuration.default_ttl,
-      Class::IN,
-      ravl::json::to_cbor(j_att_set),
-      true);
 
     // CAA RR for service
     remove(origin, service_name, Class::IN, Type::CAA);
@@ -1879,8 +1869,6 @@ namespace aDNS
 
     remove(origin, dr.subdomain, Class::IN, Type::NS);
 
-    ravl::json j_att_set = ravl::json::array(); // JSON array of attestations
-
     for (const auto& [id, info] : dr.node_information)
     {
       add(
@@ -1891,31 +1879,6 @@ namespace aDNS
           Class::IN,
           cfg.default_ttl,
           NS(info.address.name)));
-
-      // ATTEST record for each node
-      auto att = ravl::parse_attestation(info.attestation);
-      att->endorsements.clear();
-      att = der_compress(att);
-      j_att_set.push_back(ravl::json::from_cbor(att->cbor()));
-      small_vector<uint16_t> attest_rdata = Types::ATTEST(att);
-      ResourceRecord att_rr = mk_rr(
-        info.address.name,
-        Type::ATTEST,
-        Class::IN,
-        cfg.default_ttl,
-        attest_rdata);
-      remove(origin, info.address.name, Class::IN, Type::ATTEST);
-      add(origin, att_rr);
-
-      // Subdomain ATTEST record for each node
-      auto service_att_rr = mk_rr(
-        dr.subdomain, Type::ATTEST, Class::IN, cfg.default_ttl, attest_rdata);
-      add(origin, service_att_rr);
-
-      // Fragmented ATTEST RR
-      auto attest_name = Name("attest") + info.address.name;
-      remove(origin, attest_name, Class::IN, Type::AAAA);
-      add_fragmented(origin, attest_name, att_rr);
     }
 
     for (const auto& dnskey_rr : dr.dnskey_records)
@@ -1941,16 +1904,7 @@ namespace aDNS
           dnskey_rr.rdata));
     }
 
-    // Fragmented ATTEST RR set for service
-    auto att_set_name = Name("attest") + dr.subdomain;
-    remove(origin, att_set_name, Class::IN, Type::AAAA);
-    add_fragmented(
-      origin,
-      att_set_name,
-      cfg.default_ttl,
-      Class::IN,
-      ravl::json::to_cbor(j_att_set),
-      true);
+    add_attestation_records(dr.subdomain, dr.subdomain, dr.node_information);
 
     sign(origin);
 
