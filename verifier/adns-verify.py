@@ -827,4 +827,9 @@ if __name__ == "__main__":
     delegation_parser.set_defaults(func=delegation)
 
     margs = parser.parse_args()
+
+    start = time.time()
     margs.func(margs)
+    end = time.time()
+
+    print(f"  - Verification time: {end-start:0.3f} sec")
