@@ -1,88 +1,52 @@
 # ccfdns
 
-A CCF-based, attested DNS server
+A CCF-based, attested DNS server.
 
-# Instructions
+# Build
+
+The build depends on a local installation of [CCF](https://github.com/microsoft/ccf).
 
 ```
 mkdir build
 cd build
-cmake -GNinja -DCMAKE_BUILD_TYPE=Debug -DVERBOSE_LOGGING=ON -DLVI_MITIGATIONS=OFF -DCMAKE_C_COMPILER=clang-10 -DCMAKE_CXX_COMPILER=clang++-10 ..
+cmake -GNinja -DCMAKE_BUILD_TYPE=Debug -DVERBOSE_LOGGING=ON -DLVI_MITIGATIONS=OFF ..
 ninja
 ```
 
-You may want/need to add `-DOE=/path/to/oe` and `-DCCF=/path/to/CCF` to the `cmake` settings if they are not in the usual location(s). `-DLVI_MITIGATIONS=OFF` can be enabled if the OE LVI mitigated toolchain is set up.
+You may want/need to add `-DOE=/path/to/oe` and `-DCCF=/path/to/CCF` to the `cmake` settings if they are not in the usual location(s). `-DLVI_MITIGATIONS=ON` can be enabled if the OE LVI mitigated toolchain is set up.
 
-To run all tests:
+# Run sandbox:
 
-```
-./tests.sh
-```
-
-Sandbox:
-
-(Depending on your version of CCF)
+(May depend on your version of CCF)
 
 ```
 /path/to/CCF/bin/sandbox.sh -p libccfdns.virtual.so
 ```
 
-# Add a dummy record
+# Run aDNS server/service
 
-via json for now, for `www.example.com`:
+For an example of how to run an aDNS server/service, see [adns_service.py](tests/adns_service.py). Most of this is a simple application of the CCF infrastructure scripts. The [CCF documentation](https://microsoft.github.io/CCF/main/index.html) describes all of the components.
 
-```
-curl -v -k https://127.0.0.1:8000/app/add -X POST -H "Content-Type: application/json" -d '{"origin": "example.com.", "record": { "name": "www", "type": 1 , "class_": 1, "ttl": 3600, "rdata": "AQIDBA==" }}'
-```
+Note that for a complete service, your server(s) or VM(s) must be SGX-enabled and registered with at least a traditional, DNSSEC-enabled DNS server. Of course, that server may also be another aDNS server.
 
+## Contributing
 
-# Submit queries
+This project welcomes contributions and suggestions. Most contributions require you to agree to a
+Contributor License Agreement (CLA) declaring that you have the right to, and actually do, grant us
+the rights to use your contribution. For details, visit https://cla.opensource.microsoft.com.
 
-... to sandbox at `https://127.0.0.1:8000`
+When you submit a pull request, a CLA bot will automatically determine whether you need to provide
+a CLA and decorate the PR appropriately (e.g., status check, comment). Simply follow the instructions
+provided by the bot. You will only need to do this once across all repos using our CLA.
 
-## Raw HTTPS
+This project has adopted the [Microsoft Open Source Code of Conduct](https://opensource.microsoft.com/codeofconduct/).
+For more information see the [Code of Conduct FAQ](https://opensource.microsoft.com/codeofconduct/faq/) or
+contact [opencode@microsoft.com](mailto:opencode@microsoft.com) with any additional questions or comments.
 
-Raw HTTPS query for `www.example.com`:
+## Trademarks
 
-```
-curl -v -k https://127.0.0.1:8000/app/dns-query?dns=AAABAAABAAAAAAAAA3d3dwdleGFtcGxlA2NvbQAAAQAB
-```
-
-##  dnslookup
-
-```
-sudo snap install dnslookup
-RRTYPE=A VERIFY=0 dnslookup www.example.com https://127.0.0.1:8000/app/dns-query
-```
-
-should show something like this:
-
-```
-dnslookup v. 1.6.0-7201
-TLS verification has been disabled
-dnslookup result:
-;; opcode: QUERY, status: NOERROR, id: 48667
-;; flags: qr aa; QUERY: 0, ANSWER: 1, AUTHORITY: 0, ADDITIONAL: 0
-
-;; ANSWER SECTION:
-www.example.com.        3600    IN      A       1.2.3.4
-```
-
-
-## Bind9/dig
-
-Get the latest version of bind9 and/or utils; the current dig in the Ubuntu 20.04 package does not support DNS-over-HTTPS yet.
-
-```
-sudo add-apt-repository ppa:isc/bind
-sudo apt update
-sudo apt install bind9-dnsutils
-```
-
-In theory:
-
-```
-dig +https-get=/app/dns-query +noedns @127.0.0.1 -p 8000 cwinter.adns.ccf.dev A
-```
-
-But it seems to require HTTP/2 which we don't have in CCF yet. (Also `+tls-ca=workspace/sandbox_common/service_cert.pem` ?)
+This project may contain trademarks or logos for projects, products, or services. Authorized use of Microsoft
+trademarks or logos is subject to and must follow
+[Microsoft's Trademark & Brand Guidelines](https://www.microsoft.com/en-us/legal/intellectualproperty/trademarks/usage/general).
+Use of Microsoft trademarks or logos in modified versions of this project must not cause confusion or imply Microsoft sponsorship.
+Any use of third-party trademarks or logos are subject to those third-party's policies.
