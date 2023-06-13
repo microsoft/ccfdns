@@ -1,0 +1,5 @@
+ccf
+cbor2
+cryptography
+dnspython[doh,dnssec]
+requests
