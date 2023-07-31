@@ -1,0 +1,42 @@
+html, body {
+	margin: 0.1em;
+	min-width: 620px;
+	min-height: 400px;
+	background-color: #f8f8f8;
+}
+
+#tab {
+	border: 2px solid gray;
+	width: 580px;
+}
+
+#tab table {
+  width: 380px;
+}
+
+textarea {
+	width: 380px;
+	height: 50px;
+}
+
+tr {
+  background-color: #e2e6f0;
+}
+
+tr:nth-child(even) {
+  background: #ededed;
+}
+
+td:first-of-type {
+  min-width:120px;
+}
+
+#tab > tr > td:nth-child(even) {
+  max-width: 540px;
+  overflow-wrap: break-word;
+}
+
+td > table > tr > td:nth-child(even) {
+  max-width: 400px;
+  overflow-wrap: break-word;
+}
