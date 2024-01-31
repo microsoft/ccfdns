@@ -1045,7 +1045,7 @@ namespace aDNS
       NameTypesMap nsec_types;
 
     restart:
-      for (const auto& [_, t] : supported_types)
+      for (const auto& [__, t] : supported_types)
       {
         if (
           t == Type::RRSIG || t == Type::OPT || t == Type::NSEC ||

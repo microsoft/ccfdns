@@ -61,8 +61,8 @@ namespace RFC5155
     canonical_name.put(a);
     for (size_t i = 0; i < iterations + 1; i++)
     {
-      for (size_t i = 0; i < salt.size(); i++)
-        a.push_back(salt[i]);
+      for (size_t j = 0; j < salt.size(); j++)
+        a.push_back(salt[j]);
       CCF_APP_TRACE("CCFDNS: nsec3 hash a={}", ds::to_hex(a));
       a = H(a);
     }
