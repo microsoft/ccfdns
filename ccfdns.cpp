@@ -266,20 +266,20 @@ namespace ccfdns
     virtual ~ACMEClient() = default;
 
     void reconfigure(
-      const std::string& origin,
-      const ACME::ClientConfig& config,
-      const std::vector<uint8_t>& service_csr,
-      const std::string& node_address,
-      std::shared_ptr<ccf::ACMESubsystemInterface> acme_ss,
-      std::shared_ptr<crypto::KeyPair> account_key_pair = nullptr)
+      const std::string& origin_,
+      const ACME::ClientConfig& config_,
+      const std::vector<uint8_t>& service_csr_,
+      const std::string& node_address_,
+      std::shared_ptr<ccf::ACMESubsystemInterface> acme_ss_,
+      std::shared_ptr<crypto::KeyPair> account_key_pair_ = nullptr)
     {
-      this->origin = origin;
-      this->service_csr = service_csr;
-      this->node_address = node_address;
-      this->acme_ss = acme_ss;
+      this->origin = origin_;
+      this->service_csr = service_csr_;
+      this->node_address = node_address_;
+      this->acme_ss = acme_ss_;
 
-      this->config = config;
-      this->account_key_pair = account_key_pair;
+      this->config = config_;
+      this->account_key_pair = account_key_pair_;
 
       active_orders.clear();
       this->challenges_todo.clear();
@@ -663,7 +663,7 @@ namespace ccfdns
 
       // TODO: keep a map of name -> class/type?
       for (const auto& [_, c] : get_supported_classes())
-        for (const auto& [_, t] : get_supported_types())
+        for (const auto& [__, t] : get_supported_types())
         {
           auto rrs = rwtx().rw<Records>(table_name(origin, name, c, t));
           if (rrs && rrs->size() != 0)
@@ -1337,7 +1337,7 @@ namespace ccfdns
     }
 
     std::string configuration_receipt(
-      ccf::endpoints::ReadOnlyEndpointContext& ctx,
+      ccf::endpoints::ReadOnlyEndpointContext& ctx_,
       ccf::historical::StatePtr historical_state)
     {
       std::string r;
@@ -1365,7 +1365,7 @@ namespace ccfdns
     }
 
     std::string registration_receipt(
-      ccf::endpoints::ReadOnlyEndpointContext& ctx,
+      ccf::endpoints::ReadOnlyEndpointContext& ctx_,
       ccf::historical::StatePtr historical_state,
       const std::string& service_name)
     {
@@ -1392,7 +1392,7 @@ namespace ccfdns
     }
 
     std::string delegation_receipt(
-      ccf::endpoints::ReadOnlyEndpointContext& ctx,
+      ccf::endpoints::ReadOnlyEndpointContext& ctx_,
       ccf::historical::StatePtr historical_state,
       const std::string& subdomain)
     {
@@ -1550,7 +1550,7 @@ namespace ccfdns
         r += "$TTL " + std::to_string(cfg.default_ttl) + "\n\n";
 
         for (const auto& [_, c] : get_supported_classes())
-          for (const auto& [_, t] : get_supported_types())
+          for (const auto& [__, t] : get_supported_types())
           {
             auto names = rotx().ro<CCFDNS::Names>(names_table_name(origin));
             names->foreach([this, &r, &origin, c = c, t = t](const Name& name) {
@@ -1665,20 +1665,20 @@ namespace ccfdns
   {
   public:
     ContextContext(
-      std::shared_ptr<CCFDNS> ccfdns, ccf::endpoints::EndpointContext& ctx)
+      std::shared_ptr<CCFDNS> ccfdns_, ccf::endpoints::EndpointContext& ctx_)
     {
       if (!ccfdns)
         throw std::runtime_error("node initialization failed");
-      ccfdns->set_endpoint_context(&ctx, true);
+      ccfdns->set_endpoint_context(&ctx_, true);
     }
 
     ContextContext(
-      std::shared_ptr<CCFDNS> ccfdns,
-      ccf::endpoints::ReadOnlyEndpointContext& ctx)
+      std::shared_ptr<CCFDNS> ccfdns_,
+      ccf::endpoints::ReadOnlyEndpointContext& ctx_)
     {
       if (!ccfdns)
         throw std::runtime_error("node initialization failed");
-      ccfdns->set_endpoint_context(&ctx, false);
+      ccfdns->set_endpoint_context(&ctx_, false);
     }
 
     ~ContextContext()
@@ -1886,9 +1886,9 @@ namespace ccfdns
   {
   public:
     UDPDNSQuerySession(
-      std::shared_ptr<CCFDNS> ccfdns,
+      std::shared_ptr<CCFDNS> ccfdns_,
       std::shared_ptr<ccf::CustomProtocolSubsystemInterface> cp_ss) :
-      DNSQuerySession(ccfdns, cp_ss)
+      DNSQuerySession(ccfdns_, cp_ss)
     {}
 
     virtual ~UDPDNSQuerySession() = default;
@@ -2446,23 +2446,23 @@ namespace ccfdns
         .set_forwarding_required(ccf::endpoints::ForwardingRequired::Always)
         .install();
 
-      auto dns_query = [this](auto& ctx) {
+      auto dns_query = [this](auto& ctx_) {
         try
         {
-          ContextContext cc(ccfdns, ctx);
+          ContextContext cc(ccfdns, ctx_);
           std::vector<uint8_t> bytes;
-          auto verb = ctx.rpc_ctx->get_request_verb();
+          auto verb = ctx_.rpc_ctx->get_request_verb();
 
           if (verb == HTTP_GET)
           {
             const auto parsed_query =
-              http::parse_query(ctx.rpc_ctx->get_request_query());
+              http::parse_query(ctx_.rpc_ctx->get_request_query());
             std::string query_b64 = get_param(parsed_query, "dns");
             bytes = crypto::raw_from_b64url(query_b64);
           }
           else if (verb == HTTP_POST)
           {
-            auto headers = ctx.rpc_ctx->get_request_headers();
+            auto headers = ctx_.rpc_ctx->get_request_headers();
 
             auto ctit = headers.find("content-type");
             if (ctit == headers.end())
@@ -2471,7 +2471,7 @@ namespace ccfdns
               throw std::runtime_error(
                 fmt::format("unknown content type {}", ctit->second));
 
-            bytes = ctx.rpc_ctx->get_request_body();
+            bytes = ctx_.rpc_ctx->get_request_body();
           }
           else
           {
@@ -2480,17 +2480,18 @@ namespace ccfdns
               ccf::errors::InvalidInput,
               "unsupported HTTP verb; use GET or POST");
           }
+
           CCF_APP_INFO("CCFDNS: query: {}", ds::to_hex(bytes));
 
           auto reply = ccfdns->reply(Message(bytes));
 
-          ctx.rpc_ctx->set_response_status(HTTP_STATUS_OK);
-          ctx.rpc_ctx->set_response_header(
+          ctx_.rpc_ctx->set_response_status(HTTP_STATUS_OK);
+          ctx_.rpc_ctx->set_response_header(
             http::headers::CONTENT_TYPE, "application/dns-message");
           std::vector<uint8_t> out = reply.message;
           CCF_APP_INFO("CCFDNS: response: {}", ds::to_hex(out));
 
-          ctx.rpc_ctx->set_response_body(out);
+          ctx_.rpc_ctx->set_response_body(out);
           return ccf::make_success();
         }
         catch (std::exception& ex)
@@ -2767,11 +2768,11 @@ namespace ccfapp
     ccfapp::AbstractNodeContext& context)
   {
 #if defined(TRACE_LOGGING)
-    logger::config::level() = logger::TRACE;
+    logger::config::level() = TRACE;
 #elif defined(VERBOSE_LOGGING)
-    logger::config::level() = logger::DEBUG;
+    logger::config::level() = DEBUG;
 #else
-    logger::config::level() = logger::INFO;
+    logger::config::level() = INFO;
 #endif
     return std::make_unique<ccfdns::Handlers>(context);
   }

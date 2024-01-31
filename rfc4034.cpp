@@ -19,6 +19,10 @@
 #include <tuple>
 #include <vector>
 
+// Ignore deprecated OpenSSL function calls
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+
 using namespace RFC1035;
 
 namespace RFC4034
@@ -534,3 +538,5 @@ namespace RFC4034
     RFC1035::ResourceRecord::rdata = rdata;
   }
 }
+
+#pragma clang diagnostic pop

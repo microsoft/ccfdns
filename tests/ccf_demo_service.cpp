@@ -319,7 +319,7 @@ namespace service
                         nlohmann::json jin;
                         to_json(jin, robj);
                         std::string s = jin.dump();
-                        auto body =
+                        auto rbody =
                           std::vector<uint8_t>(s.data(), s.data() + s.size());
 
                         data.acmess->make_http_request(
@@ -327,7 +327,7 @@ namespace service
                           "https://" + data.rpc_address +
                             "/app/internal/set-service-certificate",
                           {},
-                          body,
+                          rbody,
                           [](
                             const http_status& http_status,
                             const http::HeaderMap&,
@@ -408,7 +408,7 @@ namespace ccfapp
   std::unique_ptr<ccf::endpoints::EndpointRegistry> make_user_endpoints(
     ccfapp::AbstractNodeContext& context)
   {
-    logger::config::level() = logger::TRACE;
+    logger::config::level() = TRACE;
     return std::make_unique<service::Handlers>(context);
   }
 }
