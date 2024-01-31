@@ -1002,10 +1002,13 @@ namespace aDNS
 
     std::lock_guard<std::mutex> lock(sign_mtx);
 
+    const auto& cfg = get_configuration();
+
     if (!origin.is_absolute())
       throw std::runtime_error("origin is not absolute");
 
-    const auto& cfg = get_configuration();
+    if (!origin.ends_with(cfg.origin))
+      throw std::runtime_error("origin is out of zone");
 
     name_cache_dirty = true;
 
@@ -1222,7 +1225,12 @@ namespace aDNS
 
     add(
       origin,
-      mk_rr(name, aDNS::Type::CAA, Class::IN, 3600, CAA(0, "issue", ca_name)));
+      mk_rr(
+        name, 
+        aDNS::Type::CAA, 
+        Class::IN, 
+        3600, 
+        CAA(0, "issue", ca_name + "; validationmethods=dns-01")));
 
     for (const auto& email : contact)
       add(
@@ -1377,10 +1385,14 @@ namespace aDNS
   Resolver::RegistrationInformation Resolver::configure(
     const Configuration& cfg)
   {
+    // makes the configuration persistent and auditable
+    // TODO: which re-configurations should be authorized?
+    // ideally none, unless needed experimentally
+    // unclear how we support CCF reconfigurations
     set_configuration(cfg);
 
     update_nsec3_param(
-      cfg.origin,
+      cfg.origin, 
       aDNS::Class::IN,
       cfg.default_ttl,
       cfg.nsec3_hash_algorithm,
@@ -1403,10 +1415,13 @@ namespace aDNS
     remove(cfg.origin, cfg.origin, Class::IN, Type::SOA);
     add(
       cfg.origin,
-      mk_rr(cfg.origin, aDNS::Type::SOA, Class::IN, 60, SOA(cfg.soa)));
+      mk_rr(cfg.origin, Type::SOA, Class::IN, 60, SOA(cfg.soa)));
+    // TODO review this TTL, it's possibly too low
+    // TODO check the provided primary name server against cfg.origin? See also node checks below.
 
     remove(cfg.origin, cfg.origin, Class::IN, Type::NS);
     remove(cfg.origin, cfg.origin, Class::IN, Type::A);
+    // TODO why would we keep any other records?
 
     add_caa_records(cfg.origin, cfg.origin, cfg.service_ca.name, cfg.contact);
 
@@ -1435,6 +1450,7 @@ namespace aDNS
 
     add_attestation_records(cfg.origin, cfg.origin, out.node_information);
 
+    // signs initial records; this triggers the creation of fresh DNSKEY records. 
     sign(cfg.origin);
 
     std::string cn;
@@ -1460,7 +1476,7 @@ namespace aDNS
     {
       out.dnskey_records = std::vector<ResourceRecord>();
       for (const auto& keyrr : dnskeys.answers)
-        if (keyrr.type == static_cast<uint16_t>(aDNS::Type::DNSKEY))
+        if (keyrr.type == static_cast<uint16_t>(Type::DNSKEY))
         {
           if (cfg.use_key_signing_key)
           {
@@ -1596,6 +1612,8 @@ namespace aDNS
 
     auto origin = find_zone(service_name);
 
+    // TODO origin == configuration.origin
+
     CCF_APP_INFO("ADNS: Register service {} in {}", service_name, origin);
 
     save_service_registration_request(service_name, rr);
@@ -1628,6 +1646,8 @@ namespace aDNS
           endorsements = att->endorsements;
       }
 
+      // TODO include rr in policy_data
+      
       policy_data += "  }};";
       policy_ok = evaluate_service_registration_policy(policy_data);
     }
@@ -1809,7 +1829,10 @@ namespace aDNS
   {
     auto cfg = get_configuration();
 
-    auto origin = find_zone(dr.subdomain);
+    // TODO dr.subdomain must be exactly one (relative) label
+    // hence origin = cfg.origin
+
+    auto origin = find_zone(dr.subdomain); // how does it return the new subzone??
 
     OpenSSL::UqX509_REQ req(dr.csr, false);
     auto public_key = req.get_pubkey();
@@ -1817,9 +1840,13 @@ namespace aDNS
 
     auto subject_name = req.get_subject_name().get_common_name();
     Name name(subject_name);
+    // this is the delegate DNS name
 
     if (!name.is_absolute())
       name += std::vector<Label>{Label()};
+
+    // TODO name must be exactly subdomain.origin
+    // currently it could be for a sibling!
 
     CCF_APP_INFO("ADNS: Register delegation {} in {}", name, origin);
 
@@ -1856,6 +1883,8 @@ namespace aDNS
           endorsements = att->endorsements;
       }
 
+      // TODO include dr etc in policy_data; notably the configuration and its receipts are ignored! 
+
       policy_data += "  }};";
       policy_ok = evaluate_delegation_policy(policy_data);
     }
@@ -1881,7 +1910,7 @@ namespace aDNS
           Type::NS,
           Class::IN,
           cfg.default_ttl,
-          NS(info.address.name)));
+          NS(info.address.name))); 
     }
 
     for (const auto& dnskey_rr : dr.dnskey_records)
@@ -1910,6 +1939,9 @@ namespace aDNS
     add_attestation_records(dr.subdomain, dr.subdomain, dr.node_information);
 
     sign(origin);
+
+    // TODO them being unsigned should be an intrinsic property, not something relying on the ordering of signing vs adding. 
+    // TODO the NS records above should probably not be signed either. 
 
     // Glue records are not signed
     // (https://datatracker.ietf.org/doc/html/rfc4035#section-2.2)

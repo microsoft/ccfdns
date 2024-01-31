@@ -724,7 +724,7 @@ namespace RFC1035
   struct Header
   {
     /// A 16 bit identifier assigned by the program that generates any kind of
-    /// query.  This identifier is copied the corresponding reply and can be
+    /// query.  This identifier is copied to the corresponding reply and can be
     /// used by the requester to match up replies to outstanding queries.
     uint16_t id = 0;
 

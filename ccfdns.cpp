@@ -535,8 +535,10 @@ namespace ccfdns
     }
 
     std::string node_id;
-    std::string my_name;
+    std::string my_name; // Certifiable FQDN for this node of the DNS service
     std::vector<uint8_t> my_acme_csr;
+
+    // Declaring CCF Table types and names
 
     using TConfigurationTable =
       ccf::ServiceValue<aDNS::Resolver::Configuration>;
@@ -564,11 +566,26 @@ namespace ccfdns
     std::shared_ptr<RegistrationRequestsIndex> registration_index_strategy =
       nullptr;
 
+    /*
+      Records a vector of policies for delegating subzones out of this service's zone. 
+      The policies consist of a fixed policy copied from each attested parent along the delegation chain, 
+      followed by the local delegation policy, which is updatable via service governance. 
+
+      All policies must agree to authorize /register-delegation of subzones. 
+
+      The vector is initialized with a local policy (via governance) at the start of the service. 
+      If its parent zone is attested, it is then prepended with the attested parent policies at the end of /configure. 
+      The policies are made available (via /delegation-receipt) for the parent to review before authorizing /register-delegation.
+
+      TBC! 
+    */
     using DelegationPolicies =
-      ccf::ServiceValue<std::pair<std::string, std::string>>;
+      ccf::ServiceValue<std::vector<std::string>>;
     const std::string delegation_policy_table_name =
       "public:ccf.gov.ccfdns.delegation_policy";
 
+    // Records a map of subzones currently delegated by this service. 
+    // TODO commit consistency
     using DelegationRequests =
       ccf::ServiceMap<Name, RegisterDelegationWithPreviousVersion>;
     const std::string delegation_requests_table_name =
@@ -579,6 +596,10 @@ namespace ccfdns
 
     using Endorsements = ccf::ServiceMap<Name, std::vector<uint8_t>>;
     const std::string endorsements_table_name = "public:service_endorsements";
+
+    using EatTokenSigningKey = ccf::ServiceValue<std::vector<uint8_t>>;
+    const std::string eat_token_signing_key_table_name = "private:eat_token_signing_key";
+
 
     void set_endpoint_context(
       ccf::endpoints::CommandEndpointContext* c, bool writable = true)
@@ -652,6 +673,8 @@ namespace ccfdns
 
       auto records = rwtx().rw<Records>(table_name(origin, rr.name, c, t));
       records->insert(rs);
+
+      // could be conditioned on the name not existing
       auto names = rwtx().rw<Names>(names_table_name(origin));
       names->insert(rs.name);
       name_cache_dirty = true;
@@ -824,9 +847,13 @@ namespace ccfdns
     {
       check_context();
       auto origins = rotx().ro<Origins>(origins_table_name);
-      return origins->contains(name.lowered());
+      auto lowername = name.lowered();
+      return
+        origins->contains(lowername) &&
+        origins->get_globally_committed(lowername) == origins->get(lowername);
     }
 
+    // review explicit origin? 
     virtual bool is_delegated(
       const Name& origin, const Name& name) const override
     {
@@ -946,17 +973,24 @@ namespace ccfdns
       policy->put(new_policy);
     }
 
-    virtual std::string delegation_policy() const override
+    virtual const std::vector<std::string>& delegation_policy() const override
     {
       check_context();
 
       auto tbl = rotx().ro<DelegationPolicies>(delegation_policy_table_name);
-      const auto policies = tbl->get();
+
+      if (!tbl)
+        throw std::runtime_error(
+          "error accessing parent delegation policy table");
+
+      auto policies = tbl->get();
+
       if (!policies)
         throw std::runtime_error("no delegation registration policies");
 
-      auto [parent, local] = *policies;
+      return *policies;
 
+  /*
       if (parent.empty())
         throw std::runtime_error("no parent delegation policy");
       if (local.empty())
@@ -967,27 +1001,36 @@ namespace ccfdns
         "function local() {\n" +
         local + "\n" + "return r == true;" + "\n" +
         "}\n\n"
-        "parent() && local()";
+        "parent() && local()"; */
     }
 
-    virtual void set_parent_delegation_policy(const std::string& new_policy)
+    virtual void set_parent_delegation_policy(const std::vector<std::string>& policies)
     {
       check_context();
 
+      const auto& cfg = get_configuration();
+
+      if (!cfg.parent_base_url)
+        throw std::runtime_error(
+          "no updatable parent policies in the top attested zone");
+      
       auto tbl = rwtx().rw<DelegationPolicies>(delegation_policy_table_name);
 
       if (!tbl)
         throw std::runtime_error(
-          "error accessing parent delegation policy table");
+          "cannot set parent policies in uninitialized policy table");
 
-      const auto old_policies = tbl->get();
+      auto local_policy = tbl->get();
 
-      if (!old_policies)
-        throw std::runtime_error("error accessing parent delegation policy");
+      if (!local_policy || local_policy->size() != 1) 
+        throw std::runtime_error(
+          "cannot overwrite existing parent policies");
 
-      tbl->put(std::make_pair(new_policy, old_policies->second));
+      policies.push_back(local_policy[0]);
+      tbl->put(policies);
     }
 
+    // sets or updates the local delegation policy (also accessible via governance)
     virtual void set_delegation_policy(const std::string& new_policy) override
     {
       check_context();
@@ -997,12 +1040,13 @@ namespace ccfdns
       if (!tbl)
         throw std::runtime_error("error accessing delegation policy table");
 
-      const auto old_policies = tbl->get();
+      auto policies = tbl->get();
 
-      if (!old_policies)
+      if (!policies || policies->size() < 1)
         throw std::runtime_error("error accessing delegation policy");
 
-      tbl->put({old_policies->first, new_policy});
+      policies->back() = new_policy;
+      tbl->put(*policies);
     }
 
     static constexpr const size_t default_stack_size = 1024 * 1024;
@@ -1097,11 +1141,16 @@ namespace ccfdns
     }
 
     virtual bool evaluate_delegation_policy(
-      const std::string& data) const override
+      const std::string data) const override
     {
       RPJSRuntime rt;
-      std::string program = data + "\n\n" + delegation_policy();
-      return rt.eval(program);
+
+      for (const auto& [name, policy] : delegation_policies())
+      {
+        std::string program = data + "\n\n" + policy;
+        if (!rt.eval(program)) return false;
+      }
+      return true;
     }
 
     using Resolver::register_delegation;
@@ -1196,7 +1245,8 @@ namespace ccfdns
         // No parent, i.e. we are a TLD and need to get our TLS certificate
         // directly from the CA, instead of a parent aDNS instance.
 
-        set_parent_delegation_policy("return true;");
+        // TODO move to initializer?
+        set_parent_delegation_policy({"return true;"});
 
         auto cn = cfg.origin.unterminated();
 
@@ -1288,7 +1338,7 @@ namespace ccfdns
           my_name.pop_back();
       }
 
-      if (!cfg.parent_base_url)
+      if (!cfg.parent_base_url) 
         start_acme_client();
       else
       {
@@ -1316,7 +1366,7 @@ namespace ccfdns
             std::string sbody(body.begin(), body.end());
             http_client.request(
               "POST",
-              internal_node_address + "/app/set-parent-delegation-policy",
+              internal_node_address + "/internal/set-parent-delegation-policy",
               {},
               std::move(sbody),
               {nwid_ss->get()->cert.str()},
@@ -1647,7 +1697,7 @@ namespace ccfdns
       aDNS::Class class_,
       aDNS::Type type) const
     {
-      return "public:" + (std::string)origin.lowered() + ":" +
+      return "public:records:" + (std::string)origin.lowered() + ":" +
         (std::string)name.lowered() + "-" + string_from_type(type) + "-" +
         string_from_class(class_);
     }
@@ -2128,6 +2178,13 @@ namespace ccfdns
             "CCFDNS: Configuration request size: {}",
             ctx.rpc_ctx->get_request_body().size());
           Configure::Out out = {ccfdns->configure(in)};
+
+          auto log = nlohmann::json{
+            {"request", "/configure"}, 
+            {"input", in}, 
+            {"output", out} 
+          };
+          ctx.rpc_ctx->set_claims_digest(ccf::ClaimsDigest::Digest(log));
           return ccf::make_success(out);
         }
         catch (std::exception& ex)
@@ -2305,9 +2362,9 @@ namespace ccfdns
         try
         {
           ContextContext cc(ccfdns, ctx);
-          auto new_policy = ctx.rpc_ctx->get_request_body();
-          ccfdns->set_parent_delegation_policy(
-            {new_policy.begin(), new_policy.end()});
+          auto body = ctx.rpc_ctx->get_request_body();
+          auto policies = nlohmann::json::parse(body).get<std::vector<std::string>>();
+          ccfdns->set_parent_delegation_policy(policies);
           return ccf::make_success();
         }
         catch (std::exception& ex)
@@ -2318,7 +2375,7 @@ namespace ccfdns
       };
 
       make_endpoint(
-        "/set-parent-delegation-policy",
+        "/internal/set-parent-delegation-policy",
         HTTP_POST,
         set_parent_delegation_policy,
         {std::make_shared<ccf::NodeCertAuthnPolicy>()})
@@ -2500,12 +2557,20 @@ namespace ccfdns
         }
       };
 
-      make_endpoint("/dns-query", HTTP_GET, dns_query, ccf::no_auth_required)
+      make_read_only_endpoint(
+        "/dns-query", 
+        HTTP_GET, 
+        dns_query, 
+        ccf::no_auth_required)
         .set_auto_schema<void, std::vector<uint8_t>>()
         .set_forwarding_required(ccf::endpoints::ForwardingRequired::Never)
         .install();
 
-      make_endpoint("/dns-query", HTTP_POST, dns_query, ccf::no_auth_required)
+      make_read_only_endpoint(
+        "/dns-query", 
+        HTTP_POST, 
+        dns_query, 
+        ccf::no_auth_required)
         .set_auto_schema<void, std::vector<uint8_t>>()
         .set_forwarding_required(ccf::endpoints::ForwardingRequired::Never)
         .install();
@@ -2656,7 +2721,11 @@ namespace ccfdns
         }
       };
 
-      make_endpoint("/dump", HTTP_GET, dump, ccf::no_auth_required)
+      make_endpoint(
+        "/dump", 
+        HTTP_GET, 
+        dump, 
+        ccf::no_auth_required)
         .set_forwarding_required(ccf::endpoints::ForwardingRequired::Never)
         .install();
 
@@ -2689,8 +2758,11 @@ namespace ccfdns
         {
           ContextContext cc(ccfdns, ctx);
           ctx.rpc_ctx->set_response_header(
-            http::headers::CONTENT_TYPE, http::headervalues::contenttype::TEXT);
-          ctx.rpc_ctx->set_response_body(ccfdns->delegation_policy());
+            http::headers::CONTENT_TYPE, http::headervalues::contenttype::JSON);
+
+          auto policies = ccfdns->delegation_policy();
+          nlohmann::json j = policies;
+          ctx.rpc_ctx->set_response_body(j.dump(4));
           ctx.rpc_ctx->set_response_status(HTTP_STATUS_OK);
         }
         catch (std::exception& ex)
@@ -2730,7 +2802,69 @@ namespace ccfdns
       };
 
       make_endpoint(
-        "/endorsements", HTTP_GET, get_endorsements, ccf::no_auth_required)
+        "/endorsements", 
+        HTTP_GET, 
+        get_endorsements, 
+        ccf::no_auth_required)
+        .set_forwarding_required(ccf::endpoints::ForwardingRequired::Never)
+        .install();
+
+      /* endpoints for lightweight EAT legacy interface, to be served at eat.{zone}.attested.name */
+
+      // RFC 7517
+      nlohmann::json jkw(auto kid, auto public_key) {
+        return {
+          {"kty", "RSA"},
+          {"use", "sig"},
+          {"kid", crypto::b64_from_raw(crypto::SHA1(public_key))},
+          {"e", "AQAB"},
+          {"n", crypto::b64_from_raw(public_key)},
+        };
+      }
+
+      auto issuing_jwks = [this](auto& ctx) {
+
+        // TODO include each key in the issuing-key table 
+        std::vector<string> keys;
+        nlohmann::json response = {
+          {"keys", keys}
+        };
+      }
+
+      void openid_configuration = [this](auto& ctx) {
+        try
+        {
+          ContextContext cc(ccfdns, ctx);
+          ctx.rpc_ctx->set_response_header(
+            http::headers::CONTENT_TYPE, "application/json");
+          
+          // TODO check the FQDN is eat.
+          CCF_APP_INFO("EAT query: {}", ctx.rpc_ctx->get_request_url());
+
+          auto response = R"(
+            {
+              "token_endpoint": "https://{eat}/common/oauth2/v2.0/token",
+              "jwks_uri": "https://{eat}/common/discovery/v2.0/keys",
+              "id_token_signing_alg_values_supported": ["RS256"],
+              "issuer": "https://{eat}/v2.0",
+              "request_uri_parameter_supported": false
+            }
+            )"_json;
+          ctx.rpc_ctx->set_response_body(response.dump(4));
+          ctx.rpc_ctx->set_response_status(HTTP_STATUS_OK);
+        }
+        catch (std::exception& ex)
+        {
+          ctx.rpc_ctx->set_response_body(ex.what());
+          ctx.rpc_ctx->set_response_status(HTTP_STATUS_INTERNAL_SERVER_ERROR);
+        }
+      };
+
+      make_read_only_endpoint(
+        "/common/v2.0/.well-known/openid-configuration",
+        HTTP_GET,
+        openid_configuration,
+        ccf::no_auth_required)
         .set_forwarding_required(ccf::endpoints::ForwardingRequired::Never)
         .install();
     }
@@ -2767,11 +2901,11 @@ namespace ccfapp
     ccfapp::AbstractNodeContext& context)
   {
 #if defined(TRACE_LOGGING)
-    logger::config::level() = logger::TRACE;
+    logger::config::level() = TRACE;
 #elif defined(VERBOSE_LOGGING)
-    logger::config::level() = logger::DEBUG;
+    logger::config::level() = DEBUG;
 #else
-    logger::config::level() = logger::INFO;
+    logger::config::level() = INFO;
 #endif
     return std::make_unique<ccfdns::Handlers>(context);
   }
