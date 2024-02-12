@@ -150,6 +150,8 @@ namespace RFC4034
     Algorithm algorithm,
     const RFC1035::Name& signer,
     const CRRS& crrs,
+    const uint32_t sig_inception,
+    const uint32_t sig_expiration,
     const std::function<std::string(const Type&)>& type2str)
   {
     if (crrs.rdata.empty())
@@ -162,12 +164,15 @@ namespace RFC4034
 
     uint8_t nl = num_labels(owner);
 
+    /*
+    // now adjusted by the caller, based on tranparent time 
     auto now = std::chrono::system_clock::now();
     auto tp = now.time_since_epoch();
     uint32_t sig_inception =
       duration_cast<std::chrono::seconds>(tp - std::chrono::hours(1)).count();
     uint32_t sig_expiration =
       duration_cast<std::chrono::seconds>(tp + std::chrono::days(90)).count();
+    */
 
     // https://datatracker.ietf.org/doc/html/rfc4034#section-3.1.8.1
 
@@ -182,11 +187,13 @@ namespace RFC4034
     signer.put(data_to_sign);
 
     CCF_APP_TRACE(
-      "ADNS: SIGN: record set: {} {} {} {} size: {}",
+      "ADNS: SIGN: record set: {} {} {} {} {}..{} size: {}",
       crrs.name,
       crrs.type,
       crrs.class_,
       crrs.ttl,
+      sig_inception,
+      sig_expiration,
       crrs.rdata.size());
 
     for (const auto& rd : crrs.rdata)
@@ -488,10 +495,12 @@ namespace RFC4034
     Algorithm algorithm,
     const RFC1035::Name& signer,
     const CRRS& crrs,
+    const uint32_t sig_inception,
+    const uint32_t sig_expiration,
     const std::function<std::string(const Type&)>& type2str) :
     RFC1035::ResourceRecord(
       crrs.name, U(Type::RRSIG), U(crrs.class_), crrs.ttl, {}),
-    rdata(sign(signing_function, key_tag, algorithm, signer, crrs, type2str))
+    rdata(sign(signing_function, key_tag, algorithm, signer, crrs, sig_inception, sig_expiration, type2str))
   {
     RFC1035::ResourceRecord::rdata = rdata;
   }

@@ -15,6 +15,7 @@
 #include <ccf/_private/node/identity.h>
 #include <ccf/_private/quic/msg_types.h>
 #include <ccf/_private/tls/msg_types.h>
+#include <ccf/_private/enclave/enclave_time.h>
 #include <ccf/app_interface.h>
 #include <ccf/base_endpoint_registry.h>
 #include <ccf/common_auth_policies.h>
@@ -540,9 +541,14 @@ namespace ccfdns
 
     // Declaring CCF Table types and names
 
+    // "keys.h" also defines a private table for DNSKEYs. 
+
     using TConfigurationTable =
       ccf::ServiceValue<aDNS::Resolver::Configuration>;
     const std::string configuration_table_name = "public:adns_configuration";
+
+    using TTimeTable = ccf::ServiceValue<uint32_t>;
+    const std::string time_table_name = "public:ccfdns.time";
 
     using Names = ccf::ServiceSet<Name>;
 
@@ -551,7 +557,7 @@ namespace ccfdns
     const std::string origins_table_name = "public:ccfdns.origins";
 
     using ServiceCertificates = ccf::ServiceMap<std::string, std::string>;
-    const std::string service_certifificates_table_name =
+    const std::string service_certificates_table_name =
       "public:service_certificates";
 
     using ServiceRegistrationPolicy = ccf::ServiceValue<std::string>;
@@ -643,6 +649,32 @@ namespace ccfdns
         configuration_table_name);
       t->put(cfg);
     }
+
+    // returns the persisted, monotonic system time, since 1970,
+    // in seconds represented as uint32, as in e.g. RFC4034,
+    // advancing it based on the local host time if need be 
+    virtual uint32_t get_fresh_time() override
+    {
+      // TODO: consider adding time quantum to the configuration 
+      uint32_t quantum = 5;
+
+      check_context();
+      auto table = rwtx().template rw<CCFDNS::TTimeTable>(time_table_name);
+      auto v = table->get();
+      uint32_t time = v.has_value() ? v.value() : 0;
+
+      // refreshed by the host, every 10ms by default (see node config)
+      // we use an internal call instead of UserEndpointRegistry.get_untrusted_host_time_v1 because it is not in scope
+      uint32_t node_time = std::chrono::duration_cast<std::chrono::seconds>(ccf::get_enclave_time()).count();
+
+      if (time + quantum < node_time)
+      {
+        CCF_APP_TRACE("CCFDNS: Advancing time to {}", node_time);
+        time = node_time;
+        table->put(time);
+      }
+      return time;
+    };
 
     virtual std::shared_ptr<crypto::KeyPair> get_tls_key() override
     {
@@ -849,9 +881,10 @@ namespace ccfdns
       auto origins = rotx().ro<Origins>(origins_table_name);
       auto lowername = name.lowered();
       return
-        origins->contains(lowername) &&
-        origins->get_globally_committed(lowername) == origins->get(lowername);
-    }
+        origins->contains(lowername);
+        // TODO commit consistency
+        // && origins->get_globally_committed(lowername) == origins->get(lowername);
+    };
 
     // review explicit origin? 
     virtual bool is_delegated(
@@ -883,12 +916,11 @@ namespace ccfdns
     {
       check_context();
 
-      auto originl = origin.lowered();
-      auto table_name = "private:signing_keys";
-      auto table = rotx().ro<Keys>(table_name);
+      auto origin_lowered = origin.lowered();
+      auto table = rotx().ro<PrivateDNSKeys>(private_dnskey_table_name);
       if (!table)
         return {};
-      auto key_maps = table->get(originl);
+      auto key_maps = table->get(origin_lowered);
       if (key_maps)
       {
         auto& key_map = key_signing ? key_maps->key_signing_keys :
@@ -929,8 +961,7 @@ namespace ccfdns
       check_context();
 
       auto origin_lowered = origin.lowered();
-      auto table_name = "private:signing_keys";
-      auto table = rwtx().rw<Keys>(table_name);
+      auto table = rwtx().rw<PrivateDNSKeys>(private_dnskey_table_name);
       if (!table)
         throw std::runtime_error("could not get keys table");
       auto value = table->get(origin_lowered);
@@ -973,7 +1004,7 @@ namespace ccfdns
       policy->put(new_policy);
     }
 
-    virtual const std::vector<std::string>& delegation_policy() const override
+    virtual std::vector<std::string> delegation_policy() const override
     {
       check_context();
 
@@ -1004,7 +1035,7 @@ namespace ccfdns
         "parent() && local()"; */
     }
 
-    virtual void set_parent_delegation_policy(const std::vector<std::string>& policies)
+    virtual void set_parent_delegation_policy(std::vector<std::string>& policies)
     {
       check_context();
 
@@ -1026,7 +1057,7 @@ namespace ccfdns
         throw std::runtime_error(
           "cannot overwrite existing parent policies");
 
-      policies.push_back(local_policy[0]);
+      policies.push_back(local_policy->at(0));
       tbl->put(policies);
     }
 
@@ -1141,11 +1172,11 @@ namespace ccfdns
     }
 
     virtual bool evaluate_delegation_policy(
-      const std::string data) const override
+      const std::string& data) const override
     {
       RPJSRuntime rt;
 
-      for (const auto& [name, policy] : delegation_policies())
+      for (const auto& policy : delegation_policy())
       {
         std::string program = data + "\n\n" + policy;
         if (!rt.eval(program)) return false;
@@ -1175,7 +1206,7 @@ namespace ccfdns
       else
       {
         auto tbl =
-          rwtx().rw<ServiceCertificates>(service_certifificates_table_name);
+          rwtx().rw<ServiceCertificates>(service_certificates_table_name);
         tbl->put(service_name, certificate_pem);
         acme_clients.erase(service_name);
       }
@@ -1205,7 +1236,7 @@ namespace ccfdns
       else
       {
         auto tbl =
-          rotx().ro<ServiceCertificates>(service_certifificates_table_name);
+          rotx().ro<ServiceCertificates>(service_certificates_table_name);
         auto r = tbl->get(service_name);
         if (!r)
           throw std::runtime_error("no such certificate");
@@ -1245,9 +1276,12 @@ namespace ccfdns
         // No parent, i.e. we are a TLD and need to get our TLS certificate
         // directly from the CA, instead of a parent aDNS instance.
 
-        // TODO move to initializer?
-        set_parent_delegation_policy({"return true;"});
-
+        // Check the top delegation policy is set, without parent policies.
+        auto policy = delegation_policy(); 
+        if (policy.size() != 1) 
+          throw std::runtime_error(
+            "attested TLS must have exactly one delegation policy");
+        
         auto cn = cfg.origin.unterminated();
 
         std::vector<std::string> acme_contact;
@@ -1669,6 +1703,28 @@ namespace ccfdns
         throw std::runtime_error("no endorsements found for service");
       return *r;
     }
+
+    // EAT and its discovery (to be relocated) 
+
+    // RFC 7517; overly specific to RSA? 
+    static nlohmann::json jkw(const std::vector<uint8_t>& public_key) {
+
+      auto kid = crypto::sha256(public_key);
+      return {
+        {"kty", "RSA"},
+        {"use", "sig"},
+        {"kid", crypto::b64_from_raw(kid)},
+        {"e", "AQAB"},
+        {"n", crypto::b64_from_raw(public_key)},
+      };
+    }
+      
+    nlohmann::json jkws() {
+      // TODO include each key in the issuing-key table 
+      std::vector<std::string> keys;
+      return {"keys", keys};
+    }
+
 
   protected:
     ccf::endpoints::CommandEndpointContext* ctx = nullptr;
@@ -2363,7 +2419,7 @@ namespace ccfdns
         {
           ContextContext cc(ccfdns, ctx);
           auto body = ctx.rpc_ctx->get_request_body();
-          auto policies = nlohmann::json::parse(body).get<std::vector<std::string>>();
+          auto policies = nlohmann::json::parse(body).template get<std::vector<std::string>>();
           ccfdns->set_parent_delegation_policy(policies);
           return ccf::make_success();
         }
@@ -2812,27 +2868,16 @@ namespace ccfdns
 
       /* endpoints for lightweight EAT legacy interface, to be served at eat.{zone}.attested.name */
 
-      // RFC 7517
-      nlohmann::json jkw(auto kid, auto public_key) {
-        return {
-          {"kty", "RSA"},
-          {"use", "sig"},
-          {"kid", crypto::b64_from_raw(crypto::SHA1(public_key))},
-          {"e", "AQAB"},
-          {"n", crypto::b64_from_raw(public_key)},
-        };
-      }
-
       auto issuing_jwks = [this](auto& ctx) {
 
         // TODO include each key in the issuing-key table 
-        std::vector<string> keys;
+        std::vector<std::string> keys;
         nlohmann::json response = {
           {"keys", keys}
         };
-      }
+      };
 
-      void openid_configuration = [this](auto& ctx) {
+      auto openid_configuration = [this](auto& ctx) {
         try
         {
           ContextContext cc(ccfdns, ctx);

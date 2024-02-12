@@ -788,6 +788,8 @@ namespace aDNS
     return std::make_pair(new_zsk, new_zsk_tag);
   }
 
+  // returns keypair and tag for this origin + class + flags; 
+  // creates a new key if no existing key is found  
   Resolver::KeyAndTag Resolver::get_signing_key(
     const Name& origin, Class class_, bool key_signing)
   {
@@ -887,6 +889,7 @@ namespace aDNS
     const RFC1035::Name& suffix,
     std::set<Type> types,
     uint32_t nsec_ttl,
+    uint32_t sig_inception,
     const KeyAndTag& key_and_tag)
   {
     assert(!types.empty());
@@ -941,6 +944,8 @@ namespace aDNS
         configuration.signing_algorithm,
         origin,
         crrs,
+        sig_inception,
+        sig_inception + nsec_ttl,
         type2str));
 
     return rr;
@@ -951,6 +956,7 @@ namespace aDNS
     QClass c,
     QType t,
     const Name& name,
+    uint32_t sig_inception,
     std::shared_ptr<crypto::KeyPair> key,
     uint16_t key_tag,
     RFC4034::Algorithm signing_algorithm)
@@ -990,6 +996,8 @@ namespace aDNS
           signing_algorithm,
           origin,
           crrs,
+          sig_inception,
+          sig_inception + crrs.ttl,
           type2str));
     }
 
@@ -998,11 +1006,12 @@ namespace aDNS
 
   void Resolver::sign(const Name& origin)
   {
-    CCF_APP_INFO("ADNS: (Re)signing {}", origin);
-
     std::lock_guard<std::mutex> lock(sign_mtx);
 
     const auto& cfg = get_configuration();
+
+    const uint32_t sig_inception = get_fresh_time();
+    CCF_APP_INFO("ADNS: (Re)signing {} at time {}", origin, sig_inception );
 
     if (!origin.is_absolute())
       throw std::runtime_error("origin is not absolute");
@@ -1072,6 +1081,7 @@ namespace aDNS
             static_cast<QClass>(c),
             static_cast<QType>(t),
             name,
+            sig_inception,
             key,
             key_tag,
             cfg.signing_algorithm);
@@ -1139,6 +1149,7 @@ namespace aDNS
             owner,
             it->second.types,
             nsec_ttl,
+            sig_inception,
             zsk_and_tag);
         }
       }
@@ -1182,6 +1193,8 @@ namespace aDNS
               cfg.signing_algorithm,
               origin,
               crrs,
+              sig_inception,
+              sig_inception + crrs.ttl,
               type2str));
 
           it = next;

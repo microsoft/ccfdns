@@ -199,6 +199,10 @@ namespace ccfdns
   DECLARE_JSON_REQUIRED_FIELDS(
     ZoneKeyInfo, key_signing_keys, zone_signing_keys);
 
+  DECLARE_JSON_TYPE(EATIssuanceKeyInfo);
+  DECLARE_JSON_REQUIRED_FIELDS(
+    EATIssuanceKeyInfo, token_signing_keys);
+
   DECLARE_JSON_TYPE(Configure::Out);
   DECLARE_JSON_REQUIRED_FIELDS(Configure::Out, registration_info);
 

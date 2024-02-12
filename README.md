@@ -9,7 +9,7 @@ The build depends on a local installation of [CCF](https://github.com/microsoft/
 ```
 mkdir build
 cd build
-cmake -GNinja -DCMAKE_BUILD_TYPE=Debug -DVERBOSE_LOGGING=ON -DLVI_MITIGATIONS=OFF ..
+cmake -GNinja  ..
 ninja
 ```
 

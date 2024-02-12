@@ -309,12 +309,14 @@ namespace aDNS
 
     virtual void register_delegation(const DelegationRequest& req);
 
-    virtual const std::vector<std::string>& delegation_policy() const = 0;
+    virtual std::vector<std::string> delegation_policy() const = 0;
     virtual void set_delegation_policy(const std::string& new_policy) = 0;
     virtual bool evaluate_delegation_policy(const std::string& data) const = 0;
 
     virtual Configuration get_configuration() const = 0;
     virtual void set_configuration(const Configuration& cfg) = 0;
+
+    virtual uint32_t get_fresh_time() = 0;
 
     virtual void set_service_certificate(
       const std::string& service_dns_name,
@@ -416,6 +418,7 @@ namespace aDNS
       const RFC1035::Name& suffix,
       std::set<Type> types,
       uint32_t nsec_ttl,
+      uint32_t sig_inception,
       const KeyAndTag& key_and_tag);
 
     void add_fragmented(
@@ -454,6 +457,7 @@ namespace aDNS
       QClass c,
       QType t,
       const Name& name,
+      uint32_t sig_inception,      
       std::shared_ptr<crypto::KeyPair> key,
       uint16_t key_tag,
       RFC4034::Algorithm signing_algorithm);
