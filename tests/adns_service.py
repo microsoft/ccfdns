@@ -366,27 +366,33 @@ def run(
     # Note: proxy needs: sudo setcap 'cap_net_bind_service=+ep' https_dns_proxy
     doh_proxy_binary = "https_dns_proxy"
     proxy_procs = []
+    acme_config_name = acme_config = None
 
-    acme_config_name, acme_config = make_acme_config(args, service_dns_name)
-
-    args.acme = {"configurations": {acme_config_name: acme_config}}
+    # ADL: allow basic testing with self-signed service certificate
+    if "acme_config_name" in args:
+        acme_config_name, acme_config = make_acme_config(args, service_dns_name)
+        args.acme = {"configurations": {acme_config_name: acme_config}}
 
     try:
         nodes = []
         for internal, external, ext_name, _ in args.node_addresses:
-            host_spec = HostSpec.from_str(internal, http2=False)
-            int_if = host_spec.rpc_interfaces[PRIMARY_RPC_INTERFACE]
+            host_spec : Dict[str, RPCInterface] = {}
+            int_if = RPCInterface()
+            int_if.parse_from_str(internal)
             int_if.forwarding_timeout_ms = 10000
-            ext_if = HostSpec.from_str(external, http2=False).rpc_interfaces[
-                PRIMARY_RPC_INTERFACE
-            ]
+            host_spec[PRIMARY_RPC_INTERFACE] = int_if
+            
+            ext_if = RPCInterface()
+            ext_if.parse_from_str(external)
             ext_if.forwarding_timeout_ms = 10000
-            ext_if.endorsement = Endorsement(
-                authority=EndorsementAuthority.ACME, acme_configuration=acme_config_name
-            )
+            if acme_config_name != None:
+                ext_if.endorsement = Endorsement(
+                    authority=EndorsementAuthority.ACME, acme_configuration=acme_config_name
+                )
             ext_if.public_host = ext_name
             ext_if.public_port = ext_if.port
-            host_spec.rpc_interfaces["ext_if"] = ext_if
+
+            host_spec["ext_if"] = ext_if
 
             if tcp_port:
                 tcp_dns_if = RPCInterface(
@@ -396,7 +402,7 @@ def run(
                     endorsement=Endorsement(authority=EndorsementAuthority.Unsecured),
                     app_protocol="DNSTCP",
                 )
-                host_spec.rpc_interfaces["tcp_dns_if"] = tcp_dns_if
+                host_spec["tcp_dns_if"] = tcp_dns_if
             if udp_port:
                 udp_dns_if = RPCInterface(
                     host=ext_if.host,
@@ -405,9 +411,9 @@ def run(
                     endorsement=Endorsement(authority=EndorsementAuthority.Unsecured),
                     app_protocol="DNSUDP",
                 )
-                host_spec.rpc_interfaces["udp_dns_if"] = udp_dns_if
+                host_spec["udp_dns_if"] = udp_dns_if
 
-            nodes += [host_spec]
+            nodes += [HostSpec(rpc_interfaces = host_spec)]
 
         network = infra.network.Network(
             nodes,
