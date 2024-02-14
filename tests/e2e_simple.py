@@ -7,6 +7,7 @@ import http
 import base64
 import socket
 import requests
+import json
 
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization
@@ -34,7 +35,7 @@ rdt = dns.rdatatype
 
 def add_record(client, origin, name, stype, rdata_obj):
     """Add a DNS record"""
-
+    print(f"Adding {stype} record for {name}...")
     r = client.post(
         "/app/internal/add",
         {
@@ -48,6 +49,7 @@ def add_record(client, origin, name, stype, rdata_obj):
             },
         },
     )
+    print(json.dumps(r, indent=4))
     assert r.status_code == http.HTTPStatus.NO_CONTENT
     return r
 
@@ -203,11 +205,6 @@ def test_basic(network, args):
 
         origin = dns.name.from_text("example.com.")
 
-        member_cert = (
-            os.path.join(network.common_dir, "member0_cert.pem"),
-            os.path.join(network.common_dir, "member0_privk.pem"),
-        )
-
         rd = A("1.2.3.4")
         add_record(client, origin, "www", "A", rd)
         check_record(host, port, ca, "www.example.com.", "A", rd)
@@ -281,17 +278,12 @@ def run(args):
     if not adns_nw:
         raise Exception("Failed to start aDNS network")
 
-    member_cert = (
-        os.path.join(adns_nw.common_dir, "member0_cert.pem"),
-        os.path.join(adns_nw.common_dir, "member0_privk.pem"),
-    )
-
     test_basic(adns_nw, args)
     #set_registration_policy(adns_nw, args)
-    test_service_reg(adns_nw, args)
-    print("Waiting forever...")
-    while True:
-        pass
+    #test_service_reg(adns_nw, args)
+    #print("Waiting forever...")
+    #while True:
+    #    pass
 
 
 def main():
@@ -330,13 +322,13 @@ def main():
         )
     ]
     targs.constitution = glob.glob("../tests/constitution/*")
-    targs.package = "libccfdns"
-    adns_args.wait_forever = False
-    adns_args.http2 = False
-    adns_args.initial_node_cert_validity_days = 365
-    adns_args.initial_service_cert_validity_days = 365
-    adns_args.message_timeout_ms = 2000
-    adns_args.election_timeout_ms = 50000
+    targs.package = "libccfdns.enclave.so.signed"
+    targs.wait_forever = False
+    targs.http2 = False
+    targs.initial_node_cert_validity_days = 365
+    targs.initial_service_cert_validity_days = 365
+    targs.message_timeout_ms = 2000
+    targs.election_timeout_ms = 50000
 
     targs.adns = aDNSConfig(
         origin="adns.ccf.dev.",
