@@ -667,9 +667,10 @@ namespace ccfdns
       // we use an internal call instead of UserEndpointRegistry.get_untrusted_host_time_v1 because it is not in scope
       uint32_t node_time = std::chrono::duration_cast<std::chrono::seconds>(ccf::get_enclave_time()).count();
 
+      // does *not* support 32-bit rollover, tricky with untrusted host time.
       if (time + quantum < node_time)
       {
-        CCF_APP_TRACE("CCFDNS: Advancing time to {}", node_time);
+        CCF_APP_TRACE("CCFDNS: Advance time to {}", node_time);
         time = node_time;
         table->put(time);
       }
@@ -1707,8 +1708,7 @@ namespace ccfdns
     // EAT and its discovery (to be relocated) 
 
     // RFC 7517; overly specific to RSA? 
-    static nlohmann::json jkw(const std::vector<uint8_t>& public_key) {
-
+    nlohmann::json jwk(const std::vector<uint8_t>& public_key) {
       auto kid = crypto::sha256(public_key);
       return {
         {"kty", "RSA"},
@@ -1725,6 +1725,13 @@ namespace ccfdns
       return {"keys", keys};
     }
 
+    std::string eat_create_key(std::string alg) {
+      // Only supports default EC for now
+      auto kp = crypto::make_key_pair();
+      nlohmann::json jwpk = jwk(kp->public_key_pem().str());
+      return jwpk["kid"];
+    }
+    
 
   protected:
     ccf::endpoints::CommandEndpointContext* ctx = nullptr;
@@ -2867,6 +2874,32 @@ namespace ccfdns
         .install();
 
       /* endpoints for lightweight EAT legacy interface, to be served at eat.{zone}.attested.name */
+
+      auto eat_create_key = [this](auto& ctx) {
+        try
+        {
+          ContextContext cc(ccfdns, ctx);
+          auto body = ctx.rpc_ctx->get_request_body();
+          auto j = nlohmann::json::parse(body);
+          auto alg = j.at("alg").template get<std::string>();
+          auto kid = ccfdns->eat_create_key(alg);
+          ctx.rpc_ctx->set_response_body(kid);
+          ctx.rpc_ctx->set_response_status(HTTP_STATUS_OK);
+        }
+        catch (std::exception& ex)
+        {
+          ctx.rpc_ctx->set_response_body(ex.what());
+          ctx.rpc_ctx->set_response_status(HTTP_STATUS_INTERNAL_SERVER_ERROR);
+        }
+      };
+
+      make_endpoint(
+        "/eat-create-key", 
+        HTTP_POST, 
+        eat_create_key,
+        ccf::no_auth_required)
+        .set_forwarding_required(ccf::endpoints::ForwardingRequired::Never)
+        .install();
 
       auto issuing_jwks = [this](auto& ctx) {
 

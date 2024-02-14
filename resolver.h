@@ -457,7 +457,7 @@ namespace aDNS
       QClass c,
       QType t,
       const Name& name,
-      uint32_t sig_inception,      
+      uint32_t sig_time,      
       std::shared_ptr<crypto::KeyPair> key,
       uint16_t key_tag,
       RFC4034::Algorithm signing_algorithm);

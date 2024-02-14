@@ -880,6 +880,9 @@ namespace aDNS
         dnskey_rdata));
   }
 
+  // for RRSIG inception and expiration, we tolerate up to 5 minutes of clock skew
+  static const uint32_t acceptable_clock_skew = 300;
+
   ResourceRecord Resolver::add_nsec3(
     Class c,
     const Name& origin,
@@ -889,7 +892,7 @@ namespace aDNS
     const RFC1035::Name& suffix,
     std::set<Type> types,
     uint32_t nsec_ttl,
-    uint32_t sig_inception,
+    uint32_t sig_time,
     const KeyAndTag& key_and_tag)
   {
     assert(!types.empty());
@@ -944,8 +947,8 @@ namespace aDNS
         configuration.signing_algorithm,
         origin,
         crrs,
-        sig_inception,
-        sig_inception + nsec_ttl,
+        sig_time - acceptable_clock_skew,
+        sig_time + acceptable_clock_skew + nsec_ttl,
         type2str));
 
     return rr;
@@ -956,7 +959,7 @@ namespace aDNS
     QClass c,
     QType t,
     const Name& name,
-    uint32_t sig_inception,
+    uint32_t sig_time,
     std::shared_ptr<crypto::KeyPair> key,
     uint16_t key_tag,
     RFC4034::Algorithm signing_algorithm)
@@ -996,8 +999,8 @@ namespace aDNS
           signing_algorithm,
           origin,
           crrs,
-          sig_inception,
-          sig_inception + crrs.ttl,
+          sig_time - acceptable_clock_skew,
+          sig_time + acceptable_clock_skew + crrs.ttl,
           type2str));
     }
 
@@ -1010,8 +1013,8 @@ namespace aDNS
 
     const auto& cfg = get_configuration();
 
-    const uint32_t sig_inception = get_fresh_time();
-    CCF_APP_INFO("ADNS: (Re)signing {} at time {}", origin, sig_inception );
+    const uint32_t sig_time = get_fresh_time();
+    CCF_APP_INFO("ADNS: (Re)signing {} at time {}", origin, sig_time);
 
     if (!origin.is_absolute())
       throw std::runtime_error("origin is not absolute");
@@ -1081,7 +1084,7 @@ namespace aDNS
             static_cast<QClass>(c),
             static_cast<QType>(t),
             name,
-            sig_inception,
+            sig_time,
             key,
             key_tag,
             cfg.signing_algorithm);
@@ -1149,7 +1152,7 @@ namespace aDNS
             owner,
             it->second.types,
             nsec_ttl,
-            sig_inception,
+            sig_time,
             zsk_and_tag);
         }
       }
@@ -1193,8 +1196,8 @@ namespace aDNS
               cfg.signing_algorithm,
               origin,
               crrs,
-              sig_inception,
-              sig_inception + crrs.ttl,
+              sig_time - acceptable_clock_skew,
+              sig_time + acceptable_clock_skew + crrs.ttl,
               type2str));
 
           it = next;
