@@ -2539,7 +2539,7 @@ namespace ccfdns
         "/internal/add",
         HTTP_POST,
         ccf::json_adapter(add),
-        {std::make_shared<ccf::NodeCertAuthnPolicy>()})
+        {std::make_shared<ccf::MemberCertAuthnPolicy>()})
         .set_openapi_hidden(true)
         .set_forwarding_required(ccf::endpoints::ForwardingRequired::Always)
         .install();
