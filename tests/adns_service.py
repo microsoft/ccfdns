@@ -149,12 +149,12 @@ def configure(base_url, cabundle, config, client_cert=None, num_retries=10):
                 headers={"Content-Type": "application/json"},
                 cert=client_cert,
             )
+            LOG.info(r)
             ok = (
                 r.status_code == http.HTTPStatus.OK
                 or r.status_code == http.HTTPStatus.NO_CONTENT
             )
             if not ok:
-                LOG.info(r)
                 LOG.info(r.text)
             assert ok
             reginfo = r.json()["registration_info"]
