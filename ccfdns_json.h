@@ -201,7 +201,7 @@ namespace ccfdns
 
   DECLARE_JSON_TYPE(EATPublicKeyRecord);
   DECLARE_JSON_REQUIRED_FIELDS(
-    EATPublicKeyRecord, public_key, can_sign_after, can_retire_after);
+    EATPublicKeyRecord, jwk, can_sign_after, can_retire_after);
 
   DECLARE_JSON_TYPE(Configure::Out);
   DECLARE_JSON_REQUIRED_FIELDS(Configure::Out, registration_info);

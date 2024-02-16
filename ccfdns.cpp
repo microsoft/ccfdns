@@ -22,6 +22,8 @@
 #include <ccf/crypto/base64.h>
 #include <ccf/crypto/curve.h>
 #include <ccf/crypto/key_pair.h>
+//#include <ccf/crypto/eddsa_key_pair.h>
+#include <ccf/crypto/jwk.h>
 #include <ccf/ds/hex.h>
 #include <ccf/ds/json.h>
 #include <ccf/ds/logger.h>
@@ -644,6 +646,7 @@ namespace ccfdns
 
     virtual void set_configuration(const Configuration& cfg) override
     {
+      CCF_APP_TRACE("ADNS: Set configuration");
       check_context();
       auto t = rwtx().template rw<CCFDNS::TConfigurationTable>(
         configuration_table_name);
@@ -687,7 +690,8 @@ namespace ccfdns
     virtual void add(const Name& origin, const ResourceRecord& rr) override
     {
       check_context();
-      CCF_APP_TRACE("CCFDNS: Add: {}", string_from_resource_record(rr));
+      if (rr.type != static_cast<uint16_t>(RFC3596::Type::AAAA)) // skip AAAA-fragmented payloads 
+        CCF_APP_TRACE("CCFDNS: Add: {}", string_from_resource_record(rr));
 
       if (!origin.is_absolute())
         throw std::runtime_error("origin not absolute");
@@ -1707,6 +1711,7 @@ namespace ccfdns
 
     // EAT and its discovery (to be relocated) 
 
+    /*
     // RFC 7517; overly specific to RSA? 
     nlohmann::json jwk(const std::vector<uint8_t>& public_key) {
       auto kid = crypto::sha256(public_key);
@@ -1718,20 +1723,117 @@ namespace ccfdns
         {"n", crypto::b64_from_raw(public_key)},
       };
     }
-      
-    nlohmann::json jkws() {
-      // TODO include each key in the issuing-key table 
-      std::vector<std::string> keys;
-      return {"keys", keys};
+    */
+  
+    nlohmann::json eat_discover() {
+      auto origin = get_configuration().origin.unterminated();
+      auto prefix = std::string("https://").append(origin);
+      nlohmann::json d =
+      {
+        {"token_endpoint", prefix + "/common/oauth2/v2.0/token"},
+        {"jwks_uri", prefix + "/common/discovery/v2.0/keys"},
+        {"id_token_signing_alg_values_supported", {"ECDSA"}},
+        {"issuer", prefix + "/v2.0"},
+        {"request_uri_parameter_supported", false}
+      };
+      CCF_APP_INFO("EAT discovery is\n{}", d.dump(4));
+      return d;
     }
 
-    std::string eat_create_key(std::string alg) {
-      // Only supports default EC for now
-      auto kp = crypto::make_key_pair();
-      nlohmann::json jwpk = jwk(kp->public_key_pem().str());
-      return jwpk["kid"];
+    // the primary could cache this key, since it will remain current till min(public_key[i].can_sign_after, discovery_ttl)
+    crypto::Pem eat_get_signing_key(const std::string& kid) {
+      check_context();
+      uint32_t now = get_fresh_time();
+
+      auto public_key_table = rwtx().template rw<EATIssuerKeyInfo>(eat_issuer_key_info_table_name);
+      auto public_keys = public_key_table->get().value();
+
+      auto private_key_table = rwtx().template rw<EATPrivateKeys>(eat_private_key_table_name);
+      auto private_keys = private_key_table->get().value();
+
+      size_t erased = public_keys.size() - private_keys.size(); 
+      
+      // find the most recent key available for signing
+      size_t i = public_keys.size();
+      while (erased < i && now < public_keys[i-1].can_sign_after) i--; 
+
+      // retire any private key that is no longer required 
+      if (erased + 1 < i) {
+        while(1 + erased < i) {
+          CCF_APP_INFO("CCFDNS: Erasing EAT key kid={}", kid);
+          private_keys.erase(private_keys.begin());
+          public_keys[erased].can_retire_after = now + max_token_ttl;
+          erased++;
+        }
+        public_key_table->put(public_keys);
+        private_key_table->put(private_keys);
+      }
+
+      return private_keys[0];
+    }
+
+    std::string eat_create_signing_key(std::string alg) {
+      try {
+        check_context();
+        uint32_t now = get_fresh_time();
+
+        auto kp = crypto::make_key_pair(crypto::CurveID::SECP384R1);
+        auto pubk_pem = kp->public_key_pem();
+        auto pubk = crypto::make_public_key(pubk_pem);
+        auto kid = crypto::b64_from_raw(crypto::sha256(pubk_pem.raw()));
+        nlohmann::json jwk = pubk->public_key_jwk(kid);
+
+        CCF_APP_INFO("EAT: Create issuer key\n{}", jwk.dump(4));
+
+        auto public_key_table = rwtx().template rw<EATIssuerKeyInfo>(eat_issuer_key_info_table_name);
+        auto public_keys = public_key_table->get().value_or(std::vector<EATPublicKeyRecord>()); 
+
+        auto private_key_table = rwtx().template rw<EATPrivateKeys>(eat_private_key_table_name);
+        auto private_keys = private_key_table->get().value_or(std::vector<crypto::Pem>());
+
+        public_keys.push_back({ 
+          .jwk = jwk,
+          .can_sign_after = public_keys.empty() ? now : (now + discovery_ttl),
+          .can_retire_after = 0xFFFFFFFF
+        });
+
+        private_keys.push_back(kp->private_key_pem());
+
+        public_key_table->put(public_keys);
+        private_key_table->put(private_keys);
+
+        return kid;
+      }
+      catch (std::exception& ex) {
+        CCF_APP_INFO("EAT fails with {}",ex.what());
+        return "";
+      }
     }
     
+    nlohmann::json eat_get_jwks() {
+      try {
+      check_context();
+      auto time = get_fresh_time();
+
+      auto public_key_table = rwtx().template rw<EATIssuerKeyInfo>(eat_issuer_key_info_table_name);
+      auto public_keys = public_key_table->get().value();
+
+      auto contents = nlohmann::json::array();
+      for (const auto& key : public_keys) 
+        if (time < key.can_retire_after)
+          contents.push_back(key.jwk);
+
+      nlohmann::json jwks =  { {"keys", contents} };  
+
+      CCF_APP_INFO("EAT get jwks\n{}", jwks.dump(4));
+      return jwks;
+      }
+      catch (std::exception& ex) {
+        CCF_APP_INFO("EAT fails with {}",ex.what());
+        return nlohmann::json();
+      }
+    }
+
 
   protected:
     ccf::endpoints::CommandEndpointContext* ctx = nullptr;
@@ -2875,15 +2977,15 @@ namespace ccfdns
 
       /* endpoints for lightweight EAT legacy interface, to be served at eat.{zone}.attested.name */
 
-      auto eat_create_key = [this](auto& ctx) {
+      auto eat_create_signing_key = [this](auto& ctx) {
         try
         {
           ContextContext cc(ccfdns, ctx);
           auto body = ctx.rpc_ctx->get_request_body();
           auto j = nlohmann::json::parse(body);
           auto alg = j.at("alg").template get<std::string>();
-          auto kid = ccfdns->eat_create_key(alg);
-          ctx.rpc_ctx->set_response_body(kid);
+          std::string kid = ccfdns->eat_create_signing_key(alg);
+          ctx.rpc_ctx->set_response_body(kid.c_str());
           ctx.rpc_ctx->set_response_status(HTTP_STATUS_OK);
         }
         catch (std::exception& ex)
@@ -2894,23 +2996,14 @@ namespace ccfdns
       };
 
       make_endpoint(
-        "/eat-create-key", 
+        "/eat-create-signing-key", 
         HTTP_POST, 
-        eat_create_key,
+        eat_create_signing_key,
         ccf::no_auth_required)
         .set_forwarding_required(ccf::endpoints::ForwardingRequired::Never)
         .install();
 
-      auto issuing_jwks = [this](auto& ctx) {
-
-        // TODO include each key in the issuing-key table 
-        std::vector<std::string> keys;
-        nlohmann::json response = {
-          {"keys", keys}
-        };
-      };
-
-      auto openid_configuration = [this](auto& ctx) {
+      auto eat_get_jwks = [this](auto& ctx) {
         try
         {
           ContextContext cc(ccfdns, ctx);
@@ -2918,17 +3011,42 @@ namespace ccfdns
             http::headers::CONTENT_TYPE, "application/json");
           
           // TODO check the FQDN is eat.
-          CCF_APP_INFO("EAT query: {}", ctx.rpc_ctx->get_request_url());
 
-          auto response = R"(
-            {
-              "token_endpoint": "https://{eat}/common/oauth2/v2.0/token",
-              "jwks_uri": "https://{eat}/common/discovery/v2.0/keys",
-              "id_token_signing_alg_values_supported": ["RS256"],
-              "issuer": "https://{eat}/v2.0",
-              "request_uri_parameter_supported": false
-            }
-            )"_json;
+          // TODO locally cache the whole response.
+          auto response = ccfdns->eat_get_jwks();
+          ctx.rpc_ctx->set_response_body(response.dump(4));
+          ctx.rpc_ctx->set_response_status(HTTP_STATUS_OK);
+        }
+        catch (std::exception& ex) {
+          CCF_APP_INFO("EAT fails with  {}",ex.what());
+          ctx.rpc_ctx->set_response_body(ex.what());
+          ctx.rpc_ctx->set_response_status(HTTP_STATUS_INTERNAL_SERVER_ERROR);
+        }
+      };
+
+      // read-only except when updating the time
+      make_endpoint(
+        "/common/discovery/v2.0/keys", 
+        HTTP_GET, 
+        eat_get_jwks,
+        ccf::no_auth_required)
+        .set_forwarding_required(ccf::endpoints::ForwardingRequired::Never)
+        .install();
+
+      auto openid_configuration = [this](auto& ctx) {
+        try
+        {
+          ContextContext cc(ccfdns, ctx);
+
+          // TODO check the FQDN is eat.
+          nlohmann::json response = ccfdns->eat_discover();
+
+          CCF_APP_INFO("EAT query: {}\n{}",
+            ctx.rpc_ctx->get_request_url(),
+            response.dump(4));
+
+          ctx.rpc_ctx->set_response_header(
+            http::headers::CONTENT_TYPE, "application/json");
           ctx.rpc_ctx->set_response_body(response.dump(4));
           ctx.rpc_ctx->set_response_status(HTTP_STATUS_OK);
         }

@@ -29,13 +29,16 @@ namespace ccfdns
   // minimal time EAT public keys must be discoverable before issuing tokens (1 day)
   const uint32_t discovery_ttl = 24*3600; 
 
+  // maximal time EAT tokens are valid (1 hour)
+  const uint32_t max_token_ttl = 3600; 
+
   // We could also keep the public keys in TLSA records, for DNS-based discovery and transparency
   // but then aDNS clients can already directly fetch the service attestation records.
 
   struct EATPublicKeyRecord
   {
     // to be fixed; whatever it takes to produce the JWKS.
-    crypto::Pem public_key;
+    nlohmann::json jwk;
 
     // creation time for first key, creation_time + discovery_ttl for next keys
     uint32_t can_sign_after; 
