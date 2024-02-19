@@ -49,13 +49,13 @@ nonzero_mrenclave_policy = """
 
 
 class ServiceCAConfig(dict):
-    def __init__(self, name, directory, certificates=[]):
+    def __init__(self, name, directory, ca_certificates=[]):
         dict.__init__(
-            self, name=name, directory=directory, ca_certificates=certificates
+            self, name=name, directory=directory, ca_certificates=ca_certificates
         )
         self.name = name
         self.directory = directory
-        self.certificates = certificates
+        self.ca_certificates = ca_certificates
 
 
 class aDNSConfig(dict):
@@ -135,12 +135,15 @@ def add_record(client, origin, name, stype, rdata_obj):
     return r
 
 
-def configure(base_url, cabundle, config, client_cert=None, num_retries=10):
+def configure(base_url, cabundle, config, client_cert=None, num_retries=1):
     """Configure an aDNS service"""
 
     while num_retries > 0:
         try:
             url = base_url + "/app/configure"
+
+            LOG.info("Calling /app/configure with config:" + json.dumps(config, indent=2))
+            
             r = requests.post(
                 url,
                 json.dumps(config),
@@ -149,7 +152,8 @@ def configure(base_url, cabundle, config, client_cert=None, num_retries=10):
                 headers={"Content-Type": "application/json"},
                 cert=client_cert,
             )
-            LOG.info(r)
+
+            LOG.info("Resonse:" + json.dumps(r.json(), indent=2))
             ok = (
                 r.status_code == http.HTTPStatus.OK
                 or r.status_code == http.HTTPStatus.NO_CONTENT
@@ -296,11 +300,11 @@ def make_acme_config(args, service_dns_name):
     if config_name != "custom":
         if config_name == "pebble":
             acme_directory = "https://127.0.0.1:1024/dir"
-            email = args.email
+            email = args.adns.contact[0]
             challenge_type = "http-01"
         elif config_name == "pebble-dns":
             acme_directory = "https://127.0.0.1:1024/dir"
-            email = args.email
+            email = args.adns.contact[0]
             challenge_type = "dns-01"
         elif config_name == "letsencrypt":
             if args.acme_http_port != 80:
@@ -314,13 +318,13 @@ def make_acme_config(args, service_dns_name):
                 "-----BEGIN CERTIFICATE-----\nMIIDCzCCApGgAwIBAgIRALRY4992FVxZJKOJ3bpffWIwCgYIKoZIzj0EAwMwaDEL\nMAkGA1UEBhMCVVMxMzAxBgNVBAoTKihTVEFHSU5HKSBJbnRlcm5ldCBTZWN1cml0\neSBSZXNlYXJjaCBHcm91cDEkMCIGA1UEAxMbKFNUQUdJTkcpIEJvZ3VzIEJyb2Nj\nb2xpIFgyMB4XDTIwMDkwNDAwMDAwMFoXDTI1MDkxNTE2MDAwMFowVTELMAkGA1UE\nBhMCVVMxIDAeBgNVBAoTFyhTVEFHSU5HKSBMZXQncyBFbmNyeXB0MSQwIgYDVQQD\nExsoU1RBR0lORykgRXJzYXR6IEVkYW1hbWUgRTEwdjAQBgcqhkjOPQIBBgUrgQQA\nIgNiAAT9v/PJUtHOTk28nXCXrpP665vI4Z094h8o7R+5E6yNajZa0UubqjpZFoGq\nu785/vGXj6mdfIzc9boITGusZCSWeMj5ySMZGZkS+VSvf8VQqj+3YdEu4PLZEjBA\nivRFpEejggEQMIIBDDAOBgNVHQ8BAf8EBAMCAYYwHQYDVR0lBBYwFAYIKwYBBQUH\nAwIGCCsGAQUFBwMBMBIGA1UdEwEB/wQIMAYBAf8CAQAwHQYDVR0OBBYEFOv5JcKA\nKGbibQiSMvPC4a3D/zVFMB8GA1UdIwQYMBaAFN7Ro1lkDsGaNqNG7rAQdu+ul5Vm\nMDYGCCsGAQUFBwEBBCowKDAmBggrBgEFBQcwAoYaaHR0cDovL3N0Zy14Mi5pLmxl\nbmNyLm9yZy8wKwYDVR0fBCQwIjAgoB6gHIYaaHR0cDovL3N0Zy14Mi5jLmxlbmNy\nLm9yZy8wIgYDVR0gBBswGTAIBgZngQwBAgEwDQYLKwYBBAGC3xMBAQEwCgYIKoZI\nzj0EAwMDaAAwZQIwXcZbdgxcGH9rTErfSTkXfBKKygU0yO7OpbuNeY1id0FZ/hRY\nN5fdLOGuc+aHfCsMAjEA0P/xwKr6NQ9MN7vrfGAzO397PApdqfM7VdFK18aEu1xm\n3HMFKzIR8eEPsMx4smMl\n-----END CERTIFICATE-----\n",
                 "-----BEGIN CERTIFICATE-----\nMIICTjCCAdSgAwIBAgIRAIPgc3k5LlLVLtUUvs4K/QcwCgYIKoZIzj0EAwMwaDEL\nMAkGA1UEBhMCVVMxMzAxBgNVBAoTKihTVEFHSU5HKSBJbnRlcm5ldCBTZWN1cml0\neSBSZXNlYXJjaCBHcm91cDEkMCIGA1UEAxMbKFNUQUdJTkcpIEJvZ3VzIEJyb2Nj\nb2xpIFgyMB4XDTIwMDkwNDAwMDAwMFoXDTQwMDkxNzE2MDAwMFowaDELMAkGA1UE\nBhMCVVMxMzAxBgNVBAoTKihTVEFHSU5HKSBJbnRlcm5ldCBTZWN1cml0eSBSZXNl\nYXJjaCBHcm91cDEkMCIGA1UEAxMbKFNUQUdJTkcpIEJvZ3VzIEJyb2Njb2xpIFgy\nMHYwEAYHKoZIzj0CAQYFK4EEACIDYgAEOvS+w1kCzAxYOJbA06Aw0HFP2tLBLKPo\nFQqR9AMskl1nC2975eQqycR+ACvYelA8rfwFXObMHYXJ23XLB+dAjPJVOJ2OcsjT\nVqO4dcDWu+rQ2VILdnJRYypnV1MMThVxo0IwQDAOBgNVHQ8BAf8EBAMCAQYwDwYD\nVR0TAQH/BAUwAwEB/zAdBgNVHQ4EFgQU3tGjWWQOwZo2o0busBB2766XlWYwCgYI\nKoZIzj0EAwMDaAAwZQIwRcp4ZKBsq9XkUuN8wfX+GEbY1N5nmCRc8e80kUkuAefo\nuc2j3cICeXo1cOybQ1iWAjEA3Ooawl8eQyR4wrjCofUE8h44p0j7Yl/kBlJZT8+9\nvbtH7QiVzeKCOTQPINyRql6P\n-----END CERTIFICATE-----\n",
             ]
-            if not args.email:
+            if not args.adns.contact[0]:
                 raise Exception("Valid e-mail address is required for Let's Encrypt")
-            email = args.email
+            email = args.adns.contact[0]
             challenge_type = "http-01"
         else:
             acme_directory = args.acme_directory if "acme_directory" in args else ""
-            email = args.email
+            email = args.adns.contact[0]
             challenge_type = "http-01"
 
         config = {
@@ -348,8 +352,8 @@ def assign_node_addresses(network, addr, add_node_id=True):
                     name = node.node_id[:12] + "." + name
                 node_addresses[node.node_id] = {
                     "name": name + ".",
-                    "protocol": ext_if.transport,
                     "ip": ext_ip,
+                    "protocol": ext_if.transport,
                     "port": ext_if.public_port,
                 }
     return node_addresses
@@ -368,10 +372,9 @@ def run(
     proxy_procs = []
     acme_config_name = acme_config = None
 
-    # ADL: allow basic testing with self-signed service certificate
-    if "acme_config_name" in args:
-        acme_config_name, acme_config = make_acme_config(args, service_dns_name)
-        args.acme = {"configurations": {acme_config_name: acme_config}}
+    acme_config_name, acme_config = make_acme_config(args, service_dns_name)
+    args.acme = {"configurations": {acme_config_name: acme_config}}
+    print("ACME Configuration: "+json.dumps(args.acme))
 
     try:
         nodes = []

@@ -1481,11 +1481,13 @@ namespace aDNS
       for (const auto& san : *cfg.alternative_names)
         sans.push_back({san, false});
 
+    CCF_APP_INFO("CCFDNS: Resolver::configure(): CSR");
     out.csr =
       tls_key->create_csr_der("CN=" + cn, sans, tls_key->public_key_pem());
 
     // get_signing_key(cfg.origin, Class::IN, cfg.use_key_signing_key);
 
+    CCF_APP_INFO("CCFDNS: Resolver::configure(): Resolve DNSKEY");
     auto dnskeys = resolve(cfg.origin, QType::DNSKEY, QClass::IN);
 
     if (dnskeys.answers.size() > 0)
@@ -1504,6 +1506,7 @@ namespace aDNS
             out.dnskey_records->push_back(keyrr);
         }
     }
+    CCF_APP_INFO("CCFDNS: Resolver::configure(): Added {} records", dnskeys.answers.size());
 
     return out;
   }

@@ -339,7 +339,9 @@ def main():
             mgmt_address="0.0.0.0:1025",
         )
         service_ca_config = ServiceCAConfig(
-            name="pebble", directory="https://127.0.0.1:1024/dir", certificates=[]
+            name="pebble",
+            directory="https://127.0.0.1:1024/dir",
+            certificates=[]
         )
 
     # First, an aDNS server for adns.ccf.dev.

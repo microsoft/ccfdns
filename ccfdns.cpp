@@ -174,6 +174,7 @@ namespace ccfdns
       auto vbody =
         std::vector<uint8_t>(msg->data.body.begin(), msg->data.body.end());
       CCF_APP_TRACE("CCFDNS: HTTP: {} {}", msg->data.method, msg->data.url);
+      CCF_APP_TRACE("CCFDNS: {} CA certificates configures", msg->data.ca_certs.size());
       msg->data.client->acme_ss->make_http_request(
         msg->data.method,
         msg->data.url,
@@ -633,14 +634,17 @@ namespace ccfdns
 
     virtual Configuration get_configuration() const override
     {
+      CCF_APP_TRACE("CCFDNS: get_configuration()");
       check_context();
       auto t = rotx().template ro<CCFDNS::TConfigurationTable>(
         configuration_table_name);
       if (!t)
         throw std::runtime_error("empty configuration table");
+      CCF_APP_TRACE("CCFDNS: get_configuration() get()");
       auto cfg = t->get();
       if (!cfg)
-        throw std::runtime_error("no configuration available");
+        throw std::runtime_error("get_configuration(): no configuration available");
+      CCF_APP_TRACE("CCFDNS: get_configuration() end()");
       return *cfg;
     }
 
@@ -648,9 +652,11 @@ namespace ccfdns
     {
       CCF_APP_TRACE("ADNS: Set configuration");
       check_context();
+      CCF_APP_TRACE("CCFDNS: setting configuration");
       auto t = rwtx().template rw<CCFDNS::TConfigurationTable>(
         configuration_table_name);
       t->put(cfg);
+      CCF_APP_TRACE("CCFDNS: configuration set");
     }
 
     // returns the persisted, monotonic system time, since 1970,
@@ -1329,6 +1335,7 @@ namespace ccfdns
           acme_ss,
           acme_account_key_pair);
 
+        CCF_APP_DEBUG("CCFDNS: ACME Get certificate");
         acme_client->get_certificate(acme_account_key_pair);
 
         acme_clients[cn] = acme_client;
@@ -1378,7 +1385,10 @@ namespace ccfdns
       }
 
       if (!cfg.parent_base_url) 
+      {
         start_acme_client();
+        CCF_APP_INFO("CCFDNS: ACME Client started");
+      }
       else
       {
         // When delegating, we now wait until start-delegation-acme-client is
@@ -2335,6 +2345,7 @@ namespace ccfdns
         };
 
       auto configure = [this](auto& ctx, nlohmann::json&& params) {
+        CCF_APP_TRACE("CCFDNS: call /configure");
         try
         {
           ContextContext cc(ccfdns, ctx);
@@ -2342,18 +2353,22 @@ namespace ccfdns
           CCF_APP_INFO(
             "CCFDNS: Configuration request size: {}",
             ctx.rpc_ctx->get_request_body().size());
-          Configure::Out out = {ccfdns->configure(in)};
+          Configure::Out out = {.registration_info = ccfdns->configure(in)};
 
           auto log = nlohmann::json{
             {"request", "/configure"}, 
             {"input", in}, 
             {"output", out} 
           };
-          ctx.rpc_ctx->set_claims_digest(ccf::ClaimsDigest::Digest(log));
+
+          CCF_APP_INFO("CCFDNS: Out configuration");
+          ctx.rpc_ctx->set_claims_digest(ccf::ClaimsDigest::Digest(log.dump()));
+          CCF_APP_INFO("CCFDNS: Set claims digest");
           return ccf::make_success(out);
         }
         catch (std::exception& ex)
         {
+          CCF_APP_INFO("CCFDNS: Configure exception {}", ex.what());
           return ccf::make_error(
             HTTP_STATUS_BAD_REQUEST, ccf::errors::InternalError, ex.what());
         }

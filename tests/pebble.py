@@ -16,7 +16,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 
 from cryptography import x509
-from cryptography.x509.oid import NameOID
+from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
 from cryptography.hazmat.primitives import hashes
 
 import adns_tools
@@ -30,7 +30,7 @@ def wait_for_port_to_listen(host, port, timeout=10):
             return
         except Exception as ex:
             LOG.trace(f"Likely expected exception: {ex}")
-            time.sleep(0.5)
+            time.sleep(0.25)
     raise TimeoutError(f"port did not start listening within {timeout} seconds")
 
 
@@ -83,8 +83,19 @@ def generate_self_signed_cert(key, subject):
         .add_extension(
             x509.SubjectAlternativeName([x509.DNSName("localhost")]),
             critical=False,
-        )
-        .sign(key, hashes.SHA256())
+        ).add_extension(
+            x509.BasicConstraints(ca=True, path_length=None),
+            critical=True
+        ).add_extension(
+            x509.KeyUsage(key_cert_sign=True,digital_signature=False,content_commitment=False,key_encipherment=False,data_encipherment=False,key_agreement=False,crl_sign=True,encipher_only=False,decipher_only=False),
+            critical=True
+        ).add_extension(
+            x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH]),
+            critical=False
+        ).add_extension(
+            x509.SubjectKeyIdentifier.from_public_key(key.public_key()),
+            critical=False
+        ).sign(key, hashes.SHA256())
     )
 
 
@@ -172,22 +183,64 @@ def run_pebble(args):
         args.tls_port,
     )
 
-    ca_key = ec.generate_private_key(ec.SECP384R1(), default_backend())
 
-    with open(args.ca_key_filename, "w", encoding="ascii") as f:
-        f.write(
-            ca_key.private_bytes(
-                encoding=serialization.Encoding.PEM,
-                format=serialization.PrivateFormat.PKCS8,
-                encryption_algorithm=serialization.NoEncryption(),
-            ).decode("ascii")
-        )
+    if not os.path.exists(args.ca_cert_filename) or not os.path.exists(args.ca_key_filename):
+        print("Generating new Pebble certificates")
+        ca_key = ec.generate_private_key(ec.SECP384R1(), default_backend())
+        ca_cert = generate_self_signed_cert(ca_key, "Pebble Test CA")
+        cert_key = ec.generate_private_key(ec.SECP384R1(), default_backend())
 
-    ca_cert = generate_self_signed_cert(ca_key, "Pebble Test CA")
-    with open(args.ca_cert_filename, "w", encoding="ascii") as f:
-        f.write(
-            ca_cert.public_bytes(encoding=serialization.Encoding.PEM).decode("ascii")
-        )
+        cert = x509.CertificateBuilder().subject_name(
+            x509.Name([
+                x509.NameAttribute(NameOID.COMMON_NAME, u"localhost"),
+            ])
+        ).issuer_name(
+            ca_cert.subject
+        ).public_key(
+            cert_key.public_key()
+        ).serial_number(
+            x509.random_serial_number()
+        ).not_valid_before(
+            datetime.datetime.utcnow()
+        ).not_valid_after(
+            datetime.datetime.utcnow() + datetime.timedelta(days=365)
+        ).add_extension(
+            x509.SubjectAlternativeName([x509.DNSName(u"localhost")]),
+            critical=False
+        ).add_extension(
+            x509.KeyUsage(key_cert_sign=False,digital_signature=True,content_commitment=False,key_encipherment=False,data_encipherment=False,key_agreement=False,crl_sign=False,encipher_only=False,decipher_only=False),
+            critical=True
+        ).add_extension(
+            x509.BasicConstraints(ca=False, path_length=None),
+            critical=True
+        ).add_extension(
+            x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH]),
+            critical=False
+        ).add_extension(
+            x509.AuthorityKeyIdentifier.from_issuer_public_key(ca_key.public_key()),
+            critical=False
+        ).sign(ca_key, hashes.SHA256(), default_backend())
+
+        with open(args.ca_key_filename, "w", encoding="ascii") as f:
+            f.write(
+                cert_key.private_bytes(
+                    encoding=serialization.Encoding.PEM,
+                    format=serialization.PrivateFormat.PKCS8,
+                    encryption_algorithm=serialization.NoEncryption(),
+                ).decode("ascii")
+            )
+
+        with open(args.ca_cert_filename, "w", encoding="ascii") as f:
+            f.write(
+                cert.public_bytes(encoding=serialization.Encoding.PEM).decode("ascii")
+            )
+
+        with open("pebble-root.pem", "w", encoding="ascii") as f:
+            f.write(
+                ca_cert.public_bytes(encoding=serialization.Encoding.PEM).decode("ascii")
+            )
+    else:
+        print("Reusing existing Pebble certificates")
 
     if args.wait_forever:
         run_blocking(
@@ -213,7 +266,7 @@ def run_proc(binary_filename, config_filename, dns_address, listen_address, out,
         listen_address,
         out,
         err,
-        env={"PEBBLE_WFE_NONCEREJECT": "0", "PEBBLE_VA_NOSLEEP": "1"},
+        env={"PEBBLE_WFE_NONCEREJECT": "0", "PEBBLE_VA_NOSLEEP": "1", "PEBBLE_VA_ALWAYS_VALID":"1"},
     )
 
 
@@ -230,6 +283,12 @@ def run_pebble_proc(args):
         out,
         err,
     )
+
+    # Make sure Pebble is ready
+    time.sleep(1)
+    host, port = args.listen_address.split(":")
+    wait_for_port_to_listen(host, port, 5)
+    print("Pebble server is listening.")
 
     with open("pebble.pem", "w", encoding="ascii") as f:
         cs = get_pebble_ca_certs(args.mgmt_address)
