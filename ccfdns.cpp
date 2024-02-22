@@ -11,6 +11,7 @@
 
 #include <arpa/inet.h>
 #include <ccf/_private/ds/thread_messaging.h>
+//#include <ccf/_private/http/http_jwt.h>
 #include <ccf/_private/node/acme_client.h>
 #include <ccf/_private/node/identity.h>
 #include <ccf/_private/quic/msg_types.h>
@@ -59,6 +60,13 @@
 #include <ravl/openssl.hpp>
 #include <regex>
 #include <stdexcept>
+
+// Could be merged with CCF's http::JwtVerifier
+class EAT 
+{
+public:
+
+};
 
 using namespace aDNS;
 using namespace RFC1035;
@@ -634,17 +642,15 @@ namespace ccfdns
 
     virtual Configuration get_configuration() const override
     {
-      CCF_APP_TRACE("CCFDNS: get_configuration()");
+      CCF_APP_TRACE("CCFDNS: Get configuration");
       check_context();
       auto t = rotx().template ro<CCFDNS::TConfigurationTable>(
         configuration_table_name);
       if (!t)
         throw std::runtime_error("empty configuration table");
-      CCF_APP_TRACE("CCFDNS: get_configuration() get()");
       auto cfg = t->get();
       if (!cfg)
         throw std::runtime_error("get_configuration(): no configuration available");
-      CCF_APP_TRACE("CCFDNS: get_configuration() end()");
       return *cfg;
     }
 
@@ -1721,20 +1727,68 @@ namespace ccfdns
 
     // EAT and its discovery (to be relocated) 
 
-    /*
-    // RFC 7517; overly specific to RSA? 
-    nlohmann::json jwk(const std::vector<uint8_t>& public_key) {
-      auto kid = crypto::sha256(public_key);
-      return {
-        {"kty", "RSA"},
-        {"use", "sig"},
-        {"kid", crypto::b64_from_raw(kid)},
-        {"e", "AQAB"},
-        {"n", crypto::b64_from_raw(public_key)},
-      };
+    static std::string b64url_from_string(std::string s) {
+      const std::vector<uint8_t> v(s.begin(), s.end());
+      return crypto::b64url_from_raw(v,false); // without padding
     }
-    */
-  
+
+    // jwk must be an ECPublicKey; payload must have at least nbf and exp
+    static std::string eat_issue(nlohmann::json payload, nlohmann::json jwk, crypto::Pem private_key)
+    {
+      // TODO: crypto agility
+      if (jwk["crv"] != "P-384") {
+        throw std::runtime_error("Invalid algorithm");
+      }
+      nlohmann::json header = {
+        {"alg", "ES384" },
+        {"typ", "JWT"},
+        {"kid", jwk["kid"]}
+      };
+      crypto::KeyPairPtr kp = crypto::make_key_pair(private_key);
+      const std::string signed_content = 
+        b64url_from_string(header.dump(4)) + "." + 
+        b64url_from_string(payload.dump(4));
+
+      auto tbs = std::vector<uint8_t>(signed_content.begin(), signed_content.end());
+
+      auto signature = 
+        crypto::b64url_from_raw(kp->sign(tbs, crypto::MDType::SHA384),false); 
+      std::string token = 
+        signed_content + "." + signature;
+
+      // validate token signature?
+      // auto error_reason = "";
+      // auto parsed_token = http::JwtVerifier::parse_token(token, error_reason).value();
+      // CCF_APP_INFO("EAT token {}", parsed_token);
+      // auto verifier = crypto::make_verifier(jwk.get<crypto::JsonWebKeyECPublic>());
+      // if (!http::JwtVerifier::validate_token_signature(parsed_token, verifier))
+      //   throw std::runtime_error("Invalid token signature");
+      
+      return token;
+    };
+
+    nlohmann::json eat_token() {
+      auto origin = get_configuration().origin.unterminated();
+      auto issuer = std::string("https://") + origin + "/v2.0";
+      auto time = get_fresh_time();
+
+      // basic EAT, no "sub" or "aud" claims
+      // TODO add all RAVL attestation claims for the registered service
+      // TODO pick an expiration time based on this record. 
+      nlohmann::json payload = {
+        {"iss", issuer},
+        {"nbf", time},
+        {"iat", time},
+        {"exp", time + 60*60} // 1 hour
+      };
+
+      auto [jwk, private_key] = eat_get_signing_key();
+      auto token = eat_issue(payload, jwk, private_key);
+
+      CCF_APP_INFO("EAT token {}", token);
+      return token;
+    }
+
     nlohmann::json eat_discover() {
       auto origin = get_configuration().origin.unterminated();
       auto prefix = std::string("https://").append(origin);
@@ -1751,7 +1805,7 @@ namespace ccfdns
     }
 
     // the primary could cache this key, since it will remain current till min(public_key[i].can_sign_after, discovery_ttl)
-    crypto::Pem eat_get_signing_key(const std::string& kid) {
+    std::pair<nlohmann::json,crypto::Pem> eat_get_signing_key() {
       check_context();
       uint32_t now = get_fresh_time();
 
@@ -1769,7 +1823,8 @@ namespace ccfdns
 
       // retire any private key that is no longer required 
       if (erased + 1 < i) {
-        while(1 + erased < i) {
+        while(erased + 1 < i) {
+          std::string kid = public_keys[erased].jwk["kid"];
           CCF_APP_INFO("CCFDNS: Erasing EAT key kid={}", kid);
           private_keys.erase(private_keys.begin());
           public_keys[erased].can_retire_after = now + max_token_ttl;
@@ -1779,7 +1834,7 @@ namespace ccfdns
         private_key_table->put(private_keys);
       }
 
-      return private_keys[0];
+      return std::pair(public_keys[erased].jwk, private_keys[0]);
     }
 
     std::string eat_create_signing_key(std::string alg) {
@@ -2718,7 +2773,7 @@ namespace ccfdns
               "unsupported HTTP verb; use GET or POST");
           }
 
-          CCF_APP_INFO("CCFDNS: query: {}", ds::to_hex(bytes));
+          CCF_APP_INFO("CCFDNS: Query: {}", ds::to_hex(bytes));
 
           auto reply = ccfdns->reply(Message(bytes));
 
@@ -3076,6 +3131,38 @@ namespace ccfdns
         "/common/v2.0/.well-known/openid-configuration",
         HTTP_GET,
         openid_configuration,
+        ccf::no_auth_required)
+        .set_forwarding_required(ccf::endpoints::ForwardingRequired::Never)
+        .install();
+
+      auto eat_token = [this](auto& ctx) {
+        try
+        {
+          ContextContext cc(ccfdns, ctx);
+
+          // TODO check the FQDN is eat.
+          std::string response = ccfdns->eat_token();
+
+          CCF_APP_INFO("EAT query: {}\n{}",
+            ctx.rpc_ctx->get_request_url(),
+            response);
+
+          ctx.rpc_ctx->set_response_header(
+            http::headers::CONTENT_TYPE, "text/plain");
+          ctx.rpc_ctx->set_response_body(std::move(response));
+          ctx.rpc_ctx->set_response_status(HTTP_STATUS_OK);
+        }
+        catch (std::exception& ex)
+        {
+          ctx.rpc_ctx->set_response_body(ex.what());
+          ctx.rpc_ctx->set_response_status(HTTP_STATUS_INTERNAL_SERVER_ERROR);
+        }
+      };
+
+      make_endpoint(
+        "/common/oauth2/v2.0/token",
+        HTTP_GET,
+        eat_token,
         ccf::no_auth_required)
         .set_forwarding_required(ccf::endpoints::ForwardingRequired::Never)
         .install();

@@ -51,6 +51,7 @@ def add_record(client, origin, name, stype, rdata_obj):
             },
         },
     )
+    printf(response={r})
     assert r.status_code == http.HTTPStatus.NO_CONTENT
     return r
 
@@ -120,7 +121,7 @@ def submit_service_registration(
 
 
 def check_record(host, port, ca, name, stype, expected_data=None):
-    """Checks for existance of a specific DNS record"""
+    """Checks for existence of a specific DNS record"""
     qname = dns.name.from_text(name)
     qtype = rdt.from_text(stype)
     with requests.sessions.Session() as session:
@@ -132,6 +133,7 @@ def check_record(host, port, ca, name, stype, expected_data=None):
             verify=ca,
             post=False,
         )
+        print(f"Check record: query=\n{q}\nresponse =\n{r.answer}")
         for a in r.answer:
             assert a.name == qname
             saw_expected = False
@@ -231,6 +233,38 @@ def test_basic(network, args):
         ds_rrs = get_records(host, port, ca, name, "DS", None)
         assert len(ds_rrs.answer) == 0
 
+def test_eat(network, args):
+    """Basic tests"""
+    primary, _ = network.find_primary()
+
+    with primary.client(identity="member0") as client:
+        host = primary.get_public_rpc_host()
+        port = primary.get_public_rpc_port()
+        ca = primary.session_ca()["ca"]
+
+        print("Create two issuer keys")
+        client.post("/eat-create-signing-key",{ "alg": "Secp384R1" })
+        client.post("/eat-create-signing-key",{ "alg": "Secp384R1" })
+
+        print("OpenID Discovery")
+        client.get("/common/v2.0/.well-known/openid-configuration",{})
+
+        print("Key Discovery")
+        jwks = client.get("/common/discovery/v2.0/keys",{}).body.json()
+        print(f"JWKS: {jwks}")
+
+        print("Token Issuance")
+        token = client.get("/common/oauth2/v2.0/token",{}).body.text()
+        print(f"Token: {token} {type(token)}")
+
+        """
+        TODO: test against registered service
+        TODO: validate token 
+        token = token.encode()
+        print(f"Token: {token} {type(token)}")
+        token = jwt.decode(token, jwks["keys"][0], algorithms=["ES384"])
+        print(f"Token: {token} {type(token)}")
+        """
 
 def test_service_reg(network, args):
     """Service registration tests"""
@@ -271,7 +305,7 @@ def run(args):
     try:
         pebble_args = pebble.Arguments(
             # dns_address="10.1.0.4:53",
-            binary_filename="/usr/bin/pebble",
+            binary_filename="/home/fournet/go/bin/pebble",
             wait_forever=False,
             http_port=8080,
             ca_cert_filename="pebble-tls-cert.pem",
@@ -304,12 +338,17 @@ def run(args):
         if not adns_nw:
             raise Exception("Failed to start aDNS network")
 
-        #test_basic(adns_nw, args)
-        #set_registration_policy(adns_nw, args)
-        #test_service_reg(adns_nw, args)
-        #print("Waiting forever...")
-        #while True:
-        #    pass
+        test_eat(adns_nw, args) 
+
+        """ 
+        test_basic(adns_nw, args)
+        set_registration_policy(adns_nw, args)
+        test_service_reg(adns_nw, args)
+        print("Waiting forever...")
+        while True:
+            pass
+        """ 
+
     finally:
         for p in procs:
             if p:
