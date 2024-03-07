@@ -1619,9 +1619,12 @@ namespace aDNS
 
     auto configuration = get_configuration();
 
+    std::string csrtxt(rr.csr.begin(), rr.csr.end());
+    CCF_APP_INFO("ADNS: Importing CSR: {}", csrtxt);
     OpenSSL::UqX509_REQ req(rr.csr, false);
     auto public_key = req.get_pubkey();
     auto public_key_pem = public_key.pem_pubkey();
+    CCF_APP_INFO("ADNS: Extracted public key: {}", public_key_pem);
 
     auto subject_name = req.get_subject_name().get_common_name();
     Name service_name(subject_name);
