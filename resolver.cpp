@@ -1614,14 +1614,16 @@ namespace aDNS
 
   void Resolver::register_service(const RegistrationRequest& rr)
   {
-    using namespace RFC7671;
-    using namespace RFC8659;
+    using namespace RFC7671; 
+    using namespace RFC8659; 
 
     auto configuration = get_configuration();
 
     OpenSSL::UqX509_REQ req(rr.csr, false);
     auto public_key = req.get_pubkey();
     auto public_key_pem = public_key.pem_pubkey();
+    if (!req.verify(public_key))
+      throw std::runtime_error("CSR signature validation failed");
 
     auto subject_name = req.get_subject_name().get_common_name();
     Name service_name(subject_name);
@@ -1631,14 +1633,10 @@ namespace aDNS
 
     auto origin = find_zone(service_name);
 
-    // TODO origin == configuration.origin
+    // TODO origin == configuration.origin, or even service_name == {label}.configuration.origin
 
     CCF_APP_INFO("ADNS: Register service {} in {}", service_name, origin);
-
     save_service_registration_request(service_name, rr);
-
-    if (!req.verify(public_key))
-      throw std::runtime_error("CSR signature validation failed");
 
     bool policy_ok = false;
     std::vector<std::shared_ptr<ravl::Claims>> claims;
@@ -1665,7 +1663,7 @@ namespace aDNS
           endorsements = att->endorsements;
       }
 
-      // TODO include rr in policy_data
+      // TODO include rr in policy_data, plus some aDNS context such as time, and whether this is a new registration or a re-registration (for now both are implicitly accepted)
       
       policy_data += "  }};";
       policy_ok = evaluate_service_registration_policy(policy_data);
@@ -1680,10 +1678,7 @@ namespace aDNS
     if (!policy_ok)
       throw std::runtime_error("service registration policy evaluation failed");
 
-    // TODO: Check we're not overwriting existing registrations? Part of
-    // policy?
-
-    uint16_t flags = 0x0000;
+    //uint16_t flags = 0x0000;
     auto pk_der = public_key.der_pubkey();
     small_vector<uint16_t> public_key_sv(pk_der.size(), pk_der.data());
 
