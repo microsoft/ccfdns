@@ -27,13 +27,12 @@ set(ENCLAVE_TARGET ccfdns.${SUFFIX})
 set(DEMO_ENCLAVE_TARGET ccf_demo_service.${SUFFIX})
 set(CCF_PKG_INC ${CCF_PKG_DIR}/../include)
 
-find_library(RAVL ravl REQUIRED HINTS ${CMAKE_CURRENT_SOURCE_DIR}/../ravl/build)
-get_filename_component(RAVL_DIR ${RAVL} DIRECTORY)
-set(RAVL_SRC ${RAVL_DIR}/../src)
+set(RAVL_DIR ${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/ravl)
+set(RAVL_SRC ${RAVL_DIR}/src)
 
 add_library(ravl INTERFACE)
 target_compile_definitions(ravl INTERFACE RAVL_HAVE_OPENSSL RAVL_LIBRARY_BUILD)
-target_include_directories(ravl INTERFACE ${RAVL_DIR}/../include)
+target_include_directories(ravl INTERFACE ${RAVL_DIR}/include)
 target_sources(ravl INTERFACE ${RAVL_SRC}/attestation.cpp ${RAVL_SRC}/ravl.cpp ${RAVL_SRC}/request_tracker.cpp ${RAVL_SRC}/http_client.cpp)
 
 set(ZLIB_DIR ${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/zlib)

@@ -1289,7 +1289,7 @@ namespace aDNS
   small_vector<uint8_t> Resolver::generate_nsec3_salt(uint8_t length)
   {
     small_vector<uint8_t> salt(length);
-    auto e = crypto::create_entropy();
+    auto e = crypto::get_entropy();
     e->random(&salt[0], salt.size());
     return salt;
   }
