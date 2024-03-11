@@ -305,7 +305,7 @@ def run(args):
     try:
         pebble_args = pebble.Arguments(
             # dns_address="10.1.0.4:53",
-            binary_filename="/home/fournet/go/bin/pebble",
+            binary_filename="/usr/local/go/bin/pebble",
             wait_forever=False,
             http_port=8080,
             ca_cert_filename="pebble-tls-cert.pem",
