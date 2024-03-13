@@ -1628,7 +1628,6 @@ namespace aDNS
     auto public_key_pem = public_key.pem_pubkey();
     CCF_APP_INFO("ADNS: Extracted public key: {}", public_key_pem);
 
-
     auto subject_name = req.get_subject_name().get_common_name();
     Name service_name(subject_name);
 
@@ -1660,6 +1659,10 @@ namespace aDNS
           throw std::runtime_error(
             "attestation verification failed: no claims");
         claims.push_back(c);
+
+        auto json_claims = nlohmann::json::parse(c->to_json());
+        CCF_APP_INFO("ADNS: Attestation claims for {}:\n{}", (std::string)info.address.name, json_claims.dump(4));
+
         policy_data +=
           "\"" + (std::string)info.address.name + "\": " + c->to_json() + ",";
 

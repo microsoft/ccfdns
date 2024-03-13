@@ -286,16 +286,13 @@ def test_eat(network, args):
         print(f"JWKS: {jwks}")
 
         print("Token Issuance")
-        token = client.get("/common/oauth2/v2.0/token",{}).body.text()
+        service_name = "test.adns.ccf.dev."
+        token = client.get("/common/oauth2/v2.0/token?service_name=" + service_name,{}).body.text()
         print(f"Token: {token} {type(token)}")
 
         """
-        TODO: test against registered service
         TODO: validate token 
-        token = token.encode()
-        print(f"Token: {token} {type(token)}")
-        token = jwt.decode(token, jwks["keys"][0], algorithms=["ES384"])
-        print(f"Token: {token} {type(token)}")
+        https://jwt.io/ displays the expected header and payload, but the signature seems invalid
         """
 
 def test_service_reg(network, args):

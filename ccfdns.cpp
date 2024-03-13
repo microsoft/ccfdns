@@ -58,6 +58,7 @@
 #include <quickjs/quickjs.h>
 #include <ravl/oe.h>
 #include <ravl/openssl.hpp>
+#include <ravl/ravl.h>
 #include <regex>
 #include <stdexcept>
 
@@ -1767,24 +1768,55 @@ namespace ccfdns
       return token;
     };
 
-    nlohmann::json eat_token() {
+    nlohmann::json eat_token(Name service_name) {
+      check_context();
+
       auto origin = get_configuration().origin.unterminated();
       auto issuer = std::string("https://") + origin + "/v2.0";
       auto time = get_fresh_time();
 
       // basic EAT, no "sub" or "aud" claims
-      // TODO add all RAVL attestation claims for the registered service
-      // TODO pick an expiration time based on this record. 
       nlohmann::json payload = {
         {"iss", issuer},
         {"nbf", time},
         {"iat", time},
-        {"exp", time + 60*60} // 1 hour
+        {"exp", time + 60*60}, // 1 hour
+        {"x-adns-service-name", service_name.to_string()},
+        {"x-adns-attestation", {}}
       };
+
+      // For now we ensure the attestation still verifies at the time of token issuance 
+      // and we pick a relatively short-lived expiration time; we could also use the
+      // time of service regustration by running RAVL in historical mode.  
+
+      // Retrieve the last recorded registration request for the service
+      RegisterService::In rr; 
+      {
+        auto rr_table = rotx().template ro<CCFDNS::RegistrationRequests>(
+          registration_requests_table_name);
+        if (!rr_table)
+          throw std::runtime_error(
+            "could not access service registration request table");
+        rr = rr_table->get(service_name).value().request;
+      }
+
+      for (const auto& [id, info] : rr.node_information)
+      {
+        std::shared_ptr<ravl::Attestation> att =
+          ravl::parse_attestation(info.attestation);
+        auto c = ravl::verify_synchronous(att);
+        if (!c)
+          throw std::runtime_error(
+            "attestation verification failed: no claims");
+
+        auto json_claims = nlohmann::json::parse(c->to_json());
+        // CCF_APP_INFO("ADNS: Attestation claims for {}:\n{}", (std::string)info.address.name, json_claims.dump(4));
+
+        payload["x-adns-attestation"][info.address.name] = json_claims;
+      }
 
       auto [jwk, private_key] = eat_get_signing_key();
       auto token = eat_issue(payload, jwk, private_key);
-
       CCF_APP_INFO("EAT token {}", token);
       return token;
     }
@@ -3140,8 +3172,13 @@ namespace ccfdns
         {
           ContextContext cc(ccfdns, ctx);
 
+          const auto parsed_query =
+            http::parse_query(ctx.rpc_ctx->get_request_query());
+          Name service_name =
+            Name(get_param(parsed_query, "service_name")).terminated();
+
           // TODO check the FQDN is eat.
-          std::string response = ccfdns->eat_token();
+          std::string response = ccfdns->eat_token(service_name);
 
           CCF_APP_INFO("EAT query: {}\n{}",
             ctx.rpc_ctx->get_request_url(),
