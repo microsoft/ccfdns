@@ -7,8 +7,9 @@
 
 #include <ccf/ds/hex.h>
 
-namespace RFC8659
+// DNS Certification Authority Authorization (CAA) Resource Record
 // https://datatracker.ietf.org/doc/html/rfc8659
+namespace RFC8659
 {
   enum class Type
   {
