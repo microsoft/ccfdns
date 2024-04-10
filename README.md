@@ -9,6 +9,7 @@ The build depends on a local installation of [CCF](https://github.com/microsoft/
 ```
 mkdir build
 cd build
+CC="clang-11" CXX="clang++-11" cmake -GNinja ..
 cmake -GNinja  ..
 ninja
 ```
