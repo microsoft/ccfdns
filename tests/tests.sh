@@ -10,8 +10,6 @@ if [ ! -f "env/bin/activate" ]
         python3 -m venv env
 fi
 
-CCF=/data/cwinter/installed/ccf
-
 source env/bin/activate
 pip install -U -q pip
 pip install -U -q ccf
