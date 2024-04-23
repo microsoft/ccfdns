@@ -12,7 +12,8 @@
   "features": {
     "ghcr.io/devcontainers/features/docker-from-docker:1": {
       "version": "20.10.8"
-    }
+    },
+    "ghcr.io/devcontainers/features/python:1": {}
   },
   "runArgs": [
     "--device=/dev/sgx_enclave",

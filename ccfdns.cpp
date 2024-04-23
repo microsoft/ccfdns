@@ -1781,7 +1781,7 @@ namespace ccfdns
         {"nbf", time},
         {"iat", time},
         {"exp", time + 60*60}, // 1 hour
-        {"x-adns-service-name", service_name.to_string()},
+        {"x-adns-service-name", service_name},
         {"x-adns-attestation", {}}
       };
 

@@ -46,8 +46,17 @@ nonzero_mrenclave_policy = """
     }
     r == true;
 """
-
-
+aci_policy = """
+    let r = true;
+    for (const [name, claims] of Object.entries(data.claims)) {
+        r &= claims.reported_tcb.boot_loader == 3 && 
+            claims.reported_tcb.microcode > 200 &&
+            claims.reported_tcb.snp == 8 &&
+            claims.reported_tcb.tee == 0 && 
+            claims.guest_svn == 2;
+    }
+    r == true;
+"""
 class ServiceCAConfig(dict):
     def __init__(self, name, directory, ca_certificates=[]):
         dict.__init__(
@@ -431,7 +440,11 @@ def run(
             network, args.node_addresses, False
         )
 
-        set_policy(network, "set_registration_policy", nonzero_mrenclave_policy)
+        registration_policy = nonzero_mrenclave_policy
+        if args.service_type == "ACI":
+            registration_policy = aci_policy
+
+        set_policy(network, "set_registration_policy", registration_policy)
         set_policy(network, "set_delegation_policy", nonzero_mrenclave_policy)
 
         if with_proxies:
@@ -528,6 +541,13 @@ if __name__ == "__main__":
             default=8080,  # Pick something that the firewall lets through
         )
 
+        parser.add_argument(
+            "--service_type",
+            help="Type of service to register",
+            action="store",
+            dest="service_type",
+            default="CCF"
+        )
         parser.add_argument("--wait-forever", help="Wait forever", action="store_true")
 
     procs = []

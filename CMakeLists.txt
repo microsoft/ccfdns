@@ -103,6 +103,7 @@ if (VIRTUAL)
 endif()
 
 add_test(NAME e2e_simple_tests COMMAND python ../tests/e2e_simple.py -b "${CCF_PKG_DIR}/../bin" ${TEST_PLATFORM_ARGS})
+add_test(NAME e2e_simple_tests_aci COMMAND python ../tests/e2e_simple.py --service-type "ACI" -b "${CCF_PKG_DIR}/../bin" ${TEST_PLATFORM_ARGS})
 
 function(add_unit_test name)
   add_executable(${name} ${ARGN})
