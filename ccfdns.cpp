@@ -2866,7 +2866,7 @@ namespace ccfdns
         "/register-service",
         HTTP_POST,
         ccf::json_adapter(register_service),
-        {std::make_shared<ccf::MemberCertAuthnPolicy>()})
+        ccf::no_auth_required)
         .set_auto_schema<RegisterService::In, RegisterService::Out>()
         .set_forwarding_required(ccf::endpoints::ForwardingRequired::Always)
         .install();

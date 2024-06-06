@@ -10,7 +10,6 @@ The build depends on a local installation of [CCF](https://github.com/microsoft/
 mkdir build
 cd build
 CC="clang-11" CXX="clang++-11" cmake -GNinja ..
-cmake -GNinja  ..
 ninja
 ```
 
@@ -29,6 +28,11 @@ You may want/need to add `-DOE=/path/to/oe` and `-DCCF=/path/to/CCF` to the `cma
 For an example of how to run an aDNS server/service, see [adns_service.py](tests/adns_service.py). Most of this is a simple application of the CCF infrastructure scripts. The [CCF documentation](https://microsoft.github.io/CCF/main/index.html) describes all of the components.
 
 Note that for a complete service, your server(s) or VM(s) must be SGX-enabled and registered with at least a traditional, DNSSEC-enabled DNS server. Of course, that server may also be another aDNS server.
+
+Additionally, you may have to 
+- Add inbound rules to your network security group/firewall to allow inbound traffic on port 53 
+- Disable the service ```systemd-resolved``` (which uses also uses port 53) and manually add a well-known DNS server to ```/etc/resolve.conf```. 
+- If you are using docker to run the service, then use the host network 
 
 ## Contributing
 

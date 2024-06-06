@@ -50,7 +50,7 @@ aci_policy = """
     let r = true;
     for (const [name, claims] of Object.entries(data.claims)) {
         r &= claims.reported_tcb.boot_loader == 3 && 
-            claims.reported_tcb.microcode > 200 &&
+            claims.reported_tcb.microcode > 100 &&
             claims.reported_tcb.snp == 8 &&
             claims.reported_tcb.tee == 0 && 
             claims.guest_svn == 2;

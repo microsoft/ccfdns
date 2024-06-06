@@ -15,8 +15,10 @@
     },
     "ghcr.io/devcontainers/features/python:1": {}
   },
+  "privileged": true,
   "runArgs": [
     "--device=/dev/sgx_enclave",
-    "--device=/dev/sgx_provision"
+    "--device=/dev/sgx_provision",
+    "--network", "host"
   ]
 }
