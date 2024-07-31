@@ -12,7 +12,7 @@ fi
 
 source env/bin/activate
 pip install -U -q pip
-pip install -U -q ccf
+pip install -U -q ccf==5.0.0.dev13
 pip install -q -U -r ../tests/requirements.txt
 echo "Python environment successfully setup"
 
