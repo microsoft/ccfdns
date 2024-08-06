@@ -289,6 +289,10 @@ namespace aDNS
       const std::optional<std::string>& service_url = std::nullopt,
       const std::optional<std::vector<std::string>>& service_ca_certs = {}) = 0;
 
+    virtual void generate_leaf_certificate(
+      const Name& name,
+      const std::vector<uint8_t>& csr = {}) = 0;
+
     virtual void install_acme_response(
       const Name& origin,
       const Name& name,

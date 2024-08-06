@@ -56,4 +56,10 @@ namespace ccfdns
 
   using EATPrivateKeys = ccf::ServiceValue<std::vector<crypto::Pem>>;
   const std::string eat_private_key_table_name = "private:eat_private_key_table_name";
+
+  using CertificatePrivateKeys = ccf::ServiceValue<std::vector<std::string>>;
+  const std::string certificate_private_key_table_name = "private:certificate_private_key_table_name";
+
+  using RootCertificates = ccf::ServiceValue<std::vector<std::string>>;
+  const std::string root_certificate_table_name = "private:root_certificate_name";
 }

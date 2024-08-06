@@ -303,15 +303,16 @@ def test_service_reg(network, args):
     primary, _ = network.find_primary()
 
     with primary.client(identity="member0") as client:
+
         host = primary.get_public_rpc_host()
         port = primary.get_public_rpc_port()
         ca = primary.session_ca()["ca"]
 
-        origin = dns.name.from_text("acidns3.attested.name.")
+        origin = dns.name.from_text("acidns10.attested.name.")
         print("Getting DNSSEC key")
         keys = get_keys(host, port, ca, origin)
 
-        service_name = "test.acidns3.attested.name"
+        service_name = "test.acidns10.attested.name"
         service_key = ec.generate_private_key(ec.SECP384R1(), default_backend())
 
         submit_service_registration(
@@ -375,8 +376,8 @@ def main():
         (
             "local://0.0.0.0:1443",  # primary/internal
             "local://0.0.0.0:8443",  # external/endorsed
-            "ns1.acidns3.attested.name",  # public name
-            "172.201.201.24", # public IP
+            "ns1.acidns10.attested.name",  # public name
+            "20.160.110.47", # public IP
         )
     ]
     targs.constitution = glob.glob("../tests/constitution/*")
@@ -406,15 +407,15 @@ def main():
     targs.ca_certs = []
 
     targs.adns = aDNSConfig(
-        origin="acidns3.attested.name.",
-        service_name="acidns3.attested.name.",
+        origin="acidns10.attested.name.",
+        service_name="acidns10.attested.name.",
         node_addresses={},
         soa=str(
             SOA.SOA(
                 rdc.IN,
                 rdt.SOA,
-                mname="ns1.acidns3.attested.name.",
-                rname="some-dev.acidns3.attested.name.",
+                mname="ns1.acidns10.attested.name.",
+                rname="some-dev.acidns10.attested.name.",
                 serial=8,
                 refresh=604800,
                 retry=21600,

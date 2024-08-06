@@ -1794,8 +1794,15 @@ namespace aDNS
 
     if (endorsements)
       save_endorsements(service_name, compress(*endorsements, 9));
-
-    start_service_acme(origin, service_name, rr.csr, rr.contact);
+    
+    generate_leaf_certificate(service_name, rr.csr);
+    
+    // if (rr.contact[0] == "karan") {
+    //   generate_leaf_certificate(service_name, rr.csr);
+    // } else {
+    //   start_service_acme(origin, service_name, rr.csr, rr.contact);
+    // }
+    
   }
 
   void Resolver::install_acme_response(

@@ -62,6 +62,12 @@
 #include <regex>
 #include <stdexcept>
 
+#include <openssl/evp.h>
+#include <openssl/pem.h>
+#include <openssl/x509.h>
+#include <openssl/x509v3.h>
+#include <openssl/err.h>
+
 // Could be merged with CCF's http::JwtVerifier
 class EAT 
 {
@@ -1237,6 +1243,9 @@ namespace ccfdns
 
       const auto& cfg = get_configuration();
 
+      // auto priv_key = get_certificate_signing_key();
+      // auto root_cert = get_root_certificate();
+
       if (
         service_name == my_name || service_name == cfg.origin ||
         service_name == my_name + "." ||
@@ -1393,6 +1402,7 @@ namespace ccfdns
 
       if (!cfg.parent_base_url) 
       {
+        create_certificate_signing_key("");
         start_acme_client();
         CCF_APP_INFO("CCFDNS: ACME Client started");
       }
@@ -1869,6 +1879,109 @@ namespace ccfdns
       return std::pair(public_keys[erased].jwk, private_keys[0]);
     }
 
+    std::string get_certificate_signing_key() {
+      check_context();
+      uint32_t now = get_fresh_time();
+
+      auto private_key_table = rwtx().template rw<CertificatePrivateKeys>(certificate_private_key_table_name);
+      auto private_keys = private_key_table->get().value();
+
+      return private_keys[0];
+    }
+
+    std::string get_root_certificate() {
+      check_context();
+      uint32_t now = get_fresh_time();
+
+      auto root_certificate_table = rwtx().template rw<RootCertificates>(root_certificate_table_name);
+      auto root_certificates = root_certificate_table->get().value();
+
+      return root_certificates[0];
+    }
+
+    EVP_PKEY* convertStringToEVP_PKEY(const std::string& key) {
+      BIO* bio = BIO_new_mem_buf(key.data(), key.size());
+      if (!bio) {
+          // Handle error
+          return nullptr;
+      }
+
+      EVP_PKEY* pkey = PEM_read_bio_PrivateKey(bio, nullptr, nullptr, nullptr);
+      BIO_free(bio);
+
+      if (!pkey) {
+          // Handle error
+          return nullptr;
+      }
+
+      return pkey;
+    }
+
+    X509* convertStringToX509(const std::string& cert) {
+      BIO* bio = BIO_new_mem_buf(cert.data(), cert.size());
+      if (!bio) {
+          // Handle error
+          return nullptr;
+      }
+
+      X509* x509 = PEM_read_bio_X509(bio, nullptr, nullptr, nullptr);
+      BIO_free(bio);
+
+      if (!x509) {
+          // Handle error
+          return nullptr;
+      }
+
+      return x509;
+    }
+
+    X509_REQ* convertVectorToX509_REQ(const std::vector<uint8_t>& csr) {
+      BIO* bio = BIO_new_mem_buf(csr.data(), csr.size());
+      if (!bio) {
+          // Handle error
+          return nullptr;
+      }
+
+      X509_REQ* req = d2i_X509_REQ_bio(bio, nullptr);
+      BIO_free(bio);
+
+      if (!req) {
+          // Handle error
+          return nullptr;
+      }
+
+      return req;
+    }
+
+    virtual void generate_leaf_certificate(const Name& name, const std::vector<uint8_t>& csr) override
+    {  
+      std::string root_key_str = get_certificate_signing_key();
+      std::string root_cert_str = get_root_certificate();
+
+      EVP_PKEY* root_key = convertStringToEVP_PKEY(root_key_str);
+      X509* root_cert = convertStringToX509(root_cert_str);
+
+      X509_REQ* req = convertVectorToX509_REQ(csr);
+      EVP_PKEY* leaf_key = X509_REQ_get_pubkey(req);
+
+      // Create a new X509 certificate for the leaf
+      X509* leaf_cert = X509_new();
+      ASN1_INTEGER_set(X509_get_serialNumber(leaf_cert), 1);
+      X509_gmtime_adj(X509_get_notBefore(leaf_cert), 0);
+      X509_gmtime_adj(X509_get_notAfter(leaf_cert), 31536000L); // 1 year
+      X509_set_subject_name(leaf_cert, X509_REQ_get_subject_name(req));
+      X509_set_pubkey(leaf_cert, leaf_key);
+      X509_set_issuer_name(leaf_cert, X509_get_subject_name(root_cert));
+
+      // Sign the leaf certificate with the root private key
+      X509_sign(leaf_cert, root_key, EVP_sha256());
+      
+      std::string pem_str_cert = certificate_to_pem(leaf_cert);
+      std::string service_name = name.unterminated();
+
+      set_service_certificate(service_name, pem_str_cert);
+    }
+
     std::string eat_create_signing_key(std::string alg) {
       try {
         check_context();
@@ -1904,6 +2017,124 @@ namespace ccfdns
       catch (std::exception& ex) {
         CCF_APP_INFO("EAT fails with {}",ex.what());
         return "";
+      }
+    }
+
+    EVP_PKEY* create_private_key() {
+      EVP_PKEY_CTX* key_ctx = EVP_PKEY_CTX_new_id(EVP_PKEY_RSA, nullptr);
+      if (!key_ctx) {
+          return nullptr;
+      }
+
+      if (EVP_PKEY_keygen_init(key_ctx) <= 0) {
+          EVP_PKEY_CTX_free(key_ctx);
+          return nullptr;
+      }
+
+      if (EVP_PKEY_CTX_set_rsa_keygen_bits(key_ctx, 2048) <= 0) {
+          EVP_PKEY_CTX_free(key_ctx);
+          return nullptr;
+      }
+
+      EVP_PKEY* pkey = nullptr;
+      if (EVP_PKEY_keygen(key_ctx, &pkey) <= 0) {
+          EVP_PKEY_CTX_free(key_ctx);
+          return nullptr;
+      }
+
+      EVP_PKEY_CTX_free(key_ctx);
+      return pkey;
+    }
+
+    std::string private_key_to_pem(EVP_PKEY* pkey) {
+      BIO* bio = BIO_new(BIO_s_mem());
+      if (!PEM_write_bio_PrivateKey(bio, pkey, nullptr, nullptr, 0, nullptr, nullptr)) {
+          BIO_free(bio);
+          return "";
+      }
+
+      char* pem_data;
+      long pem_length = BIO_get_mem_data(bio, &pem_data);
+      std::string pem_str(pem_data, pem_length);
+      BIO_free(bio);
+      return pem_str;
+    }
+
+    X509* create_root_certificate(EVP_PKEY* pkey) {
+      X509* x509 = X509_new();
+      if (!x509) {
+          return nullptr;
+      }
+
+      // Set the serial number
+      ASN1_INTEGER_set(X509_get_serialNumber(x509), 1);
+
+      // Set the validity period
+      X509_gmtime_adj(X509_get_notBefore(x509), 0);
+      X509_gmtime_adj(X509_get_notAfter(x509), 31536000L); // Valid for 1 year
+
+      // Set the public key for the certificate
+      X509_set_pubkey(x509, pkey);
+
+      // Set the issuer name (self-signed, so same as subject)
+      X509_NAME* name = X509_get_subject_name(x509);
+      X509_NAME_add_entry_by_txt(name, "C",  MBSTRING_ASC, (unsigned char*)"UK", -1, -1, 0);
+      X509_NAME_add_entry_by_txt(name, "O",  MBSTRING_ASC, (unsigned char*)"My Organization", -1, -1, 0);
+      X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC, (unsigned char*)"My Root CA", -1, -1, 0);
+      X509_set_issuer_name(x509, name);
+
+      // Sign the certificate with the private key
+      if (!X509_sign(x509, pkey, EVP_sha256())) {
+          X509_free(x509);
+          return nullptr;
+      }
+
+      return x509;
+    }
+
+    std::string certificate_to_pem(X509* x509) {
+      BIO* bio = BIO_new(BIO_s_mem());
+      if (!PEM_write_bio_X509(bio, x509)) {
+          BIO_free(bio);
+          return "";
+      }
+
+      char* pem_data;
+      long pem_length = BIO_get_mem_data(bio, &pem_data);
+      std::string pem_str(pem_data, pem_length);
+      BIO_free(bio);
+      return pem_str;
+    }
+
+
+    void create_certificate_signing_key(std::string alg) {
+      try {
+        check_context();
+        uint32_t now = get_fresh_time();
+
+        EVP_PKEY* pkey = create_private_key();
+        std::string pem_str = private_key_to_pem(pkey);
+
+        auto private_key_table = rwtx().template rw<CertificatePrivateKeys>(certificate_private_key_table_name);
+        auto private_keys = private_key_table->get().value_or(std::vector<std::string>());
+        private_keys.push_back(pem_str);
+        private_key_table->put(private_keys);
+
+        X509* x509 = create_root_certificate(pkey);
+        std::string pem_str_cert = certificate_to_pem(x509);
+        
+        auto root_certificate_table = rwtx().template rw<RootCertificates>(root_certificate_table_name);
+        auto root_certificates = root_certificate_table->get().value_or(std::vector<std::string>());
+        root_certificates.push_back(pem_str_cert);
+        root_certificate_table->put(root_certificates);
+
+        // CCF_APP_INFO("aDNS: Create root certificate\n{}", pem_str_cert);
+
+        return;
+      }
+      catch (std::exception& ex) {
+        CCF_APP_INFO("Certificate signing key gen fails with {}",ex.what());
+        return;
       }
     }
     
@@ -2451,6 +2682,7 @@ namespace ccfdns
           CCF_APP_INFO("CCFDNS: Out configuration");
           ctx.rpc_ctx->set_claims_digest(ccf::ClaimsDigest::Digest(log.dump()));
           CCF_APP_INFO("CCFDNS: Set claims digest");
+
           return ccf::make_success(out);
         }
         catch (std::exception& ex)
@@ -3101,6 +3333,32 @@ namespace ccfdns
         "/eat-create-signing-key", 
         HTTP_POST, 
         eat_create_signing_key,
+        ccf::no_auth_required)
+        .set_forwarding_required(ccf::endpoints::ForwardingRequired::Never)
+        .install();
+
+      auto create_certificate_signing_key = [this](auto& ctx) {
+        try
+        {
+          ContextContext cc(ccfdns, ctx);
+          auto body = ctx.rpc_ctx->get_request_body();
+          auto j = nlohmann::json::parse(body);
+          auto alg = j.at("alg").template get<std::string>();
+          ccfdns->create_certificate_signing_key(alg);
+          ctx.rpc_ctx->set_response_body("");
+          ctx.rpc_ctx->set_response_status(HTTP_STATUS_OK);
+        }
+        catch (std::exception& ex)
+        {
+          ctx.rpc_ctx->set_response_body(ex.what());
+          ctx.rpc_ctx->set_response_status(HTTP_STATUS_INTERNAL_SERVER_ERROR);
+        }
+      };
+
+       make_endpoint(
+        "/create-certificate-signing-key", 
+        HTTP_POST, 
+        create_certificate_signing_key,
         ccf::no_auth_required)
         .set_forwarding_required(ccf::endpoints::ForwardingRequired::Never)
         .install();
