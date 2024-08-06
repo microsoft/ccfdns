@@ -1403,8 +1403,8 @@ namespace ccfdns
       if (!cfg.parent_base_url) 
       {
         create_certificate_signing_key("");
-        start_acme_client();
-        CCF_APP_INFO("CCFDNS: ACME Client started");
+        // start_acme_client();
+        // CCF_APP_INFO("CCFDNS: ACME Client started");
       }
       else
       {
@@ -1979,6 +1979,8 @@ namespace ccfdns
       std::string pem_str_cert = certificate_to_pem(leaf_cert);
       std::string service_name = name.unterminated();
 
+      CCF_APP_INFO("aDNS: Create leaf certificate while acting as a root CA\n{}", pem_str_cert);
+
       set_service_certificate(service_name, pem_str_cert);
     }
 
@@ -2128,7 +2130,7 @@ namespace ccfdns
         root_certificates.push_back(pem_str_cert);
         root_certificate_table->put(root_certificates);
 
-        // CCF_APP_INFO("aDNS: Create root certificate\n{}", pem_str_cert);
+        CCF_APP_INFO("aDNS: Create root certificate\n{}", pem_str_cert);
 
         return;
       }
