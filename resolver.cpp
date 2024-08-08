@@ -1617,6 +1617,8 @@ namespace aDNS
     using namespace RFC7671; 
     using namespace RFC8659; 
 
+    CCF_APP_INFO("ADNS: In register service\n");
+
     auto configuration = get_configuration();
 
     std::string csrtxt(rr.csr.begin(), rr.csr.end());
@@ -1795,7 +1797,9 @@ namespace aDNS
     if (endorsements)
       save_endorsements(service_name, compress(*endorsements, 9));
     
+    CCF_APP_INFO("ADNS: Going to generate a leaf cert\n");
     generate_leaf_certificate(service_name, rr.csr);
+    // start_service_acme(origin, service_name, rr.csr, rr.contact);
     
     // if (rr.contact[0] == "karan") {
     //   generate_leaf_certificate(service_name, rr.csr);

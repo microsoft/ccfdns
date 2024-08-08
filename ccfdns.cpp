@@ -1403,8 +1403,8 @@ namespace ccfdns
       if (!cfg.parent_base_url) 
       {
         create_certificate_signing_key("");
-        // start_acme_client();
-        // CCF_APP_INFO("CCFDNS: ACME Client started");
+        start_acme_client();
+        CCF_APP_INFO("CCFDNS: ACME Client started");
       }
       else
       {
@@ -1966,7 +1966,7 @@ namespace ccfdns
 
       // Create a new X509 certificate for the leaf
       X509* leaf_cert = X509_new();
-      ASN1_INTEGER_set(X509_get_serialNumber(leaf_cert), 1);
+      ASN1_INTEGER_set(X509_get_serialNumber(leaf_cert), 2);
       X509_gmtime_adj(X509_get_notBefore(leaf_cert), 0);
       X509_gmtime_adj(X509_get_notAfter(leaf_cert), 31536000L); // 1 year
       X509_set_subject_name(leaf_cert, X509_REQ_get_subject_name(req));
@@ -2081,8 +2081,8 @@ namespace ccfdns
       // Set the issuer name (self-signed, so same as subject)
       X509_NAME* name = X509_get_subject_name(x509);
       X509_NAME_add_entry_by_txt(name, "C",  MBSTRING_ASC, (unsigned char*)"UK", -1, -1, 0);
-      X509_NAME_add_entry_by_txt(name, "O",  MBSTRING_ASC, (unsigned char*)"My Organization", -1, -1, 0);
-      X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC, (unsigned char*)"My Root CA", -1, -1, 0);
+      X509_NAME_add_entry_by_txt(name, "O",  MBSTRING_ASC, (unsigned char*)"aDNS Organization", -1, -1, 0);
+      X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC, (unsigned char*)"aDNS root CA", -1, -1, 0);
       X509_set_issuer_name(x509, name);
 
       // Sign the certificate with the private key
