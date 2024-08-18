@@ -1973,13 +1973,28 @@ namespace ccfdns
       X509_set_pubkey(leaf_cert, leaf_key);
       X509_set_issuer_name(leaf_cert, X509_get_subject_name(root_cert));
 
+      // Add SANs
+      X509_EXTENSION* ext;
+      X509V3_CTX san_ctx;
+      X509V3_set_ctx_nodb(&san_ctx);
+      X509V3_set_ctx(&san_ctx, leaf_cert, root_cert, nullptr, nullptr, 0);
+
+      // Include multiple DNS entries
+      ext = X509V3_EXT_conf_nid(nullptr, &san_ctx, NID_subject_alt_name, "DNS:*.acidns10.attested.name");
+      if (!ext) {
+          X509_free(leaf_cert);
+          return;
+      }
+      X509_add_ext(leaf_cert, ext, -1);
+      X509_EXTENSION_free(ext);
+
       // Sign the leaf certificate with the root private key
       X509_sign(leaf_cert, root_key, EVP_sha256());
       
       std::string pem_str_cert = certificate_to_pem(leaf_cert);
       std::string service_name = name.unterminated();
 
-      CCF_APP_INFO("aDNS: Create leaf certificate while acting as a root CA\n{}", pem_str_cert);
+      CCF_APP_INFO("aDNS: Create leaf certificate while acting as root CA\n{}", pem_str_cert);
 
       set_service_certificate(service_name, pem_str_cert);
     }
@@ -2084,6 +2099,21 @@ namespace ccfdns
       X509_NAME_add_entry_by_txt(name, "O",  MBSTRING_ASC, (unsigned char*)"aDNS Organization", -1, -1, 0);
       X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC, (unsigned char*)"aDNS root CA", -1, -1, 0);
       X509_set_issuer_name(x509, name);
+
+      // Add SANs
+      X509_EXTENSION* ext;
+      X509V3_CTX san_ctx;
+      X509V3_set_ctx_nodb(&san_ctx);
+      X509V3_set_ctx(&san_ctx, x509, x509, nullptr, nullptr, 0);
+
+      // Include multiple DNS entries
+      ext = X509V3_EXT_conf_nid(nullptr, &san_ctx, NID_subject_alt_name, "DNS:acidns10.attested.name");
+      if (!ext) {
+          X509_free(x509);
+          return nullptr;
+      }
+      X509_add_ext(x509, ext, -1);
+      X509_EXTENSION_free(ext);
 
       // Sign the certificate with the private key
       if (!X509_sign(x509, pkey, EVP_sha256())) {
