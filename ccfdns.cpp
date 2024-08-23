@@ -1980,7 +1980,7 @@ namespace ccfdns
       X509V3_set_ctx(&san_ctx, leaf_cert, root_cert, nullptr, nullptr, 0);
 
       // Include multiple DNS entries
-      ext = X509V3_EXT_conf_nid(nullptr, &san_ctx, NID_subject_alt_name, "DNS:*.acidns10.attested.name");
+      ext = X509V3_EXT_conf_nid(nullptr, &san_ctx, NID_subject_alt_name, "DNS:*.acidns10.attested.name,DNS:localhost");
       if (!ext) {
           X509_free(leaf_cert);
           return;
@@ -2107,7 +2107,7 @@ namespace ccfdns
       X509V3_set_ctx(&san_ctx, x509, x509, nullptr, nullptr, 0);
 
       // Include multiple DNS entries
-      ext = X509V3_EXT_conf_nid(nullptr, &san_ctx, NID_subject_alt_name, "DNS:acidns10.attested.name");
+      ext = X509V3_EXT_conf_nid(nullptr, &san_ctx, NID_subject_alt_name, "DNS:acidns10.attested.name,DNS:localhost");
       if (!ext) {
           X509_free(x509);
           return nullptr;
