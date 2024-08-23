@@ -34,6 +34,21 @@ Additionally, you may have to
 - Disable the service ```systemd-resolved``` (which uses also uses port 53) and manually add a well-known DNS server to ```/etc/resolve.conf```. 
 - If you are using docker to run the service, then use the host network 
 
+# aDNS for Kubernetes
+
+```
+cd build
+source ../tests/set_venv.sh
+python3 ../tests/e2e_aci_pebble.py --service-type="ACI" -b /opt/ccf_sgx/bin
+```
+
+The output is in build/workspace/e2e_aci_pebble_0/out
+The aDNS root certificate is logged in the 'out' file described above.
+The pebble root certificate can be stored in pebble_root.pem by running:
+```
+python3 get_root.py
+```
+
 ## Contributing
 
 This project welcomes contributions and suggestions. Most contributions require you to agree to a

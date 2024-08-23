@@ -1797,15 +1797,16 @@ namespace aDNS
     if (endorsements)
       save_endorsements(service_name, compress(*endorsements, 9));
     
+    //TODO: the code below should be modified to include both branches,
+    //depending on which type of service (frontend/backend) is being registered.
+    //TODO: for frontend service, we need to return an array of two certificates.
+
+    //flow for aDNS as root CA
     CCF_APP_INFO("ADNS: Going to generate a leaf cert\n");
     generate_leaf_certificate(service_name, rr.csr);
+
+    //flow for ACME-based CA 
     // start_service_acme(origin, service_name, rr.csr, rr.contact);
-    
-    // if (rr.contact[0] == "karan") {
-    //   generate_leaf_certificate(service_name, rr.csr);
-    // } else {
-    //   start_service_acme(origin, service_name, rr.csr, rr.contact);
-    // }
     
   }
 

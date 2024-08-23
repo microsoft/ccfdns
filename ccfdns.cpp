@@ -1973,7 +1973,7 @@ namespace ccfdns
       X509_set_pubkey(leaf_cert, leaf_key);
       X509_set_issuer_name(leaf_cert, X509_get_subject_name(root_cert));
 
-      // Add SANs
+      // Add SANs to prevent certificate validation issues
       X509_EXTENSION* ext;
       X509V3_CTX san_ctx;
       X509V3_set_ctx_nodb(&san_ctx);
