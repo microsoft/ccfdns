@@ -55,7 +55,7 @@ jobs:
 
       - name: Install CCF
         run: |
-          git clone https://github.com/microsoft/ccf
+          git clone -b release/5.x https://github.com/microsoft/ccf
           cd ccf
           mkdir build
           cd build
