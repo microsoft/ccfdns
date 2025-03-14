@@ -32,7 +32,6 @@
 *.app
 
 .vscode
-build.sh
 run.sh
 tests.sh
 .cache

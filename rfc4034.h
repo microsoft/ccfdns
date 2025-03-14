@@ -556,6 +556,8 @@ namespace RFC4034 // https://datatracker.ietf.org/doc/html/rfc4034
       Algorithm algorithm,
       const RFC1035::Name& signer,
       const RFC4034::CRRS& crrs,
+      const uint32_t sig_inception,
+      const uint32_t sig_expiration,
       const std::function<std::string(const Type&)>& type2str);
 
     virtual ~RRSIGRR() = default;

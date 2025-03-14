@@ -127,11 +127,15 @@ namespace aDNS
 
     struct Configuration
     {
-      Name origin;
-      std::string soa;
+      Name origin; // domain name suffix of the zone served by this resolver 
+      std::string soa; // serialized SOA record data for the zone 
 
       std::optional<std::vector<Name>> alternative_names;
-      std::optional<std::string> parent_base_url;
+
+      // this field is set when the origin is delegated from a larger attested zone       
+      // why an URL?
+      std::optional<std::string> parent_base_url; 
+
       std::vector<std::string> contact;
 
       uint32_t default_ttl = 86400;
@@ -157,6 +161,7 @@ namespace aDNS
 
       ServiceCA service_ca;
 
+      // DNS hosts, indexed by CCF node IDs
       std::map<std::string, NodeAddress> node_addresses;
     };
 
@@ -165,7 +170,7 @@ namespace aDNS
       std::string public_key;
       std::vector<uint8_t> csr;
       std::map<std::string, NodeInfo> node_information;
-      std::optional<std::vector<aDNS::ResourceRecord>> dnskey_records;
+      std::optional<std::vector<aDNS::ResourceRecord>> dnskey_records; // to be recorded as DS at the parent 
     };
 
     struct RegistrationRequest
@@ -178,11 +183,11 @@ namespace aDNS
 
     struct DelegationRequest
     {
-      Name subdomain;
-      std::vector<uint8_t> csr;
-      std::vector<std::string> contact;
-      std::map<std::string, NodeInfo> node_information;
-      std::vector<aDNS::ResourceRecord> dnskey_records;
+      Name subdomain; // must be a direct subdomain of the parent zone; subzone a better name?
+      std::vector<uint8_t> csr; // used to run ACME (?)
+      std::vector<std::string> contact; // isn't it part of the configuration?
+      std::map<std::string, NodeInfo> node_information; // used to create NS and glue records
+      std::vector<aDNS::ResourceRecord> dnskey_records; // used to produce DS records
       std::optional<std::string> configuration_receipt;
     };
 
@@ -284,6 +289,10 @@ namespace aDNS
       const std::optional<std::string>& service_url = std::nullopt,
       const std::optional<std::vector<std::string>>& service_ca_certs = {}) = 0;
 
+    virtual void generate_leaf_certificate(
+      const Name& name,
+      const std::vector<uint8_t>& csr = {}) = 0;
+
     virtual void install_acme_response(
       const Name& origin,
       const Name& name,
@@ -304,14 +313,14 @@ namespace aDNS
 
     virtual void register_delegation(const DelegationRequest& req);
 
-    virtual std::string delegation_policy() const = 0;
-
+    virtual std::vector<std::string> delegation_policy() const = 0;
     virtual void set_delegation_policy(const std::string& new_policy) = 0;
-
     virtual bool evaluate_delegation_policy(const std::string& data) const = 0;
 
     virtual Configuration get_configuration() const = 0;
     virtual void set_configuration(const Configuration& cfg) = 0;
+
+    virtual uint32_t get_fresh_time() = 0;
 
     virtual void set_service_certificate(
       const std::string& service_dns_name,
@@ -413,6 +422,7 @@ namespace aDNS
       const RFC1035::Name& suffix,
       std::set<Type> types,
       uint32_t nsec_ttl,
+      uint32_t sig_inception,
       const KeyAndTag& key_and_tag);
 
     void add_fragmented(
@@ -451,6 +461,7 @@ namespace aDNS
       QClass c,
       QType t,
       const Name& name,
+      uint32_t sig_time,      
       std::shared_ptr<crypto::KeyPair> key,
       uint16_t key_tag,
       RFC4034::Algorithm signing_algorithm);

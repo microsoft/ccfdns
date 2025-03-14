@@ -1,0 +1,24 @@
+{
+  "name": "Development Container for CCF C++ Apps",
+  "dockerFile": "Dockerfile",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-vscode.cpptools",
+        "vsls-contrib.codetour"
+      ]    
+    }
+  },
+  "features": {
+    "ghcr.io/devcontainers/features/docker-from-docker:1": {
+      "version": "20.10.8"
+    },
+    "ghcr.io/devcontainers/features/python:1": {}
+  },
+  "privileged": true,
+  "runArgs": [
+    "--device=/dev/sgx_enclave",
+    "--device=/dev/sgx_provision",
+    "--network", "host"
+  ]
+}

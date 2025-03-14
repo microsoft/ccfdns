@@ -1,0 +1,3 @@
+[submodule "3rdparty/ravl"]
+	path = 3rdparty/ravl
+	url = https://github.com/ad-l/ravl

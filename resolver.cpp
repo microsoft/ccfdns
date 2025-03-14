@@ -788,6 +788,8 @@ namespace aDNS
     return std::make_pair(new_zsk, new_zsk_tag);
   }
 
+  // returns keypair and tag for this origin + class + flags; 
+  // creates a new key if no existing key is found  
   Resolver::KeyAndTag Resolver::get_signing_key(
     const Name& origin, Class class_, bool key_signing)
   {
@@ -878,6 +880,9 @@ namespace aDNS
         dnskey_rdata));
   }
 
+  // for RRSIG inception and expiration, we tolerate up to 5 minutes of clock skew
+  static const uint32_t acceptable_clock_skew = 300;
+
   ResourceRecord Resolver::add_nsec3(
     Class c,
     const Name& origin,
@@ -887,6 +892,7 @@ namespace aDNS
     const RFC1035::Name& suffix,
     std::set<Type> types,
     uint32_t nsec_ttl,
+    uint32_t sig_time,
     const KeyAndTag& key_and_tag)
   {
     assert(!types.empty());
@@ -941,6 +947,8 @@ namespace aDNS
         configuration.signing_algorithm,
         origin,
         crrs,
+        sig_time - acceptable_clock_skew,
+        sig_time + acceptable_clock_skew + nsec_ttl,
         type2str));
 
     return rr;
@@ -951,6 +959,7 @@ namespace aDNS
     QClass c,
     QType t,
     const Name& name,
+    uint32_t sig_time,
     std::shared_ptr<crypto::KeyPair> key,
     uint16_t key_tag,
     RFC4034::Algorithm signing_algorithm)
@@ -990,6 +999,8 @@ namespace aDNS
           signing_algorithm,
           origin,
           crrs,
+          sig_time - acceptable_clock_skew,
+          sig_time + acceptable_clock_skew + crrs.ttl,
           type2str));
     }
 
@@ -998,14 +1009,18 @@ namespace aDNS
 
   void Resolver::sign(const Name& origin)
   {
-    CCF_APP_INFO("ADNS: (Re)signing {}", origin);
-
     std::lock_guard<std::mutex> lock(sign_mtx);
+
+    const auto& cfg = get_configuration();
+
+    const uint32_t sig_time = get_fresh_time();
+    CCF_APP_INFO("ADNS: (Re)signing {} at time {}", origin, sig_time);
 
     if (!origin.is_absolute())
       throw std::runtime_error("origin is not absolute");
 
-    const auto& cfg = get_configuration();
+    if (!origin.ends_with(cfg.origin))
+      throw std::runtime_error("origin is out of zone");
 
     name_cache_dirty = true;
 
@@ -1042,7 +1057,7 @@ namespace aDNS
       NameTypesMap nsec_types;
 
     restart:
-      for (const auto& [_, t] : supported_types)
+      for (const auto& [__, t] : supported_types)
       {
         if (
           t == Type::RRSIG || t == Type::OPT || t == Type::NSEC ||
@@ -1069,6 +1084,7 @@ namespace aDNS
             static_cast<QClass>(c),
             static_cast<QType>(t),
             name,
+            sig_time,
             key,
             key_tag,
             cfg.signing_algorithm);
@@ -1136,6 +1152,7 @@ namespace aDNS
             owner,
             it->second.types,
             nsec_ttl,
+            sig_time,
             zsk_and_tag);
         }
       }
@@ -1179,6 +1196,8 @@ namespace aDNS
               cfg.signing_algorithm,
               origin,
               crrs,
+              sig_time - acceptable_clock_skew,
+              sig_time + acceptable_clock_skew + crrs.ttl,
               type2str));
 
           it = next;
@@ -1222,7 +1241,12 @@ namespace aDNS
 
     add(
       origin,
-      mk_rr(name, aDNS::Type::CAA, Class::IN, 3600, CAA(0, "issue", ca_name)));
+      mk_rr(
+        name, 
+        aDNS::Type::CAA, 
+        Class::IN, 
+        3600, 
+        CAA(0, "issue", ca_name + "; validationmethods=dns-01")));
 
     for (const auto& email : contact)
       add(
@@ -1265,7 +1289,7 @@ namespace aDNS
   small_vector<uint8_t> Resolver::generate_nsec3_salt(uint8_t length)
   {
     small_vector<uint8_t> salt(length);
-    auto e = crypto::create_entropy();
+    auto e = crypto::get_entropy();
     e->random(&salt[0], salt.size());
     return salt;
   }
@@ -1377,10 +1401,14 @@ namespace aDNS
   Resolver::RegistrationInformation Resolver::configure(
     const Configuration& cfg)
   {
+    // makes the configuration persistent and auditable
+    // TODO: which re-configurations should be authorized?
+    // ideally none, unless needed experimentally
+    // unclear how we support CCF reconfigurations
     set_configuration(cfg);
 
     update_nsec3_param(
-      cfg.origin,
+      cfg.origin, 
       aDNS::Class::IN,
       cfg.default_ttl,
       cfg.nsec3_hash_algorithm,
@@ -1403,10 +1431,13 @@ namespace aDNS
     remove(cfg.origin, cfg.origin, Class::IN, Type::SOA);
     add(
       cfg.origin,
-      mk_rr(cfg.origin, aDNS::Type::SOA, Class::IN, 60, SOA(cfg.soa)));
+      mk_rr(cfg.origin, Type::SOA, Class::IN, 60, SOA(cfg.soa)));
+    // TODO review this TTL, it's possibly too low
+    // TODO check the provided primary name server against cfg.origin? See also node checks below.
 
     remove(cfg.origin, cfg.origin, Class::IN, Type::NS);
     remove(cfg.origin, cfg.origin, Class::IN, Type::A);
+    // TODO why would we keep any other records?
 
     add_caa_records(cfg.origin, cfg.origin, cfg.service_ca.name, cfg.contact);
 
@@ -1435,6 +1466,7 @@ namespace aDNS
 
     add_attestation_records(cfg.origin, cfg.origin, out.node_information);
 
+    // signs initial records; this triggers the creation of fresh DNSKEY records. 
     sign(cfg.origin);
 
     std::string cn;
@@ -1449,18 +1481,20 @@ namespace aDNS
       for (const auto& san : *cfg.alternative_names)
         sans.push_back({san, false});
 
+    CCF_APP_INFO("CCFDNS: Resolver::configure(): CSR");
     out.csr =
       tls_key->create_csr_der("CN=" + cn, sans, tls_key->public_key_pem());
 
     // get_signing_key(cfg.origin, Class::IN, cfg.use_key_signing_key);
 
+    CCF_APP_INFO("CCFDNS: Resolver::configure(): Resolve DNSKEY");
     auto dnskeys = resolve(cfg.origin, QType::DNSKEY, QClass::IN);
 
     if (dnskeys.answers.size() > 0)
     {
       out.dnskey_records = std::vector<ResourceRecord>();
       for (const auto& keyrr : dnskeys.answers)
-        if (keyrr.type == static_cast<uint16_t>(aDNS::Type::DNSKEY))
+        if (keyrr.type == static_cast<uint16_t>(Type::DNSKEY))
         {
           if (cfg.use_key_signing_key)
           {
@@ -1472,6 +1506,7 @@ namespace aDNS
             out.dnskey_records->push_back(keyrr);
         }
     }
+    CCF_APP_INFO("CCFDNS: Resolver::configure(): Added {} records", dnskeys.answers.size());
 
     return out;
   }
@@ -1579,14 +1614,21 @@ namespace aDNS
 
   void Resolver::register_service(const RegistrationRequest& rr)
   {
-    using namespace RFC7671;
-    using namespace RFC8659;
+    using namespace RFC7671; 
+    using namespace RFC8659; 
+
+    CCF_APP_INFO("ADNS: In register service\n");
 
     auto configuration = get_configuration();
 
+    std::string csrtxt(rr.csr.begin(), rr.csr.end());
+    CCF_APP_INFO("ADNS: Importing CSR: {}", csrtxt);
     OpenSSL::UqX509_REQ req(rr.csr, false);
     auto public_key = req.get_pubkey();
+    if (!req.verify(public_key))
+      throw std::runtime_error("CSR signature validation failed");
     auto public_key_pem = public_key.pem_pubkey();
+    CCF_APP_INFO("ADNS: Extracted public key: {}", public_key_pem);
 
     auto subject_name = req.get_subject_name().get_common_name();
     Name service_name(subject_name);
@@ -1596,12 +1638,10 @@ namespace aDNS
 
     auto origin = find_zone(service_name);
 
+    // TODO origin == configuration.origin, or even service_name == {label}.configuration.origin
+
     CCF_APP_INFO("ADNS: Register service {} in {}", service_name, origin);
-
     save_service_registration_request(service_name, rr);
-
-    if (!req.verify(public_key))
-      throw std::runtime_error("CSR signature validation failed");
 
     bool policy_ok = false;
     std::vector<std::shared_ptr<ravl::Claims>> claims;
@@ -1621,6 +1661,10 @@ namespace aDNS
           throw std::runtime_error(
             "attestation verification failed: no claims");
         claims.push_back(c);
+
+        auto json_claims = nlohmann::json::parse(c->to_json());
+        CCF_APP_INFO("ADNS: Attestation claims for {}:\n{}", (std::string)info.address.name, json_claims.dump(4));
+
         policy_data +=
           "\"" + (std::string)info.address.name + "\": " + c->to_json() + ",";
 
@@ -1628,6 +1672,8 @@ namespace aDNS
           endorsements = att->endorsements;
       }
 
+      // TODO include rr in policy_data, plus some aDNS context such as time, and whether this is a new registration or a re-registration (for now both are implicitly accepted)
+      
       policy_data += "  }};";
       policy_ok = evaluate_service_registration_policy(policy_data);
     }
@@ -1641,10 +1687,7 @@ namespace aDNS
     if (!policy_ok)
       throw std::runtime_error("service registration policy evaluation failed");
 
-    // TODO: Check we're not overwriting existing registrations? Part of
-    // policy?
-
-    uint16_t flags = 0x0000;
+    //uint16_t flags = 0x0000;
     auto pk_der = public_key.der_pubkey();
     small_vector<uint16_t> public_key_sv(pk_der.size(), pk_der.data());
 
@@ -1753,8 +1796,18 @@ namespace aDNS
 
     if (endorsements)
       save_endorsements(service_name, compress(*endorsements, 9));
+    
+    //TODO: the code below should be modified to include both branches,
+    //depending on which type of service (frontend/backend) is being registered.
+    //TODO: for frontend service, we need to return an array of two certificates.
 
-    start_service_acme(origin, service_name, rr.csr, rr.contact);
+    //flow for aDNS as root CA
+    CCF_APP_INFO("ADNS: Going to generate a leaf cert\n");
+    generate_leaf_certificate(service_name, rr.csr);
+
+    //flow for ACME-based CA 
+    // start_service_acme(origin, service_name, rr.csr, rr.contact);
+    
   }
 
   void Resolver::install_acme_response(
@@ -1809,7 +1862,10 @@ namespace aDNS
   {
     auto cfg = get_configuration();
 
-    auto origin = find_zone(dr.subdomain);
+    // TODO dr.subdomain must be exactly one (relative) label
+    // hence origin = cfg.origin
+
+    auto origin = find_zone(dr.subdomain); // how does it return the new subzone??
 
     OpenSSL::UqX509_REQ req(dr.csr, false);
     auto public_key = req.get_pubkey();
@@ -1817,9 +1873,13 @@ namespace aDNS
 
     auto subject_name = req.get_subject_name().get_common_name();
     Name name(subject_name);
+    // this is the delegate DNS name
 
     if (!name.is_absolute())
       name += std::vector<Label>{Label()};
+
+    // TODO name must be exactly subdomain.origin
+    // currently it could be for a sibling!
 
     CCF_APP_INFO("ADNS: Register delegation {} in {}", name, origin);
 
@@ -1856,6 +1916,8 @@ namespace aDNS
           endorsements = att->endorsements;
       }
 
+      // TODO include dr etc in policy_data; notably the configuration and its receipts are ignored! 
+
       policy_data += "  }};";
       policy_ok = evaluate_delegation_policy(policy_data);
     }
@@ -1881,7 +1943,7 @@ namespace aDNS
           Type::NS,
           Class::IN,
           cfg.default_ttl,
-          NS(info.address.name)));
+          NS(info.address.name))); 
     }
 
     for (const auto& dnskey_rr : dr.dnskey_records)
@@ -1910,6 +1972,9 @@ namespace aDNS
     add_attestation_records(dr.subdomain, dr.subdomain, dr.node_information);
 
     sign(origin);
+
+    // TODO them being unsigned should be an intrinsic property, not something relying on the ordering of signing vs adding. 
+    // TODO the NS records above should probably not be signed either. 
 
     // Glue records are not signed
     // (https://datatracker.ietf.org/doc/html/rfc4035#section-2.2)
