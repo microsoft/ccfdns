@@ -9,9 +9,6 @@
 
 #include <ccf/crypto/key_pair.h>
 #include <ccf/ds/logger.h>
-#include <ravl/openssl.hpp>
-#include <ravl/options.h>
-#include <ravl/ravl.h>
 
 #define DOCTEST_CONFIG_IMPLEMENT
 #include <doctest/doctest.h>
@@ -45,8 +42,8 @@ public:
   std::set<Name, RFC4034::CanonicalNameOrdering> origins;
   std::set<Name, RFC4034::CanonicalNameOrdering> delegated_zones;
 
-  std::map<Name, crypto::Pem, RFC4034::CanonicalNameOrdering> key_signing_keys;
-  std::map<Name, crypto::Pem, RFC4034::CanonicalNameOrdering> zone_signing_keys;
+  std::map<Name, ccf::crypto::Pem, RFC4034::CanonicalNameOrdering> key_signing_keys;
+  std::map<Name, ccf::crypto::Pem, RFC4034::CanonicalNameOrdering> zone_signing_keys;
 
   std::string service_registration_policy_str;
   std::string delegation_policy_str;
@@ -162,7 +159,7 @@ public:
     return delegated_zones.contains(name.lowered());
   }
 
-  virtual crypto::Pem get_private_key(
+  virtual ccf::crypto::Pem get_private_key(
     const Name& origin,
     uint16_t tag,
     const small_vector<uint16_t>& public_key,
@@ -179,7 +176,7 @@ public:
   virtual void on_new_signing_key(
     const Name& origin,
     uint16_t tag,
-    const crypto::Pem& pem,
+    const ccf::crypto::Pem& pem,
     bool key_signing) override
   {
     auto configuration = get_configuration();
@@ -695,7 +692,7 @@ TEST_CASE("Service registration")
   s.configure(cfg);
 
   Name service_name("service42.example.com.");
-  auto service_key = crypto::make_key_pair(crypto::CurveID::SECP384R1);
+  auto service_key = ccf::crypto::make_key_pair(crypto::CurveID::SECP384R1);
   std::string url_name = service_name.unterminated();
 
   RFC1035::A address("192.168.0.1");

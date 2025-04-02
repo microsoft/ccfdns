@@ -9,7 +9,6 @@
 #include "small_vector.h"
 
 #include <ccf/crypto/base64.h>
-#include <ravl/attestation.h>
 
 namespace aDNS::Types
 {
@@ -33,7 +32,7 @@ namespace aDNS::Types
 
     ATTEST(const std::string& data)
     {
-      auto d = ds::from_hex(data);
+      auto d = ccf::ds::from_hex(data);
       attestation = ravl::parse_attestation_cbor({d.begin(), d.end()});
     }
 
@@ -55,7 +54,7 @@ namespace aDNS::Types
 
     virtual operator std::string() const override
     {
-      return ds::to_hex(attestation->cbor());
+      return ccf::ds::to_hex(attestation->cbor());
     }
   };
 

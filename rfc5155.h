@@ -108,7 +108,7 @@ namespace RFC5155 // https://datatracker.ietf.org/doc/html/rfc5155
       r = std::to_string(static_cast<uint8_t>(hash_algorithm));
       r += " " + std::to_string(flags);
       r += " " + std::to_string(iterations);
-      r += " " + (salt.size() > 0 ? ds::to_hex(salt) : "-");
+      r += " " + (salt.size() > 0 ? ccf::ds::to_hex(salt) : "-");
       r += " " + next_hashed_owner_name.to_base32hex();
       r += " " + (std::string)type_bit_maps;
       return r;
@@ -203,7 +203,7 @@ namespace RFC5155 // https://datatracker.ietf.org/doc/html/rfc5155
       r = std::to_string(static_cast<uint8_t>(hash_algorithm));
       r += " " + std::to_string(flags);
       r += " " + std::to_string(iterations);
-      r += " " + (salt.size() > 0 ? ds::to_hex(salt) : "-");
+      r += " " + (salt.size() > 0 ? ccf::ds::to_hex(salt) : "-");
       return r;
     }
   };

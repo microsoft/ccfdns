@@ -13,7 +13,6 @@
 #include <ccf/crypto/hash_provider.h>
 #include <ccf/crypto/key_pair.h>
 #include <ccf/ds/logger.h>
-#include <ravl/openssl.hpp>
 #include <set>
 #include <stdexcept>
 #include <tuple>
@@ -405,8 +404,8 @@ namespace RFC4034
         small_vector<uint16_t> rdata_bytes = rdata;
         auto tag = keytag(&rdata_bytes[0], rdata_bytes.size());
         CCF_APP_TRACE(
-          "ADNS:    tag: {} x/y: {}", tag, ds::to_hex(rdata.public_key));
-        auto pk = crypto::make_public_key(der_from_coord(rdata.public_key));
+          "ADNS:    tag: {} x/y: {}", tag, ccf::ds::to_hex(rdata.public_key));
+        auto pk = ccf::crypto::make_public_key(der_from_coord(rdata.public_key));
         pks.push_back(std::make_tuple(pk, tag, rdata.is_zone_key()));
       }
     }
@@ -447,11 +446,11 @@ namespace RFC4034
         rr.rdata.put(data_to_sign);
       }
 
-      CCF_APP_TRACE("ADNS: VERIFY: data={}", ds::to_hex(data_to_sign));
+      CCF_APP_TRACE("ADNS: VERIFY: data={}", ccf::ds::to_hex(data_to_sign));
       auto sig = rrsig_rdata.signature;
-      CCF_APP_TRACE("ADNS: VERIFY: r/s sig={}", ds::to_hex(sig));
+      CCF_APP_TRACE("ADNS: VERIFY: r/s sig={}", ccf::ds::to_hex(sig));
       sig = convert_signature_to_der(sig);
-      CCF_APP_TRACE("ADNS: VERIFY: sig={}", ds::to_hex(sig));
+      CCF_APP_TRACE("ADNS: VERIFY: sig={}", ccf::ds::to_hex(sig));
 
       CCF_APP_TRACE(
         "ADNS: VERIFY: try rrsig: {}",
@@ -528,8 +527,8 @@ namespace RFC4034
     if (digest_type != RFC4034::DigestType::SHA384)
       throw std::runtime_error("digest type not supported");
 
-    auto hp = crypto::make_hash_provider();
-    rdata.digest = hp->Hash(t.data(), t.size(), crypto::MDType::SHA384);
+    auto hp = ccf::crypto::make_hash_provider();
+    rdata.digest = hp->Hash(t.data(), t.size(), ccf::crypto::MDType::SHA384);
 
     RFC1035::ResourceRecord::rdata = rdata;
   }

@@ -460,7 +460,7 @@ namespace RFC4034 // https://datatracker.ietf.org/doc/html/rfc4034
       signer_name = RFC1035::Name(signer_name_raw);
       std::string signature_b64;
       s >> signature_b64;
-      signature = crypto::raw_from_b64(signature_b64);
+      signature = ccf::crypto::raw_from_b64(signature_b64);
     }
 
     RRSIG(
@@ -528,7 +528,7 @@ namespace RFC4034 // https://datatracker.ietf.org/doc/html/rfc4034
       r += " " + std::to_string(signature_inception);
       r += " " + std::to_string(key_tag);
       r += " " + (std::string)signer_name;
-      r += " " + crypto::b64_from_raw(signature);
+      r += " " + ccf::crypto::b64_from_raw(signature);
       return r;
     }
 
@@ -705,7 +705,7 @@ namespace RFC4034 // https://datatracker.ietf.org/doc/html/rfc4034
       digest_type = static_cast<DigestType>(tmp);
       std::string t;
       s >> t;
-      digest = ds::from_hex(t);
+      digest = ccf::ds::from_hex(t);
     }
 
     DS(const small_vector<uint16_t>& data)
@@ -738,7 +738,7 @@ namespace RFC4034 // https://datatracker.ietf.org/doc/html/rfc4034
       return std::to_string(key_tag) + " " +
         std::to_string(static_cast<uint8_t>(algorithm)) + " " +
         std::to_string(static_cast<uint8_t>(digest_type)) + " " +
-        ds::to_hex(digest);
+        ccf::ds::to_hex(digest);
     }
   };
 

@@ -35,8 +35,8 @@ namespace RFC5155
 
   static std::vector<uint8_t> H(const std::vector<uint8_t>& x)
   {
-    auto hp = crypto::make_hash_provider();
-    auto md_type = crypto::MDType::SHA1;
+    auto hp = ccf::crypto::make_hash_provider();
+    auto md_type = ccf::crypto::MDType::SHA1;
     return hp->Hash(&x[0], x.size(), md_type);
   }
 
@@ -63,10 +63,10 @@ namespace RFC5155
     {
       for (size_t j = 0; j < salt.size(); j++)
         a.push_back(salt[j]);
-      CCF_APP_TRACE("CCFDNS: nsec3 hash a={}", ds::to_hex(a));
+      CCF_APP_TRACE("CCFDNS: nsec3 hash a={}", ccf::ds::to_hex(a));
       a = H(a);
     }
-    CCF_APP_TRACE("CCFDNS: nsec3 hash h={}", ds::to_hex(a));
+    CCF_APP_TRACE("CCFDNS: nsec3 hash h={}", ccf::ds::to_hex(a));
     return small_vector<uint8_t>(a.size(), a.data());
   }
 

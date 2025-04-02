@@ -267,7 +267,7 @@ namespace aDNS
 
     virtual void remove(const Name& origin, Class c, Type t) = 0;
 
-    virtual crypto::Pem get_private_key(
+    virtual ccf::crypto::Pem get_private_key(
       const Name& origin,
       uint16_t tag,
       const small_vector<uint16_t>& public_key,
@@ -278,7 +278,7 @@ namespace aDNS
     virtual void on_new_signing_key(
       const Name& origin,
       uint16_t tag,
-      const crypto::Pem& pem,
+      const ccf::crypto::Pem& pem,
       bool key_signing) = 0;
 
     virtual void start_service_acme(

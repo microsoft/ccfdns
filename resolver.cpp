@@ -32,10 +32,6 @@
 #include <openssl/ecdsa.h>
 #include <openssl/ossl_typ.h>
 #include <openssl/x509.h>
-#include <ravl/json.h>
-#include <ravl/oe.h> // TODO: abstract details away
-#include <ravl/openssl.hpp>
-#include <ravl/ravl.h>
 #include <set>
 #include <sstream>
 #include <stdexcept>
@@ -260,7 +256,7 @@ namespace aDNS
 
   static void convert_ec_signature_to_ieee_p1363(
     std::vector<uint8_t>& sig,
-    std::shared_ptr<const crypto::KeyPair> signing_key)
+    std::shared_ptr<const ccf::crypto::KeyPair> signing_key)
   {
     // Convert signature from ASN.1 format to IEEE P1363
     const unsigned char* pp = sig.data();
@@ -278,7 +274,7 @@ namespace aDNS
   }
 
   static small_vector<uint16_t> encode_public_key(
-    std::shared_ptr<const crypto::KeyPair> key)
+    std::shared_ptr<const ccf::crypto::KeyPair> key)
   {
     auto coords = key->coordinates();
     small_vector<uint16_t> r(coords.x.size() + coords.y.size());
@@ -300,13 +296,13 @@ namespace aDNS
           fmt::format("algorithm {} not supported", algorithm));
       auto coords = signing_key->coordinates();
       // CCF_APP_TRACE(
-      //   "ADNS: SIGN: key x/y {}{}", ds::to_hex(coords.x),
-      //   ds::to_hex(coords.y));
-      // CCF_APP_TRACE("SIGN: data={}", ds::to_hex(data_to_sign));
-      auto sig = signing_key->sign(data_to_sign, crypto::MDType::SHA384);
-      // CCF_APP_TRACE("ADNS: SIGN: sig={}", ds::to_hex(sig));
+      //   "ADNS: SIGN: key x/y {}{}", ccf::ds::to_hex(coords.x),
+      //   ccf::ds::to_hex(coords.y));
+      // CCF_APP_TRACE("SIGN: data={}", ccf::ds::to_hex(data_to_sign));
+      auto sig = signing_key->sign(data_to_sign, ccf::crypto::MDType::SHA384);
+      // CCF_APP_TRACE("ADNS: SIGN: sig={}", ccf::ds::to_hex(sig));
       convert_ec_signature_to_ieee_p1363(sig, signing_key);
-      // CCF_APP_TRACE("ADNS: SIGN: r/s sig={}", ds::to_hex(sig));
+      // CCF_APP_TRACE("ADNS: SIGN: r/s sig={}", ccf::ds::to_hex(sig));
       return sig;
     };
     return r;
@@ -759,9 +755,9 @@ namespace aDNS
     std::shared_ptr<crypto::KeyPair> new_zsk;
 
     if (configuration.fixed_zsk)
-      new_zsk = crypto::make_key_pair(*configuration.fixed_zsk);
+      new_zsk = ccf::crypto::make_key_pair(*configuration.fixed_zsk);
     else
-      new_zsk = crypto::make_key_pair();
+      new_zsk = ccf::crypto::make_key_pair();
 
     small_vector<uint16_t> new_zsk_pk = encode_public_key(new_zsk);
 
@@ -772,7 +768,7 @@ namespace aDNS
     CCF_APP_DEBUG(
       "ADNS: NEW KEY for {}, class={}, tag={}:", origin, class_, new_zsk_tag);
     CCF_APP_DEBUG("ADNS: - {}", string_from_resource_record(dnskey_rr));
-    CCF_APP_DEBUG("ADNS:   - xy={}", ds::to_hex(new_zsk_pk));
+    CCF_APP_DEBUG("ADNS:   - xy={}", ccf::ds::to_hex(new_zsk_pk));
 
     if (
       origin_exists(origin.parent()) &&
@@ -816,7 +812,7 @@ namespace aDNS
       uint16_t key_tag = get_key_tag(dnskey);
 
       auto pem = get_private_key(origin, key_tag, dnskey.public_key, find_ksk);
-      auto key = crypto::make_key_pair(pem);
+      auto key = ccf::crypto::make_key_pair(pem);
       return std::make_pair(key, key_tag);
     }
   }
@@ -1289,7 +1285,7 @@ namespace aDNS
   small_vector<uint8_t> Resolver::generate_nsec3_salt(uint8_t length)
   {
     small_vector<uint8_t> salt(length);
-    auto e = crypto::get_entropy();
+    auto e = ccf::crypto::get_entropy();
     e->random(&salt[0], salt.size());
     return salt;
   }
@@ -1306,7 +1302,7 @@ namespace aDNS
 
     auto r = generate_nsec3_salt(salt_length);
 
-    CCF_APP_TRACE("CCFDNS: new nsec3 salt: {}", ds::to_hex(r));
+    CCF_APP_TRACE("CCFDNS: new nsec3 salt: {}", ccf::ds::to_hex(r));
 
     add(
       origin,

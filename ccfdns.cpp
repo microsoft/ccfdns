@@ -14,8 +14,6 @@
 //#include <ccf/_private/http/http_jwt.h>
 #include <ccf/_private/node/acme_client.h>
 #include <ccf/_private/node/identity.h>
-#include <ccf/_private/quic/msg_types.h>
-#include <ccf/_private/tls/msg_types.h>
 #include <ccf/_private/enclave/enclave_time.h>
 #include <ccf/app_interface.h>
 #include <ccf/base_endpoint_registry.h>
@@ -56,9 +54,6 @@
 #include <optional>
 #include <quickjs/quickjs-exports.h>
 #include <quickjs/quickjs.h>
-#include <ravl/oe.h>
-#include <ravl/openssl.hpp>
-#include <ravl/ravl.h>
 #include <regex>
 #include <stdexcept>
 
@@ -309,9 +304,9 @@ namespace ccfdns
       const std::string& token, const std::string& response)
     {
       auto key_authorization = token + "." + response;
-      auto digest = crypto::sha256(
+      auto digest = ccf::crypto::sha256(
         (uint8_t*)key_authorization.data(), key_authorization.size());
-      return crypto::b64url_from_raw(
+      return ccf::crypto::b64url_from_raw(
         (uint8_t*)digest.data(), digest.size(), false);
     }
 
@@ -525,7 +520,7 @@ namespace ccfdns
       cp_ss(cp_ss),
       http_client(acme_ss)
     {
-      acme_account_key_pair = crypto::make_key_pair(crypto::CurveID::SECP384R1);
+      acme_account_key_pair = ccf::crypto::make_key_pair(crypto::CurveID::SECP384R1);
       registration_index_strategy = std::make_shared<RegistrationRequestsIndex>(
         registration_requests_table_name);
       istrats.install_strategy(registration_index_strategy);
@@ -703,7 +698,7 @@ namespace ccfdns
     {
       check_context();
       auto ni = nwid_ss->get().get();
-      return crypto::make_key_pair(ni->priv_key);
+      return ccf::crypto::make_key_pair(ni->priv_key);
     }
 
     virtual void add(const Name& origin, const ResourceRecord& rr) override
@@ -932,7 +927,7 @@ namespace ccfdns
       return false;
     }
 
-    virtual crypto::Pem get_private_key(
+    virtual ccf::crypto::Pem get_private_key(
       const Name& origin,
       uint16_t tag,
       const small_vector<uint16_t>& public_key,
@@ -954,7 +949,7 @@ namespace ccfdns
         {
           for (const auto& pem : kit->second)
           {
-            auto kp = crypto::make_key_pair(pem);
+            auto kp = ccf::crypto::make_key_pair(pem);
             auto coord = kp->coordinates();
             if (coord.x.size() + coord.y.size() == public_key.size())
             {
@@ -979,7 +974,7 @@ namespace ccfdns
     virtual void on_new_signing_key(
       const Name& origin,
       uint16_t tag,
-      const crypto::Pem& pem,
+      const ccf::crypto::Pem& pem,
       bool key_signing) override
     {
       check_context();
@@ -1740,11 +1735,11 @@ namespace ccfdns
 
     static std::string b64url_from_string(std::string s) {
       const std::vector<uint8_t> v(s.begin(), s.end());
-      return crypto::b64url_from_raw(v,false); // without padding
+      return ccf::crypto::b64url_from_raw(v,false); // without padding
     }
 
     // jwk must be an ECPublicKey; payload must have at least nbf and exp
-    static std::string eat_issue(nlohmann::json payload, nlohmann::json jwk, crypto::Pem private_key)
+    static std::string eat_issue(nlohmann::json payload, nlohmann::json jwk, ccf::crypto::Pem private_key)
     {
       // TODO: crypto agility
       if (jwk["crv"] != "P-384") {
@@ -1755,7 +1750,7 @@ namespace ccfdns
         {"typ", "JWT"},
         {"kid", jwk["kid"]}
       };
-      crypto::KeyPairPtr kp = crypto::make_key_pair(private_key);
+      ccf::crypto::KeyPairPtr kp = ccf::crypto::make_key_pair(private_key);
       const std::string signed_content = 
         b64url_from_string(header.dump(4)) + "." + 
         b64url_from_string(payload.dump(4));
@@ -1763,7 +1758,7 @@ namespace ccfdns
       auto tbs = std::vector<uint8_t>(signed_content.begin(), signed_content.end());
 
       auto signature = 
-        crypto::b64url_from_raw(kp->sign(tbs, crypto::MDType::SHA384),false); 
+        ccf::crypto::b64url_from_raw(kp->sign(tbs, ccf::crypto::MDType::SHA384),false); 
       std::string token = 
         signed_content + "." + signature;
 
@@ -1771,7 +1766,7 @@ namespace ccfdns
       // auto error_reason = "";
       // auto parsed_token = http::JwtVerifier::parse_token(token, error_reason).value();
       // CCF_APP_INFO("EAT token {}", parsed_token);
-      // auto verifier = crypto::make_verifier(jwk.get<crypto::JsonWebKeyECPublic>());
+      // auto verifier = ccf::crypto::make_verifier(jwk.get<crypto::JsonWebKeyECPublic>());
       // if (!http::JwtVerifier::validate_token_signature(parsed_token, verifier))
       //   throw std::runtime_error("Invalid token signature");
       
@@ -2004,10 +1999,10 @@ namespace ccfdns
         check_context();
         uint32_t now = get_fresh_time();
 
-        auto kp = crypto::make_key_pair(crypto::CurveID::SECP384R1);
+        auto kp = ccf::crypto::make_key_pair(crypto::CurveID::SECP384R1);
         auto pubk_pem = kp->public_key_pem();
-        auto pubk = crypto::make_public_key(pubk_pem);
-        auto kid = crypto::b64_from_raw(crypto::sha256(pubk_pem.raw()));
+        auto pubk = ccf::crypto::make_public_key(pubk_pem);
+        auto kid = ccf::crypto::b64_from_raw(crypto::sha256(pubk_pem.raw()));
         nlohmann::json jwk = pubk->public_key_jwk(kid);
 
         CCF_APP_INFO("EAT: Create issuer key\n{}", jwk.dump(4));
@@ -2207,7 +2202,7 @@ namespace ccfdns
     std::shared_ptr<ccf::CustomProtocolSubsystemInterface> cp_ss;
     HTTPClient http_client;
 
-    crypto::KeyPairPtr acme_account_key_pair;
+    ccf::crypto::KeyPairPtr acme_account_key_pair;
     std::string internal_node_address = "https://127.0.0.1";
     std::string acme_config_name;
 
@@ -2339,14 +2334,14 @@ namespace ccfdns
       {
         CCF_APP_FAIL(
           "CCFDNS: Caught exception in TCP {}: {}", __func__, ex.what());
-        CCF_APP_TRACE("CCFDNS: data={}", ds::to_hex(data));
+        CCF_APP_TRACE("CCFDNS: data={}", ccf::ds::to_hex(data));
         bytes.clear();
         close_session();
       }
       catch (...)
       {
         CCF_APP_FAIL("CCFDNS: Caught unknown exception in TCP {}", __func__);
-        CCF_APP_TRACE("CCFDNS: data={}", ds::to_hex(data));
+        CCF_APP_TRACE("CCFDNS: data={}", ccf::ds::to_hex(data));
         bytes.clear();
         close_session();
       }
@@ -2382,7 +2377,7 @@ namespace ccfdns
       try
       {
         if (data.size() < 1024)
-          CCF_APP_TRACE("CCFDNS: TCP reply: {}", ds::to_hex(data));
+          CCF_APP_TRACE("CCFDNS: TCP reply: {}", ccf::ds::to_hex(data));
         else
           CCF_APP_TRACE("CCFDNS: TCP reply of size {}", data.size());
 
@@ -2585,25 +2580,25 @@ namespace ccfdns
           CCF_APP_DEBUG(
             "CCFNDS: Excess data in UDP packet: {} bytes",
             payload.size() - num_read);
-          CCF_APP_TRACE("CCFDNS: ecxess data={}", ds::to_hex(data));
+          CCF_APP_TRACE("CCFDNS: ecxess data={}", ccf::ds::to_hex(data));
         }
       }
       catch (const std::exception& ex)
       {
         CCF_APP_FAIL(
           "CCFDNS: Caught exception in UDP {}: {}", __func__, ex.what());
-        CCF_APP_TRACE("CCFDNS: data={}", ds::to_hex(data));
+        CCF_APP_TRACE("CCFDNS: data={}", ccf::ds::to_hex(data));
       }
       catch (...)
       {
         CCF_APP_FAIL("CCFDNS: Caught unknown exception in UDP {}", __func__);
-        CCF_APP_TRACE("CCFDNS: data={}", ds::to_hex(data));
+        CCF_APP_TRACE("CCFDNS: data={}", ccf::ds::to_hex(data));
       }
     }
 
     virtual void send_data(std::span<const uint8_t> payload) override
     {
-      CCF_APP_TRACE("CCFDNS: UDP reply: {}", ds::to_hex(payload));
+      CCF_APP_TRACE("CCFDNS: UDP reply: {}", ccf::ds::to_hex(payload));
 
       try
       {
@@ -2625,12 +2620,12 @@ namespace ccfdns
       {
         CCF_APP_FAIL(
           "CCFDNS: Caught exception in UDP {}: {}", __func__, ex.what());
-        CCF_APP_TRACE("CCFDNS: data={}", ds::to_hex(payload));
+        CCF_APP_TRACE("CCFDNS: data={}", ccf::ds::to_hex(payload));
       }
       catch (...)
       {
         CCF_APP_FAIL("CCFDNS: Caught unknown exception in UDP {}", __func__);
-        CCF_APP_TRACE("CCFDNS: data={}", ds::to_hex(payload));
+        CCF_APP_TRACE("CCFDNS: data={}", ccf::ds::to_hex(payload));
       }
     }
 
@@ -3046,7 +3041,7 @@ namespace ccfdns
             const auto parsed_query =
               http::parse_query(ctx_.rpc_ctx->get_request_query());
             std::string query_b64 = get_param(parsed_query, "dns");
-            bytes = crypto::raw_from_b64url(query_b64);
+            bytes = ccf::crypto::raw_from_b64url(query_b64);
           }
           else if (verb == HTTP_POST)
           {
@@ -3069,7 +3064,7 @@ namespace ccfdns
               "unsupported HTTP verb; use GET or POST");
           }
 
-          CCF_APP_INFO("CCFDNS: Query: {}", ds::to_hex(bytes));
+          CCF_APP_INFO("CCFDNS: Query: {}", ccf::ds::to_hex(bytes));
 
           auto reply = ccfdns->reply(Message(bytes));
 
@@ -3077,7 +3072,7 @@ namespace ccfdns
           ctx_.rpc_ctx->set_response_header(
             http::headers::CONTENT_TYPE, "application/dns-message");
           std::vector<uint8_t> out = reply.message;
-          CCF_APP_INFO("CCFDNS: response: {}", ds::to_hex(out));
+          CCF_APP_INFO("CCFDNS: response: {}", ccf::ds::to_hex(out));
 
           ctx_.rpc_ctx->set_response_body(out);
           return ccf::make_success();

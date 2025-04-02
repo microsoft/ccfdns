@@ -5,7 +5,7 @@
 #include "small_vector.h"
 
 #include <vector>
-#include <zlib/zlib.h>
+#include <zlib.h>
 
 namespace aDNS
 {

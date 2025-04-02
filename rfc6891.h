@@ -85,7 +85,7 @@ namespace RFC6891 // https://datatracker.ietf.org/doc/html/rfc6891
       {
         if (r.size() > 0)
           r += " ";
-        r += std::to_string(k) + "=" + ds::to_hex(v);
+        r += std::to_string(k) + "=" + ccf::ds::to_hex(v);
       }
       return r;
     }
