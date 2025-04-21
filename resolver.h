@@ -11,15 +11,11 @@
 #include "rfc7671.h"
 #include "rfc8659.h"
 
+#include <ccf/crypto/key_pair.h>
 #include <ccf/crypto/pem.h>
 #include <functional>
 #include <memory>
 #include <stdexcept>
-
-namespace crypto
-{
-  class KeyPair;
-}
 
 namespace aDNS
 {
@@ -273,7 +269,7 @@ namespace aDNS
       const small_vector<uint16_t>& public_key,
       bool key_signing) = 0;
 
-    virtual std::shared_ptr<crypto::KeyPair> get_tls_key();
+    virtual std::shared_ptr<ccf::crypto::KeyPair> get_tls_key();
 
     virtual void on_new_signing_key(
       const Name& origin,
@@ -381,7 +377,7 @@ namespace aDNS
     RFC4034::CanonicalRRSet get_record_set(
       const Name& origin, const Name& name, QClass c, QType t) const;
 
-    typedef std::pair<std::shared_ptr<crypto::KeyPair>, uint16_t>
+    typedef std::pair<std::shared_ptr<ccf::crypto::KeyPair>, uint16_t>
       KeyAndTag; // TODO: Should use OpenSSL type instead of KeyPair
 
     KeyAndTag get_signing_key(
@@ -399,7 +395,7 @@ namespace aDNS
     void add_ds(
       const Name& origin,
       Class class_,
-      std::shared_ptr<crypto::KeyPair> key,
+      std::shared_ptr<ccf::crypto::KeyPair> key,
       uint16_t tag,
       const small_vector<uint16_t>& dnskey_rdata);
 
@@ -461,8 +457,8 @@ namespace aDNS
       QClass c,
       QType t,
       const Name& name,
-      uint32_t sig_time,      
-      std::shared_ptr<crypto::KeyPair> key,
+      uint32_t sig_time,
+      std::shared_ptr<ccf::crypto::KeyPair> key,
       uint16_t key_tag,
       RFC4034::Algorithm signing_algorithm);
 

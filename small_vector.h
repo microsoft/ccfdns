@@ -102,6 +102,15 @@ public:
     }
   }
 
+  auto begin() const
+  {
+    return data;
+  }
+  auto end() const
+  {
+    return data + size_;
+  }
+
   ~small_vector()
   {
     if (size_ != 0)
@@ -218,8 +227,8 @@ public:
   static small_vector<T, E> from_base64(
     const std::string& b64, bool url_safe = true)
   {
-    auto bytes =
-      url_safe ? ccf::crypto::raw_from_b64url(b64) : ccf::crypto::raw_from_b64(b64);
+    auto bytes = url_safe ? ccf::crypto::raw_from_b64url(b64) :
+                            ccf::crypto::raw_from_b64(b64);
     if (bytes.size() >= 1 << (sizeof(T) * 8))
       throw std::runtime_error("data too large for small_vector");
     return small_vector<T, E>(

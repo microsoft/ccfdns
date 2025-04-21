@@ -13,6 +13,17 @@
 #include <ccf/crypto/hash_provider.h>
 #include <ccf/crypto/key_pair.h>
 #include <ccf/ds/logger.h>
+#include <openssl/bn.h>
+#include <openssl/core_names.h>
+#include <openssl/ec.h>
+#include <openssl/engine.h>
+#include <openssl/err.h>
+#include <openssl/evp.h>
+#include <openssl/ossl_typ.h>
+#include <openssl/param_build.h>
+#include <openssl/pem.h>
+#include <openssl/x509.h>
+#include <openssl/x509v3.h>
 #include <set>
 #include <stdexcept>
 #include <tuple>
@@ -164,7 +175,7 @@ namespace RFC4034
     uint8_t nl = num_labels(owner);
 
     /*
-    // now adjusted by the caller, based on tranparent time 
+    // now adjusted by the caller, based on tranparent time
     auto now = std::chrono::system_clock::now();
     auto tp = now.time_since_epoch();
     uint32_t sig_inception =
@@ -392,7 +403,7 @@ namespace RFC4034
     const RFC4034::CanonicalRRSet& dnskey_rrset,
     const std::function<std::string(const Type&)>& type2str)
   {
-    std::vector<std::tuple<crypto::PublicKeyPtr, uint16_t, bool>> pks;
+    std::vector<std::tuple<ccf::crypto::PublicKeyPtr, uint16_t, bool>> pks;
 
     CCF_APP_DEBUG("ADNS: VERIFY: Public keys:");
     for (const auto& rr : dnskey_rrset)
@@ -405,7 +416,8 @@ namespace RFC4034
         auto tag = keytag(&rdata_bytes[0], rdata_bytes.size());
         CCF_APP_TRACE(
           "ADNS:    tag: {} x/y: {}", tag, ccf::ds::to_hex(rdata.public_key));
-        auto pk = ccf::crypto::make_public_key(der_from_coord(rdata.public_key));
+        auto pk =
+          ccf::crypto::make_public_key(der_from_coord(rdata.public_key));
         pks.push_back(std::make_tuple(pk, tag, rdata.is_zone_key()));
       }
     }
@@ -499,7 +511,15 @@ namespace RFC4034
     const std::function<std::string(const Type&)>& type2str) :
     RFC1035::ResourceRecord(
       crrs.name, U(Type::RRSIG), U(crrs.class_), crrs.ttl, {}),
-    rdata(sign(signing_function, key_tag, algorithm, signer, crrs, sig_inception, sig_expiration, type2str))
+    rdata(sign(
+      signing_function,
+      key_tag,
+      algorithm,
+      signer,
+      crrs,
+      sig_inception,
+      sig_expiration,
+      type2str))
   {
     RFC1035::ResourceRecord::rdata = rdata;
   }

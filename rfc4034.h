@@ -7,6 +7,7 @@
 #include "small_vector.h"
 
 #include <ccf/crypto/base64.h>
+#include <ccf/crypto/key_pair.h>
 #include <ccf/ds/hex.h>
 #include <ccf/ds/logger.h>
 #include <cstdint>
@@ -15,11 +16,6 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
-
-namespace crypto
-{
-  class KeyPair;
-}
 
 namespace RFC4034 // https://datatracker.ietf.org/doc/html/rfc4034
 {
