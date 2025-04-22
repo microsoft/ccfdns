@@ -1638,7 +1638,7 @@ namespace ccfdns
 
       CCF_APP_INFO(
         "CCFDNS: Saving endorsements for {} ({} bytes)",
-        service_name,
+        std::string(service_name),
         endorsements.size());
 
       auto tbl =
@@ -1663,36 +1663,35 @@ namespace ccfdns
       return *r;
     }
 
-    // EAT and its discovery (to be relocated) 
+    // EAT and its discovery (to be relocated)
 
-    static std::string b64url_from_string(std::string s) {
+    static std::string b64url_from_string(std::string s)
+    {
       const std::vector<uint8_t> v(s.begin(), s.end());
-      return ccf::crypto::b64url_from_raw(v,false); // without padding
+      return ccf::crypto::b64url_from_raw(v, false); // without padding
     }
 
     // jwk must be an ECPublicKey; payload must have at least nbf and exp
-    static std::string eat_issue(nlohmann::json payload, nlohmann::json jwk, ccf::crypto::Pem private_key)
+    static std::string eat_issue(
+      nlohmann::json payload, nlohmann::json jwk, ccf::crypto::Pem private_key)
     {
       // TODO: crypto agility
-      if (jwk["crv"] != "P-384") {
+      if (jwk["crv"] != "P-384")
+      {
         throw std::runtime_error("Invalid algorithm");
       }
       nlohmann::json header = {
-        {"alg", "ES384" },
-        {"typ", "JWT"},
-        {"kid", jwk["kid"]}
-      };
+        {"alg", "ES384"}, {"typ", "JWT"}, {"kid", jwk["kid"]}};
       ccf::crypto::KeyPairPtr kp = ccf::crypto::make_key_pair(private_key);
-      const std::string signed_content = 
-        b64url_from_string(header.dump(4)) + "." + 
-        b64url_from_string(payload.dump(4));
+      const std::string signed_content = b64url_from_string(header.dump(4)) +
+        "." + b64url_from_string(payload.dump(4));
 
-      auto tbs = std::vector<uint8_t>(signed_content.begin(), signed_content.end());
+      auto tbs =
+        std::vector<uint8_t>(signed_content.begin(), signed_content.end());
 
-      auto signature = 
-        ccf::crypto::b64url_from_raw(kp->sign(tbs, ccf::crypto::MDType::SHA384),false); 
-      std::string token = 
-        signed_content + "." + signature;
+      auto signature = ccf::crypto::b64url_from_raw(
+        kp->sign(tbs, ccf::crypto::MDType::SHA384), false);
+      std::string token = signed_content + "." + signature;
 
       // validate token signature?
       // auto error_reason = "";
@@ -1759,17 +1758,16 @@ namespace ccfdns
       return token;
     }
 
-    nlohmann::json eat_discover() {
+    nlohmann::json eat_discover()
+    {
       auto origin = get_configuration().origin.unterminated();
       auto prefix = std::string("https://").append(origin);
-      nlohmann::json d =
-      {
+      nlohmann::json d = {
         {"token_endpoint", prefix + "/common/oauth2/v2.0/token"},
         {"jwks_uri", prefix + "/common/discovery/v2.0/keys"},
         {"id_token_signing_alg_values_supported", {"ECDSA"}},
         {"issuer", prefix + "/v2.0"},
-        {"request_uri_parameter_supported", false}
-      };
+        {"request_uri_parameter_supported", false}};
       CCF_APP_INFO("EAT discovery is\n{}", d.dump(4));
       return d;
     }
@@ -1901,8 +1899,9 @@ namespace ccfdns
       return req;
     }
 
-    virtual void generate_leaf_certificate(const Name& name, const std::vector<uint8_t>& csr) override
-    {  
+    virtual void generate_leaf_certificate(
+      const Name& name, const std::vector<uint8_t>& csr) override
+    {
       std::string root_key_str = get_certificate_signing_key();
       std::string root_cert_str = get_root_certificate();
 
@@ -1928,49 +1927,62 @@ namespace ccfdns
       X509V3_set_ctx(&san_ctx, leaf_cert, root_cert, nullptr, nullptr, 0);
 
       // Include multiple DNS entries
-      ext = X509V3_EXT_conf_nid(nullptr, &san_ctx, NID_subject_alt_name, "DNS:*.acidns10.attested.name,DNS:localhost");
-      if (!ext) {
-          X509_free(leaf_cert);
-          return;
+      ext = X509V3_EXT_conf_nid(
+        nullptr,
+        &san_ctx,
+        NID_subject_alt_name,
+        "DNS:*.acidns10.attested.name,DNS:localhost");
+      if (!ext)
+      {
+        X509_free(leaf_cert);
+        return;
       }
       X509_add_ext(leaf_cert, ext, -1);
       X509_EXTENSION_free(ext);
 
       // Sign the leaf certificate with the root private key
       X509_sign(leaf_cert, root_key, EVP_sha256());
-      
+
       std::string pem_str_cert = certificate_to_pem(leaf_cert);
       std::string service_name = name.unterminated();
 
-      CCF_APP_INFO("aDNS: Create leaf certificate while acting as root CA\n{}", pem_str_cert);
+      CCF_APP_INFO(
+        "aDNS: Create leaf certificate while acting as root CA\n{}",
+        pem_str_cert);
 
       set_service_certificate(service_name, pem_str_cert);
     }
 
-    std::string eat_create_signing_key(std::string alg) {
-      try {
+    std::string eat_create_signing_key(std::string alg)
+    {
+      try
+      {
         check_context();
         uint32_t now = get_fresh_time();
 
-        auto kp = ccf::crypto::make_key_pair(crypto::CurveID::SECP384R1);
+        auto kp = ccf::crypto::make_key_pair(ccf::crypto::CurveID::SECP384R1);
         auto pubk_pem = kp->public_key_pem();
         auto pubk = ccf::crypto::make_public_key(pubk_pem);
-        auto kid = ccf::crypto::b64_from_raw(crypto::sha256(pubk_pem.raw()));
+        auto kid =
+          ccf::crypto::b64_from_raw(ccf::crypto::sha256(pubk_pem.raw()));
         nlohmann::json jwk = pubk->public_key_jwk(kid);
 
         CCF_APP_INFO("EAT: Create issuer key\n{}", jwk.dump(4));
 
-        auto public_key_table = rwtx().template rw<EATIssuerKeyInfo>(eat_issuer_key_info_table_name);
-        auto public_keys = public_key_table->get().value_or(std::vector<EATPublicKeyRecord>()); 
+        auto public_key_table =
+          rwtx().template rw<EATIssuerKeyInfo>(eat_issuer_key_info_table_name);
+        auto public_keys =
+          public_key_table->get().value_or(std::vector<EATPublicKeyRecord>());
 
-        auto private_key_table = rwtx().template rw<EATPrivateKeys>(eat_private_key_table_name);
-        auto private_keys = private_key_table->get().value_or(std::vector<crypto::Pem>());
+        auto private_key_table =
+          rwtx().template rw<EATPrivateKeys>(eat_private_key_table_name);
+        auto private_keys =
+          private_key_table->get().value_or(std::vector<ccf::crypto::Pem>());
 
-        public_keys.push_back({ 
-          .jwk = jwk,
-          .can_sign_after = public_keys.empty() ? now : (now + discovery_ttl),
-          .can_retire_after = 0xFFFFFFFF
-        });
+        public_keys.push_back(
+          {.jwk = jwk,
+           .can_sign_after = public_keys.empty() ? now : (now + discovery_ttl),
+           .can_retire_after = 0xFFFFFFFF});
 
         private_keys.push_back(kp->private_key_pem());
 
@@ -1979,43 +1991,52 @@ namespace ccfdns
 
         return kid;
       }
-      catch (std::exception& ex) {
-        CCF_APP_INFO("EAT fails with {}",ex.what());
+      catch (std::exception& ex)
+      {
+        CCF_APP_INFO("EAT fails with {}", ex.what());
         return "";
       }
     }
 
-    EVP_PKEY* create_private_key() {
+    EVP_PKEY* create_private_key()
+    {
       EVP_PKEY_CTX* key_ctx = EVP_PKEY_CTX_new_id(EVP_PKEY_RSA, nullptr);
-      if (!key_ctx) {
-          return nullptr;
+      if (!key_ctx)
+      {
+        return nullptr;
       }
 
-      if (EVP_PKEY_keygen_init(key_ctx) <= 0) {
-          EVP_PKEY_CTX_free(key_ctx);
-          return nullptr;
+      if (EVP_PKEY_keygen_init(key_ctx) <= 0)
+      {
+        EVP_PKEY_CTX_free(key_ctx);
+        return nullptr;
       }
 
-      if (EVP_PKEY_CTX_set_rsa_keygen_bits(key_ctx, 2048) <= 0) {
-          EVP_PKEY_CTX_free(key_ctx);
-          return nullptr;
+      if (EVP_PKEY_CTX_set_rsa_keygen_bits(key_ctx, 2048) <= 0)
+      {
+        EVP_PKEY_CTX_free(key_ctx);
+        return nullptr;
       }
 
       EVP_PKEY* pkey = nullptr;
-      if (EVP_PKEY_keygen(key_ctx, &pkey) <= 0) {
-          EVP_PKEY_CTX_free(key_ctx);
-          return nullptr;
+      if (EVP_PKEY_keygen(key_ctx, &pkey) <= 0)
+      {
+        EVP_PKEY_CTX_free(key_ctx);
+        return nullptr;
       }
 
       EVP_PKEY_CTX_free(key_ctx);
       return pkey;
     }
 
-    std::string private_key_to_pem(EVP_PKEY* pkey) {
+    std::string private_key_to_pem(EVP_PKEY* pkey)
+    {
       BIO* bio = BIO_new(BIO_s_mem());
-      if (!PEM_write_bio_PrivateKey(bio, pkey, nullptr, nullptr, 0, nullptr, nullptr)) {
-          BIO_free(bio);
-          return "";
+      if (!PEM_write_bio_PrivateKey(
+            bio, pkey, nullptr, nullptr, 0, nullptr, nullptr))
+      {
+        BIO_free(bio);
+        return "";
       }
 
       char* pem_data;
@@ -2025,10 +2046,12 @@ namespace ccfdns
       return pem_str;
     }
 
-    X509* create_root_certificate(EVP_PKEY* pkey) {
+    X509* create_root_certificate(EVP_PKEY* pkey)
+    {
       X509* x509 = X509_new();
-      if (!x509) {
-          return nullptr;
+      if (!x509)
+      {
+        return nullptr;
       }
 
       // Set the serial number
@@ -2043,9 +2066,18 @@ namespace ccfdns
 
       // Set the issuer name (self-signed, so same as subject)
       X509_NAME* name = X509_get_subject_name(x509);
-      X509_NAME_add_entry_by_txt(name, "C",  MBSTRING_ASC, (unsigned char*)"UK", -1, -1, 0);
-      X509_NAME_add_entry_by_txt(name, "O",  MBSTRING_ASC, (unsigned char*)"aDNS Organization", -1, -1, 0);
-      X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC, (unsigned char*)"aDNS root CA", -1, -1, 0);
+      X509_NAME_add_entry_by_txt(
+        name, "C", MBSTRING_ASC, (unsigned char*)"UK", -1, -1, 0);
+      X509_NAME_add_entry_by_txt(
+        name,
+        "O",
+        MBSTRING_ASC,
+        (unsigned char*)"aDNS Organization",
+        -1,
+        -1,
+        0);
+      X509_NAME_add_entry_by_txt(
+        name, "CN", MBSTRING_ASC, (unsigned char*)"aDNS root CA", -1, -1, 0);
       X509_set_issuer_name(x509, name);
 
       // Add SANs
@@ -2055,28 +2087,36 @@ namespace ccfdns
       X509V3_set_ctx(&san_ctx, x509, x509, nullptr, nullptr, 0);
 
       // Include multiple DNS entries
-      ext = X509V3_EXT_conf_nid(nullptr, &san_ctx, NID_subject_alt_name, "DNS:acidns10.attested.name,DNS:localhost");
-      if (!ext) {
-          X509_free(x509);
-          return nullptr;
+      ext = X509V3_EXT_conf_nid(
+        nullptr,
+        &san_ctx,
+        NID_subject_alt_name,
+        "DNS:acidns10.attested.name,DNS:localhost");
+      if (!ext)
+      {
+        X509_free(x509);
+        return nullptr;
       }
       X509_add_ext(x509, ext, -1);
       X509_EXTENSION_free(ext);
 
       // Sign the certificate with the private key
-      if (!X509_sign(x509, pkey, EVP_sha256())) {
-          X509_free(x509);
-          return nullptr;
+      if (!X509_sign(x509, pkey, EVP_sha256()))
+      {
+        X509_free(x509);
+        return nullptr;
       }
 
       return x509;
     }
 
-    std::string certificate_to_pem(X509* x509) {
+    std::string certificate_to_pem(X509* x509)
+    {
       BIO* bio = BIO_new(BIO_s_mem());
-      if (!PEM_write_bio_X509(bio, x509)) {
-          BIO_free(bio);
-          return "";
+      if (!PEM_write_bio_X509(bio, x509))
+      {
+        BIO_free(bio);
+        return "";
       }
 
       char* pem_data;
@@ -2086,25 +2126,30 @@ namespace ccfdns
       return pem_str;
     }
 
-
-    void create_certificate_signing_key(std::string alg) {
-      try {
+    void create_certificate_signing_key(std::string alg)
+    {
+      try
+      {
         check_context();
         uint32_t now = get_fresh_time();
 
         EVP_PKEY* pkey = create_private_key();
         std::string pem_str = private_key_to_pem(pkey);
 
-        auto private_key_table = rwtx().template rw<CertificatePrivateKeys>(certificate_private_key_table_name);
-        auto private_keys = private_key_table->get().value_or(std::vector<std::string>());
+        auto private_key_table = rwtx().template rw<CertificatePrivateKeys>(
+          certificate_private_key_table_name);
+        auto private_keys =
+          private_key_table->get().value_or(std::vector<std::string>());
         private_keys.push_back(pem_str);
         private_key_table->put(private_keys);
 
         X509* x509 = create_root_certificate(pkey);
         std::string pem_str_cert = certificate_to_pem(x509);
-        
-        auto root_certificate_table = rwtx().template rw<RootCertificates>(root_certificate_table_name);
-        auto root_certificates = root_certificate_table->get().value_or(std::vector<std::string>());
+
+        auto root_certificate_table =
+          rwtx().template rw<RootCertificates>(root_certificate_table_name);
+        auto root_certificates =
+          root_certificate_table->get().value_or(std::vector<std::string>());
         root_certificates.push_back(pem_str_cert);
         root_certificate_table->put(root_certificates);
 
@@ -2112,36 +2157,40 @@ namespace ccfdns
 
         return;
       }
-      catch (std::exception& ex) {
-        CCF_APP_INFO("Certificate signing key gen fails with {}",ex.what());
+      catch (std::exception& ex)
+      {
+        CCF_APP_INFO("Certificate signing key gen fails with {}", ex.what());
         return;
       }
     }
-    
-    nlohmann::json eat_get_jwks() {
-      try {
-      check_context();
-      auto time = get_fresh_time();
 
-      auto public_key_table = rwtx().template rw<EATIssuerKeyInfo>(eat_issuer_key_info_table_name);
-      auto public_keys = public_key_table->get().value();
+    nlohmann::json eat_get_jwks()
+    {
+      try
+      {
+        check_context();
+        auto time = get_fresh_time();
 
-      auto contents = nlohmann::json::array();
-      for (const auto& key : public_keys) 
-        if (time < key.can_retire_after)
-          contents.push_back(key.jwk);
+        auto public_key_table =
+          rwtx().template rw<EATIssuerKeyInfo>(eat_issuer_key_info_table_name);
+        auto public_keys = public_key_table->get().value();
 
-      nlohmann::json jwks =  { {"keys", contents} };  
+        auto contents = nlohmann::json::array();
+        for (const auto& key : public_keys)
+          if (time < key.can_retire_after)
+            contents.push_back(key.jwk);
 
-      CCF_APP_INFO("EAT get jwks\n{}", jwks.dump(4));
-      return jwks;
+        nlohmann::json jwks = {{"keys", contents}};
+
+        CCF_APP_INFO("EAT get jwks\n{}", jwks.dump(4));
+        return jwks;
       }
-      catch (std::exception& ex) {
-        CCF_APP_INFO("EAT fails with {}",ex.what());
+      catch (std::exception& ex)
+      {
+        CCF_APP_INFO("EAT fails with {}", ex.what());
         return nlohmann::json();
       }
     }
-
 
   protected:
     ccf::endpoints::CommandEndpointContext* ctx = nullptr;
