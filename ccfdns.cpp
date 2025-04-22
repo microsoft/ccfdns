@@ -11,18 +11,17 @@
 
 #include <arpa/inet.h>
 #include <ccf/_private/ds/thread_messaging.h>
-//#include <ccf/_private/http/http_jwt.h>
+#include <ccf/_private/enclave/enclave_time.h>
 #include <ccf/_private/node/acme_client.h>
 #include <ccf/_private/node/identity.h>
-#include <ccf/_private/enclave/enclave_time.h>
 #include <ccf/app_interface.h>
 #include <ccf/base_endpoint_registry.h>
 #include <ccf/common_auth_policies.h>
 #include <ccf/crypto/base64.h>
 #include <ccf/crypto/curve.h>
-#include <ccf/crypto/key_pair.h>
-//#include <ccf/crypto/eddsa_key_pair.h>
+#include <ccf/crypto/eddsa_key_pair.h>
 #include <ccf/crypto/jwk.h>
+#include <ccf/crypto/key_pair.h>
 #include <ccf/ds/hex.h>
 #include <ccf/ds/json.h>
 #include <ccf/ds/logger.h>
@@ -51,29 +50,27 @@
 #include <memory>
 #include <mutex>
 #include <nlohmann/json.hpp>
+#include <openssl/err.h>
+#include <openssl/evp.h>
+#include <openssl/pem.h>
+#include <openssl/x509.h>
+#include <openssl/x509v3.h>
 #include <optional>
 #include <quickjs/quickjs-exports.h>
 #include <quickjs/quickjs.h>
 #include <regex>
 #include <stdexcept>
 
-#include <openssl/evp.h>
-#include <openssl/pem.h>
-#include <openssl/x509.h>
-#include <openssl/x509v3.h>
-#include <openssl/err.h>
-
-// Could be merged with CCF's http::JwtVerifier
-class EAT 
+// Could be merged with CCF's ccf::http::JwtVerifier
+class EAT
 {
 public:
-
 };
 
 using namespace aDNS;
 using namespace RFC1035;
 
-namespace kv::serialisers
+namespace ccf::kv::serialisers
 {
   template <>
   struct BlitSerialiser<Name>
@@ -121,7 +118,7 @@ namespace ccfdns
   struct RegisterServiceWithPreviousVersion
   {
     RegisterService::In request;
-    std::optional<kv::Version> previous_version;
+    std::optional<ccf::kv::Version> previous_version;
   };
 
   DECLARE_JSON_TYPE(RegisterServiceWithPreviousVersion);
@@ -131,7 +128,7 @@ namespace ccfdns
   struct RegisterDelegationWithPreviousVersion
   {
     RegisterDelegation::In request;
-    std::optional<kv::Version> previous_version;
+    std::optional<ccf::kv::Version> previous_version;
   };
 
   DECLARE_JSON_TYPE(RegisterDelegationWithPreviousVersion);
@@ -151,11 +148,12 @@ namespace ccfdns
         HTTPClient* client,
         std::string&& method,
         std::string&& url,
-        http::HeaderMap&& headers,
+        ccf::http::HeaderMap&& headers,
         std::string&& body,
         const std::vector<std::string>& ca_certs,
         const std::function<bool(
-          http_status, http::HeaderMap&&, std::vector<uint8_t>&&)>& callback,
+          ccf::http_status, ccf::http::HeaderMap&&, std::vector<uint8_t>&&)>&
+          callback,
         bool use_node_client_cert) :
         client(client),
         method(std::move(method)),
@@ -170,11 +168,11 @@ namespace ccfdns
       HTTPClient* client;
       std::string method;
       std::string url;
-      http::HeaderMap headers;
+      ccf::http::HeaderMap headers;
       std::string body;
       std::vector<std::string> ca_certs;
       std::function<bool(
-        http_status, http::HeaderMap&&, std::vector<uint8_t>&&)>
+        ccf::http_status, ccf::http::HeaderMap&&, std::vector<uint8_t>&&)>
         callback;
       bool use_node_client_cert;
     };
@@ -191,10 +189,10 @@ namespace ccfdns
         msg->data.headers,
         vbody,
         [msgdata = msg->data](
-          const http_status& status,
-          const http::HeaderMap& headers,
+          const ccf::http_status& status,
+          const ccf::http::HeaderMap& headers,
           const std::vector<uint8_t>& data) {
-          http::HeaderMap hdrs = headers;
+          ccf::http::HeaderMap hdrs = headers;
           if (
             status == HTTP_STATUS_SERVICE_UNAVAILABLE ||
             status == HTTP_STATUS_REQUEST_TIMEOUT)
@@ -230,11 +228,12 @@ namespace ccfdns
     void request(
       std::string&& method,
       std::string&& url,
-      http::HeaderMap&& headers,
+      ccf::http::HeaderMap&& headers,
       std::string&& body,
       const std::vector<std::string>& ca_certs,
       const std::function<
-        bool(http_status, http::HeaderMap&&, std::vector<uint8_t>&&)>& callback,
+        bool(ccf::http_status, ccf::http::HeaderMap&&, std::vector<uint8_t>&&)>&
+        callback,
       bool use_node_client_cert = false)
     {
       auto msg = std::make_unique<threading::Tmsg<HTTPRetryMsg>>(
@@ -267,7 +266,7 @@ namespace ccfdns
       const std::vector<uint8_t>& service_csr,
       const std::string& node_address,
       std::shared_ptr<ccf::ACMESubsystemInterface> acme_ss,
-      std::shared_ptr<crypto::KeyPair> account_key_pair = nullptr) :
+      std::shared_ptr<ccf::crypto::KeyPair> account_key_pair = nullptr) :
       ACME::Client(config, account_key_pair),
       acme_ss(acme_ss),
       http_client(acme_ss),
@@ -285,7 +284,7 @@ namespace ccfdns
       const std::vector<uint8_t>& service_csr_,
       const std::string& node_address_,
       std::shared_ptr<ccf::ACMESubsystemInterface> acme_ss_,
-      std::shared_ptr<crypto::KeyPair> account_key_pair_ = nullptr)
+      std::shared_ptr<ccf::crypto::KeyPair> account_key_pair_ = nullptr)
     {
       this->origin = origin_;
       this->service_csr = service_csr_;
@@ -331,11 +330,12 @@ namespace ccfdns
         "POST",
         node_address + "/app/internal/install-acme-response",
         {},
-        to_json_bytes(InstallACMEResponse::In{
-          origin, config.service_dns_name + ".", sans, digest_b64}),
+        to_json_bytes(
+          InstallACMEResponse::In{
+            origin, config.service_dns_name + ".", sans, digest_b64}),
         [this, sn, token, sz = sans.size()](
-          const http_status& http_status,
-          const http::HeaderMap& headers,
+          const ccf::http_status& http_status,
+          const ccf::http::HeaderMap& headers,
           const std::vector<uint8_t>& body) {
           if (
             http_status == HTTP_STATUS_OK ||
@@ -406,8 +406,8 @@ namespace ccfdns
         to_json_bytes(
           RemoveACMEToken::In{origin, config.service_dns_name + "."}),
         [](
-          const http_status& http_status,
-          const http::HeaderMap&,
+          const ccf::http_status& http_status,
+          const ccf::http::HeaderMap&,
           const std::vector<uint8_t>&) { return true; },
         config.ca_certs,
         "HTTP1",
@@ -424,8 +424,8 @@ namespace ccfdns
         {},
         to_json_bytes(SetCertificate::In{config.service_dns_name, certificate}),
         [](
-          const http_status& http_status,
-          const http::HeaderMap&,
+          const ccf::http_status& http_status,
+          const ccf::http::HeaderMap&,
           const std::vector<uint8_t>&) { return true; },
         config.ca_certs,
         "HTTP1",
@@ -441,15 +441,15 @@ namespace ccfdns
       const http::URL& url,
       http::Request&& req,
       std::function<
-        bool(http_status, http::HeaderMap&&, std::vector<uint8_t>&&)> callback)
-      override
+        bool(ccf::http_status, ccf::http::HeaderMap&&, std::vector<uint8_t>&&)>
+        callback) override
     {
       std::string method = req.get_method() == HTTP_GET ? "GET" : "POST";
       std::string body(
         req.get_content_data(),
         req.get_content_data() + req.get_content_length());
       auto url_str = url.scheme + "://" + url.host + ":" + url.port + url.path;
-      http::HeaderMap headers = req.get_headers();
+      ccf::http::HeaderMap headers = req.get_headers();
       http_client.request(
         std::move(method),
         std::move(url_str),
@@ -520,7 +520,8 @@ namespace ccfdns
       cp_ss(cp_ss),
       http_client(acme_ss)
     {
-      acme_account_key_pair = ccf::crypto::make_key_pair(crypto::CurveID::SECP384R1);
+      acme_account_key_pair =
+        ccf::crypto::make_key_pair(ccf::crypto::CurveID::SECP384R1);
       registration_index_strategy = std::make_shared<RegistrationRequestsIndex>(
         registration_requests_table_name);
       istrats.install_strategy(registration_index_strategy);
@@ -554,7 +555,7 @@ namespace ccfdns
 
     // Declaring CCF Table types and names
 
-    // "keys.h" also defines a private table for DNSKEYs. 
+    // "keys.h" also defines a private table for DNSKEYs.
 
     using TConfigurationTable =
       ccf::ServiceValue<aDNS::Resolver::Configuration>;
@@ -586,20 +587,22 @@ namespace ccfdns
       nullptr;
 
     /*
-      Records a vector of policies for delegating subzones out of this service's zone. 
-      The policies consist of a fixed policy copied from each attested parent along the delegation chain, 
-      followed by the local delegation policy, which is updatable via service governance. 
+      Records a vector of policies for delegating subzones out of this service's
+      zone. The policies consist of a fixed policy copied from each attested
+      parent along the delegation chain, followed by the local delegation
+      policy, which is updatable via service governance.
 
-      All policies must agree to authorize /register-delegation of subzones. 
+      All policies must agree to authorize /register-delegation of subzones.
 
-      The vector is initialized with a local policy (via governance) at the start of the service. 
-      If its parent zone is attested, it is then prepended with the attested parent policies at the end of /configure. 
-      The policies are made available (via /delegation-receipt) for the parent to review before authorizing /register-delegation.
+      The vector is initialized with a local policy (via governance) at the
+      start of the service. If its parent zone is attested, it is then prepended
+      with the attested parent policies at the end of /configure. The policies
+      are made available (via /delegation-receipt) for the parent to review
+      before authorizing /register-delegation.
 
-      TBC! 
+      TBC!
     */
-    using DelegationPolicies =
-      ccf::ServiceValue<std::vector<std::string>>;
+    using DelegationPolicies = ccf::ServiceValue<std::vector<std::string>>;
     const std::string delegation_policy_table_name =
       "public:ccf.gov.ccfdns.delegation_policy";
 
@@ -617,8 +620,8 @@ namespace ccfdns
     const std::string endorsements_table_name = "public:service_endorsements";
 
     using EatTokenSigningKey = ccf::ServiceValue<std::vector<uint8_t>>;
-    const std::string eat_token_signing_key_table_name = "private:eat_token_signing_key";
-
+    const std::string eat_token_signing_key_table_name =
+      "private:eat_token_signing_key";
 
     void set_endpoint_context(
       ccf::endpoints::CommandEndpointContext* c, bool writable = true)
@@ -627,14 +630,14 @@ namespace ccfdns
       ctx_writable = c == nullptr ? false : writable;
     }
 
-    kv::Tx& rwtx() const
+    ccf::kv::Tx& rwtx() const
     {
       if (!ctx_writable)
         throw std::runtime_error("read-write context required");
       return static_cast<ccf::endpoints::EndpointContext*>(ctx)->tx;
     }
 
-    kv::ReadOnlyTx& rotx() const
+    ccf::kv::ReadOnlyTx& rotx() const
     {
       if (!ctx_writable)
         return static_cast<ccf::endpoints::ReadOnlyEndpointContext*>(ctx)->tx;
@@ -669,10 +672,10 @@ namespace ccfdns
 
     // returns the persisted, monotonic system time, since 1970,
     // in seconds represented as uint32, as in e.g. RFC4034,
-    // advancing it based on the local host time if need be 
+    // advancing it based on the local host time if need be
     virtual uint32_t get_fresh_time() override
     {
-      // TODO: consider adding time quantum to the configuration 
+      // TODO: consider adding time quantum to the configuration
       uint32_t quantum = 5;
 
       check_context();
@@ -681,8 +684,12 @@ namespace ccfdns
       uint32_t time = v.has_value() ? v.value() : 0;
 
       // refreshed by the host, every 10ms by default (see node config)
-      // we use an internal call instead of UserEndpointRegistry.get_untrusted_host_time_v1 because it is not in scope
-      uint32_t node_time = std::chrono::duration_cast<std::chrono::seconds>(ccf::get_enclave_time()).count();
+      // we use an internal call instead of
+      // UserEndpointRegistry.get_untrusted_host_time_v1 because it is not in
+      // scope
+      uint32_t node_time = std::chrono::duration_cast<std::chrono::seconds>(
+                             ccf::get_enclave_time())
+                             .count();
 
       // does *not* support 32-bit rollover, tricky with untrusted host time.
       if (time + quantum < node_time)
@@ -694,7 +701,7 @@ namespace ccfdns
       return time;
     };
 
-    virtual std::shared_ptr<crypto::KeyPair> get_tls_key() override
+    virtual std::shared_ptr<ccf::crypto::KeyPair> get_tls_key() override
     {
       check_context();
       auto ni = nwid_ss->get().get();
@@ -707,8 +714,8 @@ namespace ccfdns
       if (rr.type != static_cast<uint16_t>(RFC3596::Type::AAAA)) // skip AAAA-fragmented payloads 
         CCF_APP_TRACE("CCFDNS: Add: {}", string_from_resource_record(rr));
 
-      if (!origin.is_absolute())
-        throw std::runtime_error("origin not absolute");
+        if (!origin.is_absolute())
+          throw std::runtime_error("origin not absolute");
 
       auto origins = rwtx().rw<Origins>(origins_table_name);
       if (!origins->contains(origin))
@@ -899,13 +906,13 @@ namespace ccfdns
       check_context();
       auto origins = rotx().ro<Origins>(origins_table_name);
       auto lowername = name.lowered();
-      return
-        origins->contains(lowername);
-        // TODO commit consistency
-        // && origins->get_globally_committed(lowername) == origins->get(lowername);
+      return origins->contains(lowername);
+      // TODO commit consistency
+      // && origins->get_globally_committed(lowername) ==
+      // origins->get(lowername);
     };
 
-    // review explicit origin? 
+    // review explicit origin?
     virtual bool is_delegated(
       const Name& origin, const Name& name) const override
     {
@@ -967,8 +974,9 @@ namespace ccfdns
         }
       }
 
-      throw std::runtime_error(fmt::format(
-        "private {} signing key not found", key_signing ? "key" : "zone"));
+      throw std::runtime_error(
+        fmt::format(
+          "private {} signing key not found", key_signing ? "key" : "zone"));
     }
 
     virtual void on_new_signing_key(
@@ -1660,11 +1668,12 @@ namespace ccfdns
         r += "$ORIGIN " + (std::string)origin + "\n";
         r += "$TTL " + std::to_string(cfg.default_ttl) + "\n\n";
 
-        for (const auto& [_, c] : get_supported_classes())
-          for (const auto& [__, t] : get_supported_types())
+        for (const auto& [_, cls] : get_supported_classes())
+          for (const auto& [__, type] : get_supported_types())
           {
             auto names = rotx().ro<CCFDNS::Names>(names_table_name(origin));
-            names->foreach([this, &r, &origin, c = c, t = t](const Name& name) {
+            names->foreach([this, &r, &origin, c = cls, t = type](
+                             const Name& name) {
               auto records = rotx().ro<Records>(table_name(origin, name, c, t));
               records->foreach([&r](const ResourceRecord& rr) {
                 if (static_cast<aDNS::Type>(rr.type) == aDNS::Type::ATTEST)
@@ -1773,7 +1782,8 @@ namespace ccfdns
       return token;
     };
 
-    nlohmann::json eat_token(Name service_name) {
+    nlohmann::json eat_token(Name service_name)
+    {
       check_context();
 
       auto origin = get_configuration().origin.unterminated();
@@ -1785,17 +1795,17 @@ namespace ccfdns
         {"iss", issuer},
         {"nbf", time},
         {"iat", time},
-        {"exp", time + 60*60}, // 1 hour
+        {"exp", time + 60 * 60}, // 1 hour
         {"x-adns-service-name", service_name},
-        {"x-adns-attestation", {}}
-      };
+        {"x-adns-attestation", {}}};
 
-      // For now we ensure the attestation still verifies at the time of token issuance 
-      // and we pick a relatively short-lived expiration time; we could also use the
-      // time of service regustration by running RAVL in historical mode.  
+      // For now we ensure the attestation still verifies at the time of token
+      // issuance and we pick a relatively short-lived expiration time; we could
+      // also use the time of service regustration by running RAVL in historical
+      // mode.
 
       // Retrieve the last recorded registration request for the service
-      RegisterService::In rr; 
+      RegisterService::In rr;
       {
         auto rr_table = rotx().template ro<CCFDNS::RegistrationRequests>(
           registration_requests_table_name);
@@ -1841,26 +1851,33 @@ namespace ccfdns
       return d;
     }
 
-    // the primary could cache this key, since it will remain current till min(public_key[i].can_sign_after, discovery_ttl)
-    std::pair<nlohmann::json,crypto::Pem> eat_get_signing_key() {
+    // the primary could cache this key, since it will remain current till
+    // min(public_key[i].can_sign_after, discovery_ttl)
+    std::pair<nlohmann::json, ccf::crypto::Pem> eat_get_signing_key()
+    {
       check_context();
       uint32_t now = get_fresh_time();
 
-      auto public_key_table = rwtx().template rw<EATIssuerKeyInfo>(eat_issuer_key_info_table_name);
+      auto public_key_table =
+        rwtx().template rw<EATIssuerKeyInfo>(eat_issuer_key_info_table_name);
       auto public_keys = public_key_table->get().value();
 
-      auto private_key_table = rwtx().template rw<EATPrivateKeys>(eat_private_key_table_name);
+      auto private_key_table =
+        rwtx().template rw<EATPrivateKeys>(eat_private_key_table_name);
       auto private_keys = private_key_table->get().value();
 
-      size_t erased = public_keys.size() - private_keys.size(); 
-      
+      size_t erased = public_keys.size() - private_keys.size();
+
       // find the most recent key available for signing
       size_t i = public_keys.size();
-      while (erased < i && now < public_keys[i-1].can_sign_after) i--; 
+      while (erased < i && now < public_keys[i - 1].can_sign_after)
+        i--;
 
-      // retire any private key that is no longer required 
-      if (erased + 1 < i) {
-        while(erased + 1 < i) {
+      // retire any private key that is no longer required
+      if (erased + 1 < i)
+      {
+        while (erased + 1 < i)
+        {
           std::string kid = public_keys[erased].jwk["kid"];
           CCF_APP_INFO("CCFDNS: Erasing EAT key kid={}", kid);
           private_keys.erase(private_keys.begin());
@@ -1874,75 +1891,88 @@ namespace ccfdns
       return std::pair(public_keys[erased].jwk, private_keys[0]);
     }
 
-    std::string get_certificate_signing_key() {
+    std::string get_certificate_signing_key()
+    {
       check_context();
       uint32_t now = get_fresh_time();
 
-      auto private_key_table = rwtx().template rw<CertificatePrivateKeys>(certificate_private_key_table_name);
+      auto private_key_table = rwtx().template rw<CertificatePrivateKeys>(
+        certificate_private_key_table_name);
       auto private_keys = private_key_table->get().value();
 
       return private_keys[0];
     }
 
-    std::string get_root_certificate() {
+    std::string get_root_certificate()
+    {
       check_context();
       uint32_t now = get_fresh_time();
 
-      auto root_certificate_table = rwtx().template rw<RootCertificates>(root_certificate_table_name);
+      auto root_certificate_table =
+        rwtx().template rw<RootCertificates>(root_certificate_table_name);
       auto root_certificates = root_certificate_table->get().value();
 
       return root_certificates[0];
     }
 
-    EVP_PKEY* convertStringToEVP_PKEY(const std::string& key) {
+    EVP_PKEY* convertStringToEVP_PKEY(const std::string& key)
+    {
       BIO* bio = BIO_new_mem_buf(key.data(), key.size());
-      if (!bio) {
-          // Handle error
-          return nullptr;
+      if (!bio)
+      {
+        // Handle error
+        return nullptr;
       }
 
       EVP_PKEY* pkey = PEM_read_bio_PrivateKey(bio, nullptr, nullptr, nullptr);
       BIO_free(bio);
 
-      if (!pkey) {
-          // Handle error
-          return nullptr;
+      if (!pkey)
+      {
+        // Handle error
+        return nullptr;
       }
 
       return pkey;
     }
 
-    X509* convertStringToX509(const std::string& cert) {
+    X509* convertStringToX509(const std::string& cert)
+    {
       BIO* bio = BIO_new_mem_buf(cert.data(), cert.size());
-      if (!bio) {
-          // Handle error
-          return nullptr;
+      if (!bio)
+      {
+        // Handle error
+        return nullptr;
       }
 
       X509* x509 = PEM_read_bio_X509(bio, nullptr, nullptr, nullptr);
       BIO_free(bio);
 
-      if (!x509) {
-          // Handle error
-          return nullptr;
+      if (!x509)
+      {
+        // Handle error
+        return nullptr;
       }
 
       return x509;
     }
 
-    X509_REQ* convertVectorToX509_REQ(const std::vector<uint8_t>& csr) {
+    X509_REQ* convertVectorToX509_REQ(const std::vector<uint8_t>& csr)
+    {
       BIO* bio = BIO_new_mem_buf(csr.data(), csr.size());
-      if (!bio) {
-          // Handle error
-          return nullptr;
+      if (!bio)
+      {
+        // Handle error
+        return nullptr;
       }
 
       X509_REQ* req = d2i_X509_REQ_bio(bio, nullptr);
       BIO_free(bio);
 
-      if (!req) {
-          // Handle error
-          return nullptr;
+      if (!req)
+      {
+        // Handle error
+        return nullptr;
       }
 
       return req;
@@ -2641,15 +2671,15 @@ namespace ccfdns
     std::string node_id;
 
     std::string get_param(
-      const http::ParsedQuery& parsed_query, const std::string& name)
+      const ccf::http::ParsedQuery& parsed_query, const std::string& name)
     {
       std::string r, error_reason;
-      if (!http::get_query_value(parsed_query, name, r, error_reason))
+      if (!ccf::http::get_query_value(parsed_query, name, r, error_reason))
         throw std::runtime_error(fmt::format("parameter '{}' missing.", name));
       return r;
     }
 
-    std::optional<ccf::TxID> txid_from_query(http::ParsedQuery pq)
+    std::optional<ccf::TxID> txid_from_query(ccf::http::ParsedQuery pq)
     {
       if (!pq.contains("version"))
         return std::nullopt;
@@ -2662,7 +2692,7 @@ namespace ccfdns
     }
 
   public:
-    Handlers(ccfapp::AbstractNodeContext& context) :
+    Handlers(ccf::AbstractNodeContext& context) :
       ccf::UserEndpointRegistry(context)
     {
       openapi_info.title = "CCF aDNS";
@@ -2756,7 +2786,7 @@ namespace ccfdns
         if (!cfg)
           throw std::runtime_error("configuration not found");
         auto version = tbl->get_version_of_previous_write();
-        if (!version || *version == kv::NoVersion)
+        if (!version || *version == ccf::kv::NoVersion)
           return std::nullopt;
         ccf::View view;
         if (get_view_for_seqno_v1(*version, view) != ccf::ApiResult::OK)
@@ -2767,7 +2797,7 @@ namespace ccfdns
       make_read_only_endpoint(
         "/configuration-receipt",
         HTTP_GET,
-        ccf::historical::read_only_adapter_v3(
+        ccf::historical::read_only_adapter_v4(
           configuration_receipt,
           context,
           is_tx_committed,
@@ -2804,7 +2834,7 @@ namespace ccfdns
         [this](ccf::endpoints::ReadOnlyEndpointContext& ctx)
         -> std::optional<ccf::TxID> {
         const auto parsed_query =
-          http::parse_query(ctx.rpc_ctx->get_request_query());
+          ccf::http::parse_query(ctx.rpc_ctx->get_request_query());
         auto txid = txid_from_query(parsed_query);
         if (txid)
           return *txid;
@@ -2823,7 +2853,7 @@ namespace ccfdns
       make_read_only_endpoint(
         "/registration-receipt",
         HTTP_GET,
-        ccf::historical::read_only_adapter_v3(
+        ccf::historical::read_only_adapter_v4(
           registration_receipt,
           context,
           is_tx_committed,
@@ -2839,7 +2869,7 @@ namespace ccfdns
         try
         {
           const auto parsed_query =
-            http::parse_query(ctx.rpc_ctx->get_request_query());
+            ccf::http::parse_query(ctx.rpc_ctx->get_request_query());
           Name subdomain =
             Name(get_param(parsed_query, "subdomain")).terminated();
           auto r = ccfdns->delegation_receipt(ctx, historical_state, subdomain);
@@ -2857,7 +2887,7 @@ namespace ccfdns
         [this](ccf::endpoints::ReadOnlyEndpointContext& ctx)
         -> std::optional<ccf::TxID> {
         const auto parsed_query =
-          http::parse_query(ctx.rpc_ctx->get_request_query());
+          ccf::http::parse_query(ctx.rpc_ctx->get_request_query());
         auto txid = txid_from_query(parsed_query);
         if (txid)
           return *txid;
@@ -2874,7 +2904,7 @@ namespace ccfdns
       make_read_only_endpoint(
         "/delegation-receipt",
         HTTP_GET,
-        ccf::historical::read_only_adapter_v3(
+        ccf::historical::read_only_adapter_v4(
           delegation_receipt,
           context,
           is_tx_committed,
@@ -2889,7 +2919,8 @@ namespace ccfdns
         {
           ContextContext cc(ccfdns, ctx);
           auto body = ctx.rpc_ctx->get_request_body();
-          auto policies = nlohmann::json::parse(body).template get<std::vector<std::string>>();
+          auto policies = nlohmann::json::parse(body)
+                            .template get<std::vector<std::string>>();
           ccfdns->set_parent_delegation_policy(policies);
           return ccf::make_success();
         }
@@ -2906,28 +2937,6 @@ namespace ccfdns
         set_parent_delegation_policy,
         {std::make_shared<ccf::NodeCertAuthnPolicy>()})
         .set_openapi_hidden(true)
-        .set_forwarding_required(ccf::endpoints::ForwardingRequired::Always)
-        .install();
-
-      auto start_acme_client = [this](auto& ctx) {
-        try
-        {
-          ContextContext cc(ccfdns, ctx);
-          ccfdns->start_delegation_acme_client();
-          return ccf::make_success();
-        }
-        catch (std::exception& ex)
-        {
-          return ccf::make_error(
-            HTTP_STATUS_BAD_REQUEST, ccf::errors::InternalError, ex.what());
-        }
-      };
-
-      make_endpoint(
-        "/start-delegation-acme-client",
-        HTTP_GET,
-        start_acme_client,
-        {std::make_shared<ccf::UserCertAuthnPolicy>()})
         .set_forwarding_required(ccf::endpoints::ForwardingRequired::Always)
         .install();
 
@@ -3085,19 +3094,13 @@ namespace ccfdns
       };
 
       make_read_only_endpoint(
-        "/dns-query", 
-        HTTP_GET, 
-        dns_query, 
-        ccf::no_auth_required)
+        "/dns-query", HTTP_GET, dns_query, ccf::no_auth_required)
         .set_auto_schema<void, std::vector<uint8_t>>()
         .set_forwarding_required(ccf::endpoints::ForwardingRequired::Never)
         .install();
 
       make_read_only_endpoint(
-        "/dns-query", 
-        HTTP_POST, 
-        dns_query, 
-        ccf::no_auth_required)
+        "/dns-query", HTTP_POST, dns_query, ccf::no_auth_required)
         .set_auto_schema<void, std::vector<uint8_t>>()
         .set_forwarding_required(ccf::endpoints::ForwardingRequired::Never)
         .install();
@@ -3237,7 +3240,8 @@ namespace ccfdns
         {
           ContextContext cc(ccfdns, ctx);
           ctx.rpc_ctx->set_response_header(
-            http::headers::CONTENT_TYPE, http::headervalues::contenttype::TEXT);
+            ccf::http::headers::CONTENT_TYPE,
+            ccf::http::headervalues::contenttype::TEXT);
           ctx.rpc_ctx->set_response_body(ccfdns->dump());
           ctx.rpc_ctx->set_response_status(HTTP_STATUS_OK);
         }
@@ -3248,11 +3252,7 @@ namespace ccfdns
         }
       };
 
-      make_endpoint(
-        "/dump", 
-        HTTP_GET, 
-        dump, 
-        ccf::no_auth_required)
+      make_endpoint("/dump", HTTP_GET, dump, ccf::no_auth_required)
         .set_forwarding_required(ccf::endpoints::ForwardingRequired::Never)
         .install();
 
@@ -3261,7 +3261,8 @@ namespace ccfdns
         {
           ContextContext cc(ccfdns, ctx);
           ctx.rpc_ctx->set_response_header(
-            http::headers::CONTENT_TYPE, http::headervalues::contenttype::TEXT);
+            ccf::http::headers::CONTENT_TYPE,
+            ccf::http::headervalues::contenttype::TEXT);
           ctx.rpc_ctx->set_response_body(ccfdns->service_registration_policy());
           ctx.rpc_ctx->set_response_status(HTTP_STATUS_OK);
         }
@@ -3285,7 +3286,8 @@ namespace ccfdns
         {
           ContextContext cc(ccfdns, ctx);
           ctx.rpc_ctx->set_response_header(
-            http::headers::CONTENT_TYPE, http::headervalues::contenttype::JSON);
+            ccf::http::headers::CONTENT_TYPE,
+            ccf::http::headervalues::contenttype::JSON);
 
           auto policies = ccfdns->delegation_policy();
           nlohmann::json j = policies;
@@ -3316,7 +3318,7 @@ namespace ccfdns
           Name service_name =
             Name(get_param(parsed_query, "service_name")).terminated();
           ctx.rpc_ctx->set_response_header(
-            http::headers::CONTENT_TYPE, "application/zlib");
+            ccf::http::headers::CONTENT_TYPE, "application/zlib");
           ctx.rpc_ctx->set_response_body(
             ccfdns->get_endorsements(service_name));
           ctx.rpc_ctx->set_response_status(HTTP_STATUS_OK);
@@ -3329,14 +3331,12 @@ namespace ccfdns
       };
 
       make_endpoint(
-        "/endorsements", 
-        HTTP_GET, 
-        get_endorsements, 
-        ccf::no_auth_required)
+        "/endorsements", HTTP_GET, get_endorsements, ccf::no_auth_required)
         .set_forwarding_required(ccf::endpoints::ForwardingRequired::Never)
         .install();
 
-      /* endpoints for lightweight EAT legacy interface, to be served at eat.{zone}.attested.name */
+      /* endpoints for lightweight EAT legacy interface, to be served at
+       * eat.{zone}.attested.name */
 
       auto eat_create_signing_key = [this](auto& ctx) {
         try
@@ -3357,8 +3357,8 @@ namespace ccfdns
       };
 
       make_endpoint(
-        "/eat-create-signing-key", 
-        HTTP_POST, 
+        "/eat-create-signing-key",
+        HTTP_POST,
         eat_create_signing_key,
         ccf::no_auth_required)
         .set_forwarding_required(ccf::endpoints::ForwardingRequired::Never)
@@ -3382,9 +3382,9 @@ namespace ccfdns
         }
       };
 
-       make_endpoint(
-        "/create-certificate-signing-key", 
-        HTTP_POST, 
+      make_endpoint(
+        "/create-certificate-signing-key",
+        HTTP_POST,
         create_certificate_signing_key,
         ccf::no_auth_required)
         .set_forwarding_required(ccf::endpoints::ForwardingRequired::Never)
@@ -3395,8 +3395,8 @@ namespace ccfdns
         {
           ContextContext cc(ccfdns, ctx);
           ctx.rpc_ctx->set_response_header(
-            http::headers::CONTENT_TYPE, "application/json");
-          
+            ccf::http::headers::CONTENT_TYPE, "application/json");
+
           // TODO check the FQDN is eat.
 
           // TODO locally cache the whole response.
@@ -3413,8 +3413,8 @@ namespace ccfdns
 
       // read-only except when updating the time
       make_endpoint(
-        "/common/discovery/v2.0/keys", 
-        HTTP_GET, 
+        "/common/discovery/v2.0/keys",
+        HTTP_GET,
         eat_get_jwks,
         ccf::no_auth_required)
         .set_forwarding_required(ccf::endpoints::ForwardingRequired::Never)
@@ -3433,7 +3433,7 @@ namespace ccfdns
             response.dump(4));
 
           ctx.rpc_ctx->set_response_header(
-            http::headers::CONTENT_TYPE, "application/json");
+            ccf::http::headers::CONTENT_TYPE, "application/json");
           ctx.rpc_ctx->set_response_body(response.dump(4));
           ctx.rpc_ctx->set_response_status(HTTP_STATUS_OK);
         }
@@ -3458,7 +3458,7 @@ namespace ccfdns
           ContextContext cc(ccfdns, ctx);
 
           const auto parsed_query =
-            http::parse_query(ctx.rpc_ctx->get_request_query());
+            ccf::http::parse_query(ctx.rpc_ctx->get_request_query());
           Name service_name =
             Name(get_param(parsed_query, "service_name")).terminated();
 
@@ -3470,7 +3470,7 @@ namespace ccfdns
             response);
 
           ctx.rpc_ctx->set_response_header(
-            http::headers::CONTENT_TYPE, "text/plain");
+            ccf::http::headers::CONTENT_TYPE, "text/plain");
           ctx.rpc_ctx->set_response_body(std::move(response));
           ctx.rpc_ctx->set_response_status(HTTP_STATUS_OK);
         }
@@ -3482,10 +3482,7 @@ namespace ccfdns
       };
 
       make_endpoint(
-        "/common/oauth2/v2.0/token",
-        HTTP_GET,
-        eat_token,
-        ccf::no_auth_required)
+        "/common/oauth2/v2.0/token", HTTP_GET, eat_token, ccf::no_auth_required)
         .set_forwarding_required(ccf::endpoints::ForwardingRequired::Never)
         .install();
     }
@@ -3500,13 +3497,15 @@ namespace ccfdns
         context.get_subsystem<ccf::CustomProtocolSubsystemInterface>();
 
       cp_ss->install(
-        "DNSTCP", [cp_ss](tls::ConnID, const std::unique_ptr<tls::Context>&&) {
+        "DNSTCP",
+        [cp_ss](ccf::tls::ConnID, const std::unique_ptr<ccf::tls::Context>&&) {
           return std::static_pointer_cast<ccf::Session>(
             std::make_shared<DNSQuerySession>(ccfdns, cp_ss));
         });
 
       cp_ss->install(
-        "DNSUDP", [cp_ss](tls::ConnID, const std::unique_ptr<tls::Context>&&) {
+        "DNSUDP",
+        [cp_ss](ccf::tls::ConnID, const std::unique_ptr<ccf::tls::Context>&&) {
           return std::static_pointer_cast<ccf::Session>(
             std::make_shared<UDPDNSQuerySession>(ccfdns, cp_ss));
         });
@@ -3516,10 +3515,10 @@ namespace ccfdns
   };
 }
 
-namespace ccfapp
+namespace ccf
 {
   std::unique_ptr<ccf::endpoints::EndpointRegistry> make_user_endpoints(
-    ccfapp::AbstractNodeContext& context)
+    ccf::AbstractNodeContext& context)
   {
 #if defined(TRACE_LOGGING)
     logger::config::level() = TRACE;

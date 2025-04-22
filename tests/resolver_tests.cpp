@@ -42,8 +42,10 @@ public:
   std::set<Name, RFC4034::CanonicalNameOrdering> origins;
   std::set<Name, RFC4034::CanonicalNameOrdering> delegated_zones;
 
-  std::map<Name, ccf::crypto::Pem, RFC4034::CanonicalNameOrdering> key_signing_keys;
-  std::map<Name, ccf::crypto::Pem, RFC4034::CanonicalNameOrdering> zone_signing_keys;
+  std::map<Name, ccf::crypto::Pem, RFC4034::CanonicalNameOrdering>
+    key_signing_keys;
+  std::map<Name, ccf::crypto::Pem, RFC4034::CanonicalNameOrdering>
+    zone_signing_keys;
 
   std::string service_registration_policy_str;
   std::string delegation_policy_str;
@@ -253,16 +255,6 @@ public:
   {
     delegated_zones.insert(name);
   }
-
-  virtual void start_service_acme(
-    const Name& origin,
-    const Name& name,
-    const std::vector<uint8_t>& csr,
-    const std::vector<std::string>& contact,
-    const std::optional<std::string>& service_url = std::nullopt,
-    const std::optional<std::vector<std::string>>& service_ca_certs = {})
-    override
-  {}
 
   virtual std::map<std::string, Resolver::NodeInfo> get_node_information()
     override
@@ -692,7 +684,8 @@ TEST_CASE("Service registration")
   s.configure(cfg);
 
   Name service_name("service42.example.com.");
-  auto service_key = ccf::crypto::make_key_pair(crypto::CurveID::SECP384R1);
+  auto service_key =
+    ccf::crypto::make_key_pair(ccf::crypto::CurveID::SECP384R1);
   std::string url_name = service_name.unterminated();
 
   RFC1035::A address("192.168.0.1");

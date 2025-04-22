@@ -12,6 +12,7 @@
 #include <cassert>
 #include <ccf/crypto/hash_provider.h>
 #include <ccf/crypto/key_pair.h>
+#include <ccf/crypto/openssl/openssl_wrappers.h>
 #include <ccf/ds/logger.h>
 #include <openssl/bn.h>
 #include <openssl/core_names.h>
@@ -372,7 +373,7 @@ namespace RFC4034
     const std::span<const uint8_t>& s,
     bool little_endian)
   {
-    using namespace OpenSSL;
+    using namespace ccf::crypto::OpenSSL;
 
     if (r.size() != s.size())
       throw std::runtime_error("incompatible signature coordinates");

@@ -123,14 +123,14 @@ namespace aDNS
 
     struct Configuration
     {
-      Name origin; // domain name suffix of the zone served by this resolver 
-      std::string soa; // serialized SOA record data for the zone 
+      Name origin; // domain name suffix of the zone served by this resolver
+      std::string soa; // serialized SOA record data for the zone
 
       std::optional<std::vector<Name>> alternative_names;
 
-      // this field is set when the origin is delegated from a larger attested zone       
-      // why an URL?
-      std::optional<std::string> parent_base_url; 
+      // this field is set when the origin is delegated from a larger attested
+      // zone why an URL?
+      std::optional<std::string> parent_base_url;
 
       std::vector<std::string> contact;
 
@@ -166,7 +166,8 @@ namespace aDNS
       std::string public_key;
       std::vector<uint8_t> csr;
       std::map<std::string, NodeInfo> node_information;
-      std::optional<std::vector<aDNS::ResourceRecord>> dnskey_records; // to be recorded as DS at the parent 
+      std::optional<std::vector<aDNS::ResourceRecord>>
+        dnskey_records; // to be recorded as DS at the parent
     };
 
     struct RegistrationRequest
@@ -179,11 +180,14 @@ namespace aDNS
 
     struct DelegationRequest
     {
-      Name subdomain; // must be a direct subdomain of the parent zone; subzone a better name?
+      Name subdomain; // must be a direct subdomain of the parent zone; subzone
+                      // a better name?
       std::vector<uint8_t> csr; // used to run ACME (?)
       std::vector<std::string> contact; // isn't it part of the configuration?
-      std::map<std::string, NodeInfo> node_information; // used to create NS and glue records
-      std::vector<aDNS::ResourceRecord> dnskey_records; // used to produce DS records
+      std::map<std::string, NodeInfo>
+        node_information; // used to create NS and glue records
+      std::vector<aDNS::ResourceRecord>
+        dnskey_records; // used to produce DS records
       std::optional<std::string> configuration_receipt;
     };
 
@@ -277,17 +281,8 @@ namespace aDNS
       const ccf::crypto::Pem& pem,
       bool key_signing) = 0;
 
-    virtual void start_service_acme(
-      const Name& origin,
-      const Name& name,
-      const std::vector<uint8_t>& csr,
-      const std::vector<std::string>& contact,
-      const std::optional<std::string>& service_url = std::nullopt,
-      const std::optional<std::vector<std::string>>& service_ca_certs = {}) = 0;
-
     virtual void generate_leaf_certificate(
-      const Name& name,
-      const std::vector<uint8_t>& csr = {}) = 0;
+      const Name& name, const std::vector<uint8_t>& csr = {}) = 0;
 
     virtual void install_acme_response(
       const Name& origin,

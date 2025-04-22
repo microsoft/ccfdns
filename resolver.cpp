@@ -19,6 +19,8 @@
 #include <ccf/crypto/hash_bytes.h>
 #include <ccf/crypto/key_pair.h>
 #include <ccf/crypto/md_type.h>
+#include <ccf/crypto/openssl/openssl_wrappers.h>
+#include <ccf/crypto/rsa_key_pair.h>
 #include <ccf/crypto/san.h>
 #include <ccf/crypto/sha256_hash.h>
 #include <ccf/ds/logger.h>
@@ -28,6 +30,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <openssl/bn.h>
 #include <openssl/ec.h>
 #include <openssl/ecdsa.h>
 #include <openssl/ossl_typ.h>
@@ -39,15 +42,6 @@
 #include <unordered_set>
 
 using namespace RFC1035;
-
-namespace ravl
-{
-  HTTPResponse SynchronousHTTPClient::execute_synchronous(
-    const HTTPRequest&, size_t, size_t, bool)
-  {
-    throw std::runtime_error("fresh endorsement download not supported");
-  }
-}
 
 namespace aDNS
 {
@@ -286,7 +280,7 @@ namespace aDNS
   }
 
   static RFC4034::SigningFunction make_signing_function(
-    std::shared_ptr<crypto::KeyPair> signing_key)
+    std::shared_ptr<ccf::crypto::KeyPair> signing_key)
   {
     RFC4034::SigningFunction r = [signing_key](
                                    RFC4034::Algorithm algorithm,
@@ -784,8 +778,8 @@ namespace aDNS
     return std::make_pair(new_zsk, new_zsk_tag);
   }
 
-  // returns keypair and tag for this origin + class + flags; 
-  // creates a new key if no existing key is found  
+  // returns keypair and tag for this origin + class + flags;
+  // creates a new key if no existing key is found
   Resolver::KeyAndTag Resolver::get_signing_key(
     const Name& origin, Class class_, bool key_signing)
   {
@@ -849,7 +843,7 @@ namespace aDNS
   void Resolver::add_ds(
     const Name& origin,
     Class class_,
-    std::shared_ptr<crypto::KeyPair> key,
+    std::shared_ptr<ccf::crypto::KeyPair> key,
     uint16_t tag,
     const small_vector<uint16_t>& dnskey_rdata)
   {
@@ -876,7 +870,8 @@ namespace aDNS
         dnskey_rdata));
   }
 
-  // for RRSIG inception and expiration, we tolerate up to 5 minutes of clock skew
+  // for RRSIG inception and expiration, we tolerate up to 5 minutes of clock
+  // skew
   static const uint32_t acceptable_clock_skew = 300;
 
   ResourceRecord Resolver::add_nsec3(
@@ -956,7 +951,7 @@ namespace aDNS
     QType t,
     const Name& name,
     uint32_t sig_time,
-    std::shared_ptr<crypto::KeyPair> key,
+    std::shared_ptr<ccf::crypto::KeyPair> key,
     uint16_t key_tag,
     RFC4034::Algorithm signing_algorithm)
   {
@@ -1204,7 +1199,7 @@ namespace aDNS
     CCF_APP_INFO("ADNS: (Re)signing {} done", origin);
   }
 
-  std::shared_ptr<crypto::KeyPair> Resolver::get_tls_key()
+  std::shared_ptr<ccf::crypto::KeyPair> Resolver::get_tls_key()
   {
     // The CCF resolver uses the network key, but we could also use the zone
     // or key signing key.
@@ -1238,10 +1233,10 @@ namespace aDNS
     add(
       origin,
       mk_rr(
-        name, 
-        aDNS::Type::CAA, 
-        Class::IN, 
-        3600, 
+        name,
+        aDNS::Type::CAA,
+        Class::IN,
+        3600,
         CAA(0, "issue", ca_name + "; validationmethods=dns-01")));
 
     for (const auto& email : contact)
