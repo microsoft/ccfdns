@@ -1299,8 +1299,9 @@ namespace ccfdns
       for (const auto& [id, addr] : cfg.node_addresses)
       {
         auto entry = nodes_table->get(id);
-        auto attestation = ravl::oe::Attestation(
-          entry->quote_info.quote, entry->quote_info.endorsements);
+
+        // TODO attestation
+        auto attestation = "";
         r[id] = {.address = addr, .attestation = attestation};
       }
 
@@ -1695,12 +1696,14 @@ namespace ccfdns
 
       // validate token signature?
       // auto error_reason = "";
-      // auto parsed_token = http::JwtVerifier::parse_token(token, error_reason).value();
-      // CCF_APP_INFO("EAT token {}", parsed_token);
-      // auto verifier = ccf::crypto::make_verifier(jwk.get<crypto::JsonWebKeyECPublic>());
-      // if (!http::JwtVerifier::validate_token_signature(parsed_token, verifier))
+      // auto parsed_token = ccf::http::JwtVerifier::parse_token(token,
+      // error_reason).value(); CCF_APP_INFO("EAT token {}", parsed_token); auto
+      // verifier =
+      // ccf::crypto::make_verifier(jwk.get<ccf::crypto::JsonWebKeyECPublic>());
+      // if (!http::JwtVerifier::validate_token_signature(parsed_token,
+      // verifier))
       //   throw std::runtime_error("Invalid token signature");
-      
+
       return token;
     };
 
@@ -1739,17 +1742,7 @@ namespace ccfdns
 
       for (const auto& [id, info] : rr.node_information)
       {
-        std::shared_ptr<ravl::Attestation> att =
-          ravl::parse_attestation(info.attestation);
-        auto c = ravl::verify_synchronous(att);
-        if (!c)
-          throw std::runtime_error(
-            "attestation verification failed: no claims");
-
-        auto json_claims = nlohmann::json::parse(c->to_json());
-        // CCF_APP_INFO("ADNS: Attestation claims for {}:\n{}", (std::string)info.address.name, json_claims.dump(4));
-
-        payload["x-adns-attestation"][info.address.name] = json_claims;
+        // todo attestation
       }
 
       auto [jwk, private_key] = eat_get_signing_key();
@@ -2286,11 +2279,12 @@ namespace ccfdns
       // Let the host know that we're done and that it can destroy the
       // associated TCPImpl. Without this, file/socket descriptors will not be
       // closed.
-      RINGBUFFER_WRITE_MESSAGE(
-        tls::tls_stop,
-        cp_ess->writer,
-        session_id,
-        std::string("DNS/TCP Session closed"));
+      // TODO ?
+      // RINGBUFFER_WRITE_MESSAGE(
+      //   tls::tls_stop,
+      //   cp_ess->writer,
+      //   session_id,
+      //   std::string("DNS/TCP Session closed"));
     }
 
     virtual void handle_incoming_data(std::span<const uint8_t> data) override
@@ -2385,11 +2379,12 @@ namespace ccfdns
 
         uint8_t size[2] = {(uint8_t)(data.size() >> 8), (uint8_t)(data.size())};
 
-        RINGBUFFER_TRY_WRITE_MESSAGE(
-          tls::tls_outbound,
-          cp_ess->writer,
-          session_id,
-          serializer::ByteRange{size, 2});
+        // TODO ?
+        // RINGBUFFER_TRY_WRITE_MESSAGE(
+        //   tls::tls_outbound,
+        //   cp_ess->writer,
+        //   session_id,
+        //   serializer::ByteRange{size, 2});
 
         size_t fragment_size = data.size();
 
@@ -2400,11 +2395,12 @@ namespace ccfdns
 
           try
           {
-            ok = RINGBUFFER_TRY_WRITE_MESSAGE(
-              tls::tls_outbound,
-              cp_ess->writer,
-              session_id,
-              serializer::ByteRange{&data.data()[i], n});
+            // TODO ?
+            // ok = RINGBUFFER_TRY_WRITE_MESSAGE(
+            //   tls::tls_outbound,
+            //   cp_ess->writer,
+            //   session_id,
+            //   serializer::ByteRange{&data.data()[i], n});
           }
           catch (const std::exception& ex)
           {
@@ -2474,13 +2470,14 @@ namespace ccfdns
 
       try
       {
-        auto [sid, family, addr, msg_payload] =
-          ringbuffer::read_message<udp::inbound>(data);
+        // TODO ? no udp msg type
+        // auto [sid, family, addr, msg_payload] =
+        //   ringbuffer::read_message<udp::inbound>(data);
 
-        session_id = sid;
-        addr_family = family;
-        addr_data = addr;
-        payload = {msg_payload.data, msg_payload.data + msg_payload.size};
+        // session_id = sid;
+        // addr_family = family;
+        // addr_data = addr;
+        // payload = {msg_payload.data, msg_payload.data + msg_payload.size};
       }
       catch (...)
       {
@@ -2604,16 +2601,17 @@ namespace ccfdns
 
       try
       {
-        auto ok = RINGBUFFER_TRY_WRITE_MESSAGE(
-          udp::outbound,
-          cp_ess->writer,
-          session_id,
-          addr_family,
-          addr_data,
-          serializer::ByteRange{payload.data(), payload.size()});
+        // TODO ?
+        // auto ok = RINGBUFFER_TRY_WRITE_MESSAGE(
+        //   udp::outbound,
+        //   cp_ess->writer,
+        //   session_id,
+        //   addr_family,
+        //   addr_data,
+        //   serializer::ByteRange{payload.data(), payload.size()});
 
-        if (!ok)
-          CCF_APP_DEBUG("CCFDNS: UDP write failed.");
+        // if (!ok)
+        // CCF_APP_DEBUG("CCFDNS: UDP write failed.");
 
         addr_family = 0;
         addr_data.clear();
