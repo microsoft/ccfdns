@@ -182,7 +182,8 @@ namespace ccfdns
       auto vbody =
         std::vector<uint8_t>(msg->data.body.begin(), msg->data.body.end());
       CCF_APP_TRACE("CCFDNS: HTTP: {} {}", msg->data.method, msg->data.url);
-      CCF_APP_TRACE("CCFDNS: {} CA certificates configures", msg->data.ca_certs.size());
+      CCF_APP_TRACE(
+        "CCFDNS: {} CA certificates configures", msg->data.ca_certs.size());
       msg->data.client->acme_ss->make_http_request(
         msg->data.method,
         msg->data.url,
@@ -606,7 +607,7 @@ namespace ccfdns
     const std::string delegation_policy_table_name =
       "public:ccf.gov.ccfdns.delegation_policy";
 
-    // Records a map of subzones currently delegated by this service. 
+    // Records a map of subzones currently delegated by this service.
     // TODO commit consistency
     using DelegationRequests =
       ccf::ServiceMap<Name, RegisterDelegationWithPreviousVersion>;
@@ -655,7 +656,8 @@ namespace ccfdns
         throw std::runtime_error("empty configuration table");
       auto cfg = t->get();
       if (!cfg)
-        throw std::runtime_error("get_configuration(): no configuration available");
+        throw std::runtime_error(
+          "get_configuration(): no configuration available");
       return *cfg;
     }
 
@@ -711,8 +713,12 @@ namespace ccfdns
     virtual void add(const Name& origin, const ResourceRecord& rr) override
     {
       check_context();
-      if (rr.type != static_cast<uint16_t>(RFC3596::Type::AAAA)) // skip AAAA-fragmented payloads 
-        CCF_APP_TRACE("CCFDNS: Add: {}", string_from_resource_record(rr));
+      if (
+        rr.type !=
+        static_cast<uint16_t>(RFC3596::Type::AAAA)) // skip
+                                                    // AAAA-fragmented
+                                                    // payloads
+        // CCF_APP_TRACE("CCFDNS: Add: {}", string_from_resource_record(rr));
 
         if (!origin.is_absolute())
           throw std::runtime_error("origin not absolute");
@@ -776,9 +782,9 @@ namespace ccfdns
 
       CCF_APP_TRACE(
         "CCFDNS: Remove {} type {} at {}",
-        rr.name,
+        std::string(rr.name),
         string_from_type(t),
-        origin);
+        std::string(origin));
 
       ResourceRecord rs(rr);
 
@@ -830,7 +836,9 @@ namespace ccfdns
       check_context();
 
       CCF_APP_TRACE(
-        "CCFDNS: Remove type {} at {}", string_from_type(t), origin);
+        "CCFDNS: Remove type {} at {}",
+        string_from_type(t),
+        std::string(origin));
 
       if (!origin.is_absolute())
         throw std::runtime_error("origin not absolute");
@@ -1062,7 +1070,8 @@ namespace ccfdns
         "parent() && local()"; */
     }
 
-    virtual void set_parent_delegation_policy(std::vector<std::string>& policies)
+    virtual void set_parent_delegation_policy(
+      std::vector<std::string>& policies)
     {
       check_context();
 
@@ -1071,7 +1080,7 @@ namespace ccfdns
       if (!cfg.parent_base_url)
         throw std::runtime_error(
           "no updatable parent policies in the top attested zone");
-      
+
       auto tbl = rwtx().rw<DelegationPolicies>(delegation_policy_table_name);
 
       if (!tbl)
@@ -1080,15 +1089,15 @@ namespace ccfdns
 
       auto local_policy = tbl->get();
 
-      if (!local_policy || local_policy->size() != 1) 
-        throw std::runtime_error(
-          "cannot overwrite existing parent policies");
+      if (!local_policy || local_policy->size() != 1)
+        throw std::runtime_error("cannot overwrite existing parent policies");
 
       policies.push_back(local_policy->at(0));
       tbl->put(policies);
     }
 
-    // sets or updates the local delegation policy (also accessible via governance)
+    // sets or updates the local delegation policy (also accessible via
+    // governance)
     virtual void set_delegation_policy(const std::string& new_policy) override
     {
       check_context();
@@ -1206,7 +1215,8 @@ namespace ccfdns
       for (const auto& policy : delegation_policy())
       {
         std::string program = data + "\n\n" + policy;
-        if (!rt.eval(program)) return false;
+        if (!rt.eval(program))
+          return false;
       }
       return true;
     }
@@ -1307,11 +1317,11 @@ namespace ccfdns
         // directly from the CA, instead of a parent aDNS instance.
 
         // Check the top delegation policy is set, without parent policies.
-        auto policy = delegation_policy(); 
-        if (policy.size() != 1) 
+        auto policy = delegation_policy();
+        if (policy.size() != 1)
           throw std::runtime_error(
             "attested TLS must have exactly one delegation policy");
-        
+
         auto cn = cfg.origin.unterminated();
 
         std::vector<std::string> acme_contact;
@@ -1325,11 +1335,13 @@ namespace ccfdns
           .alternative_names = {cn},
           .contact = acme_contact,
           .terms_of_service_agreed = true,
-          .challenge_type = "dns-01"};
+          .challenge_type = "dns-01",
+          .not_before = std::nullopt,
+          .not_after = std::nullopt};
 
         acme_client_config.ca_certs.push_back(nwid_ss->get()->cert.str());
 
-        std::vector<crypto::SubjectAltName> sans;
+        std::vector<ccf::crypto::SubjectAltName> sans;
         sans.push_back({cn, false});
 
         for (const auto& [id, addr] : cfg.node_addresses)
@@ -1403,7 +1415,7 @@ namespace ccfdns
           my_name.pop_back();
       }
 
-      if (!cfg.parent_base_url) 
+      if (!cfg.parent_base_url)
       {
         create_certificate_signing_key("");
         start_acme_client();
@@ -1423,8 +1435,8 @@ namespace ccfdns
           {},
           cfg.service_ca.ca_certificates,
           [this](
-            http_status status,
-            http::HeaderMap&&,
+            ccf::http_status status,
+            ccf::http::HeaderMap&&,
             std::vector<uint8_t>&& body) {
             if (status != HTTP_STATUS_OK)
             {
@@ -1440,8 +1452,8 @@ namespace ccfdns
               std::move(sbody),
               {nwid_ss->get()->cert.str()},
               [](
-                http_status status,
-                http::HeaderMap&&,
+                ccf::http_status status,
+                ccf::http::HeaderMap&&,
                 std::vector<uint8_t>&& body) {
                 if (status != HTTP_STATUS_OK)
                   CCF_APP_FAIL("CCFDNS: Failed to set delegation policy");
@@ -1537,21 +1549,6 @@ namespace ccfdns
       return j.dump();
     }
 
-    virtual void start_delegation_acme_client()
-    {
-      check_context();
-
-      const auto& cfg = get_configuration();
-
-      if (cfg.parent_base_url)
-      {
-        std::vector<std::string> acme_contact;
-        for (const auto& c : cfg.contact)
-          acme_contact.push_back("mailto:" + c);
-        start_service_acme(cfg.origin, cfg.origin, my_acme_csr, acme_contact);
-      }
-    }
-
     virtual void save_service_registration_request(
       const Name& name, const RegistrationRequest& rr) override
     {
@@ -1577,80 +1574,6 @@ namespace ccfdns
         throw std::runtime_error(
           "could not access delegation registration request table");
       drtbl->put(name, {dr, drtbl->get_version_of_previous_write(name)});
-    }
-
-    virtual void start_service_acme(
-      const Name& origin,
-      const Name& name,
-      const std::vector<uint8_t>& csr,
-      const std::vector<std::string>& contact,
-      const std::optional<std::string>& service_url = std::nullopt,
-      const std::optional<std::vector<std::string>>& service_ca_certs = {})
-      override
-    {
-      const auto& cfg = get_configuration();
-
-      CCF_APP_DEBUG("CCFDNS: Set up ACME client for {}", name);
-
-      std::string subject_name = name.unterminated();
-
-      OpenSSL::UqX509_REQ req(csr, false);
-
-      CCF_APP_DEBUG("CCFDNS: CSR:\n{}", (std::string)req);
-
-      auto sans = req.get_subject_alternative_names();
-      std::vector<std::string> ssans;
-      for (size_t i = 0; i < sans.size(); i++)
-      {
-        auto san = sans.at(i);
-        if (san.is_dns())
-          ssans.push_back((std::string)san.string());
-      }
-
-      ACME::ClientConfig acme_client_config = {
-        .ca_certs = cfg.service_ca.ca_certificates,
-        .directory_url = cfg.service_ca.directory,
-        .service_dns_name = subject_name,
-        .alternative_names = ssans,
-        .contact = contact,
-        .terms_of_service_agreed = true,
-        .challenge_type = "dns-01"};
-
-      acme_client_config.ca_certs.push_back(nwid_ss->get()->cert.str());
-
-      if (service_ca_certs)
-        for (const auto& c : *service_ca_certs)
-          acme_client_config.ca_certs.push_back(c);
-
-      std::shared_ptr<ccfdns::ACMEClient> acme_client;
-
-      auto ait = acme_clients.find(name);
-      if (ait != acme_clients.end())
-      {
-        CCF_APP_DEBUG("CCFDNS: re-using existing ACME client");
-        acme_client = ait->second;
-        acme_client->reconfigure(
-          origin,
-          acme_client_config,
-          csr,
-          service_url.value_or(internal_node_address),
-          acme_ss,
-          acme_account_key_pair);
-      }
-      else
-      {
-        acme_client = std::make_shared<ccfdns::ACMEClient>(
-          *this,
-          origin,
-          acme_client_config,
-          csr,
-          service_url.value_or(internal_node_address),
-          acme_ss,
-          acme_account_key_pair);
-        acme_clients[name] = acme_client;
-      }
-
-      acme_client->get_certificate(acme_account_key_pair);
     }
 
     bool have_acme_client(const std::string& name) const
@@ -3465,9 +3388,8 @@ namespace ccfdns
           // TODO check the FQDN is eat.
           std::string response = ccfdns->eat_token(service_name);
 
-          CCF_APP_INFO("EAT query: {}\n{}",
-            ctx.rpc_ctx->get_request_url(),
-            response);
+          CCF_APP_INFO(
+            "EAT query: {}\n{}", ctx.rpc_ctx->get_request_url(), response);
 
           ctx.rpc_ctx->set_response_header(
             ccf::http::headers::CONTENT_TYPE, "text/plain");
