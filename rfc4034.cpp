@@ -199,7 +199,7 @@ namespace RFC4034
 
     CCF_APP_TRACE(
       "ADNS: SIGN: record set: {} {} {} {} {}..{} size: {}",
-      crrs.name,
+      std::string(crrs.name),
       crrs.type,
       crrs.class_,
       crrs.ttl,
