@@ -378,7 +378,21 @@ namespace RFC4034
     if (r.size() != s.size())
       throw std::runtime_error("incompatible signature coordinates");
 
-    UqECDSA_SIG sig(UqBIGNUM(r, little_endian), UqBIGNUM(s, little_endian));
+    Unique_BIGNUM rb, sb;
+    if (little_endian)
+    {
+      CHECKNULL(BN_lebin2bn(r.data(), r.size(), rb));
+      CHECKNULL(BN_lebin2bn(s.data(), s.size(), sb));
+    }
+    else
+    {
+      CHECKNULL(BN_bin2bn(r.data(), r.size(), rb));
+      CHECKNULL(BN_bin2bn(s.data(), s.size(), sb));
+    }
+
+    Unique_ECDSA_SIG sig;
+    CHECK1(ECDSA_SIG_set0(sig, rb, sb));
+
     int der_size = i2d_ECDSA_SIG(sig, NULL);
     CHECK0(der_size);
     if (der_size < 0)
