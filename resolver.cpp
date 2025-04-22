@@ -1420,11 +1420,10 @@ namespace aDNS
     out.node_information = get_node_information();
 
     remove(cfg.origin, cfg.origin, Class::IN, Type::SOA);
-    add(
-      cfg.origin,
-      mk_rr(cfg.origin, Type::SOA, Class::IN, 60, SOA(cfg.soa)));
+    add(cfg.origin, mk_rr(cfg.origin, Type::SOA, Class::IN, 60, SOA(cfg.soa)));
     // TODO review this TTL, it's possibly too low
-    // TODO check the provided primary name server against cfg.origin? See also node checks below.
+    // TODO check the provided primary name server against cfg.origin? See also
+    // node checks below.
 
     remove(cfg.origin, cfg.origin, Class::IN, Type::NS);
     remove(cfg.origin, cfg.origin, Class::IN, Type::A);
@@ -1457,11 +1456,12 @@ namespace aDNS
 
     add_attestation_records(cfg.origin, cfg.origin, out.node_information);
 
-    // signs initial records; this triggers the creation of fresh DNSKEY records. 
+    // signs initial records; this triggers the creation of fresh DNSKEY
+    // records.
     sign(cfg.origin);
 
     std::string cn;
-    std::vector<crypto::SubjectAltName> sans;
+    std::vector<ccf::crypto::SubjectAltName> sans;
 
     cn = cfg.origin.unterminated();
     sans.push_back({cn, false});
@@ -1497,7 +1497,9 @@ namespace aDNS
             out.dnskey_records->push_back(keyrr);
         }
     }
-    CCF_APP_INFO("CCFDNS: Resolver::configure(): Added {} records", dnskeys.answers.size());
+    CCF_APP_INFO(
+      "CCFDNS: Resolver::configure(): Added {} records",
+      dnskeys.answers.size());
 
     return out;
   }

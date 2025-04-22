@@ -1056,18 +1056,18 @@ namespace ccfdns
 
       return *policies;
 
-  /*
-      if (parent.empty())
-        throw std::runtime_error("no parent delegation policy");
-      if (local.empty())
-        throw std::runtime_error("no local delegation policy");
+      /*
+          if (parent.empty())
+            throw std::runtime_error("no parent delegation policy");
+          if (local.empty())
+            throw std::runtime_error("no local delegation policy");
 
-      return "function parent() {\n" + parent +
-        "\n}\n\n"
-        "function local() {\n" +
-        local + "\n" + "return r == true;" + "\n" +
-        "}\n\n"
-        "parent() && local()"; */
+          return "function parent() {\n" + parent +
+            "\n}\n\n"
+            "function local() {\n" +
+            local + "\n" + "return r == true;" + "\n" +
+            "}\n\n"
+            "parent() && local()"; */
     }
 
     virtual void set_parent_delegation_policy(
@@ -2703,10 +2703,7 @@ namespace ccfdns
           Configure::Out out = {.registration_info = ccfdns->configure(in)};
 
           auto log = nlohmann::json{
-            {"request", "/configure"}, 
-            {"input", in}, 
-            {"output", out} 
-          };
+            {"request", "/configure"}, {"input", in}, {"output", out}};
 
           CCF_APP_INFO("CCFDNS: Out configuration");
           ctx.rpc_ctx->set_claims_digest(ccf::ClaimsDigest::Digest(log.dump()));
@@ -2786,10 +2783,11 @@ namespace ccfdns
           try
           {
             const auto parsed_query =
-              http::parse_query(ctx.rpc_ctx->get_request_query());
+              ccf::http::parse_query(ctx.rpc_ctx->get_request_query());
             Name service_name =
               Name(get_param(parsed_query, "service-name")).terminated();
-            CCF_APP_DEBUG("CCFDNS: registration_receipt: {}", service_name);
+            CCF_APP_DEBUG(
+              "CCFDNS: registration_receipt: {}", std::string(service_name));
             auto r =
               ccfdns->registration_receipt(ctx, historical_state, service_name);
             ctx.rpc_ctx->set_response_body(std::move(r));
@@ -2817,7 +2815,7 @@ namespace ccfdns
         auto r = ccfdns->registration_index_strategy->last_write(sn);
         CCF_APP_DEBUG(
           "CCFDNS: registration_txid_extractor: {} {}",
-          service_name,
+          std::string(service_name),
           r.has_value());
         return r;
       };
@@ -2869,7 +2867,9 @@ namespace ccfdns
           CCFDNS::DelegationRequests::KeySerialiser::to_serialised(subdomain);
         auto r = ccfdns->delegation_index_strategy->last_write(ssub);
         CCF_APP_DEBUG(
-          "CCFDNS: delegation_txid_extractor: {} {}", subdomain, r.has_value());
+          "CCFDNS: delegation_txid_extractor: {} {}",
+          std::string(subdomain),
+          r.has_value());
         return r;
       };
 
@@ -2919,7 +2919,7 @@ namespace ccfdns
           const auto in = params.get<InstallACMEResponse::In>();
           CCF_APP_DEBUG(
             "ADNS: install ACME response for {}: {}",
-            in.name,
+            std::string(in.name),
             in.key_authorization);
           ccfdns->install_acme_response(
             in.origin, in.name, in.alternative_names, in.key_authorization);
@@ -3020,7 +3020,7 @@ namespace ccfdns
           if (verb == HTTP_GET)
           {
             const auto parsed_query =
-              http::parse_query(ctx_.rpc_ctx->get_request_query());
+              ccf::http::parse_query(ctx_.rpc_ctx->get_request_query());
             std::string query_b64 = get_param(parsed_query, "dns");
             bytes = ccf::crypto::raw_from_b64url(query_b64);
           }
@@ -3051,7 +3051,7 @@ namespace ccfdns
 
           ctx_.rpc_ctx->set_response_status(HTTP_STATUS_OK);
           ctx_.rpc_ctx->set_response_header(
-            http::headers::CONTENT_TYPE, "application/dns-message");
+            ccf::http::headers::CONTENT_TYPE, "application/dns-message");
           std::vector<uint8_t> out = reply.message;
           CCF_APP_INFO("CCFDNS: response: {}", ccf::ds::to_hex(out));
 
@@ -3286,7 +3286,7 @@ namespace ccfdns
         {
           ContextContext cc(ccfdns, ctx);
           const auto parsed_query =
-            http::parse_query(ctx.rpc_ctx->get_request_query());
+            ccf::http::parse_query(ctx.rpc_ctx->get_request_query());
           Name service_name =
             Name(get_param(parsed_query, "service_name")).terminated();
           ctx.rpc_ctx->set_response_header(
@@ -3376,8 +3376,9 @@ namespace ccfdns
           ctx.rpc_ctx->set_response_body(response.dump(4));
           ctx.rpc_ctx->set_response_status(HTTP_STATUS_OK);
         }
-        catch (std::exception& ex) {
-          CCF_APP_INFO("EAT fails with  {}",ex.what());
+        catch (std::exception& ex)
+        {
+          CCF_APP_INFO("EAT fails with  {}", ex.what());
           ctx.rpc_ctx->set_response_body(ex.what());
           ctx.rpc_ctx->set_response_status(HTTP_STATUS_INTERNAL_SERVER_ERROR);
         }
@@ -3400,7 +3401,8 @@ namespace ccfdns
           // TODO check the FQDN is eat.
           nlohmann::json response = ccfdns->eat_discover();
 
-          CCF_APP_INFO("EAT query: {}\n{}",
+          CCF_APP_INFO(
+            "EAT query: {}\n{}",
             ctx.rpc_ctx->get_request_url(),
             response.dump(4));
 
