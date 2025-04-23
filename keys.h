@@ -16,8 +16,8 @@ namespace ccfdns
 
   struct ZoneKeyInfo
   {
-    std::map<uint16_t, std::vector<crypto::Pem>> key_signing_keys;
-    std::map<uint16_t, std::vector<crypto::Pem>> zone_signing_keys;
+    std::map<uint16_t, std::vector<ccf::crypto::Pem>> key_signing_keys;
+    std::map<uint16_t, std::vector<ccf::crypto::Pem>> zone_signing_keys;
   };
 
   using PrivateDNSKeys = ccf::ServiceMap<RFC1035::Name, ZoneKeyInfo>;
@@ -54,7 +54,7 @@ namespace ccfdns
   using EATIssuerKeyInfo = ccf::ServiceValue<std::vector<EATPublicKeyRecord>>;
   const std::string eat_issuer_key_info_table_name = "eat_issuer_key_info_table_name";
 
-  using EATPrivateKeys = ccf::ServiceValue<std::vector<crypto::Pem>>;
+  using EATPrivateKeys = ccf::ServiceValue<std::vector<ccf::crypto::Pem>>;
   const std::string eat_private_key_table_name = "private:eat_private_key_table_name";
 
   using CertificatePrivateKeys = ccf::ServiceValue<std::vector<std::string>>;

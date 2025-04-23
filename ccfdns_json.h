@@ -18,7 +18,7 @@
   { \
     if (!j.is_string()) \
     { \
-      throw JsonParseError(fmt::format( \
+      throw ccf::JsonParseError(fmt::format( \
         "Cannot parse " #TYPE ": expected string, got {}", j.dump())); \
     } \
     t = TYPE(j.get<std::string>()); \
@@ -43,7 +43,7 @@ inline void from_json(const nlohmann::json& j, small_vector<uint16_t>& t)
 {
   if (!j.is_string())
   {
-    throw JsonParseError(fmt::format(
+    throw ccf::JsonParseError(fmt::format(
       "Cannot parse small_vector<uint16_t>: expected base64-encoded string, "
       "got {}",
       j.dump()));
@@ -71,7 +71,7 @@ inline void to_json(nlohmann::json& j, const aDNS::Type& t)
 inline void from_json(const nlohmann::json& j, aDNS::Type& t)
 {
   if (!j.is_string())
-    throw JsonParseError(
+    throw ccf::JsonParseError(
       fmt::format("Cannot parse aDNS::Type: invalid datatype {}", j.dump()));
   t = aDNS::type_from_string(j.get<std::string>());
 }

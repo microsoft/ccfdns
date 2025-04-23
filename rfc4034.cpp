@@ -12,8 +12,19 @@
 #include <cassert>
 #include <ccf/crypto/hash_provider.h>
 #include <ccf/crypto/key_pair.h>
+#include <ccf/crypto/openssl/openssl_wrappers.h>
 #include <ccf/ds/logger.h>
-#include <ravl/openssl.hpp>
+#include <openssl/bn.h>
+#include <openssl/core_names.h>
+#include <openssl/ec.h>
+#include <openssl/engine.h>
+#include <openssl/err.h>
+#include <openssl/evp.h>
+#include <openssl/ossl_typ.h>
+#include <openssl/param_build.h>
+#include <openssl/pem.h>
+#include <openssl/x509.h>
+#include <openssl/x509v3.h>
 #include <set>
 #include <stdexcept>
 #include <tuple>
@@ -165,7 +176,7 @@ namespace RFC4034
     uint8_t nl = num_labels(owner);
 
     /*
-    // now adjusted by the caller, based on tranparent time 
+    // now adjusted by the caller, based on tranparent time
     auto now = std::chrono::system_clock::now();
     auto tp = now.time_since_epoch();
     uint32_t sig_inception =
@@ -188,7 +199,7 @@ namespace RFC4034
 
     CCF_APP_TRACE(
       "ADNS: SIGN: record set: {} {} {} {} {}..{} size: {}",
-      crrs.name,
+      std::string(crrs.name),
       crrs.type,
       crrs.class_,
       crrs.ttl,
@@ -290,7 +301,7 @@ namespace RFC4034
     uint8_t window = type >> 8;
     uint8_t lower = type & 0xFF;
 
-    uint8_t window_index = 0;
+    size_t window_index = 0;
     for (; window_index < windows.size(); window_index++)
     {
       if (windows[window_index].window_block_no == window)
@@ -362,12 +373,26 @@ namespace RFC4034
     const std::span<const uint8_t>& s,
     bool little_endian)
   {
-    using namespace OpenSSL;
+    using namespace ccf::crypto::OpenSSL;
 
     if (r.size() != s.size())
       throw std::runtime_error("incompatible signature coordinates");
 
-    UqECDSA_SIG sig(UqBIGNUM(r, little_endian), UqBIGNUM(s, little_endian));
+    Unique_BIGNUM rb, sb;
+    if (little_endian)
+    {
+      CHECKNULL(BN_lebin2bn(r.data(), r.size(), rb));
+      CHECKNULL(BN_lebin2bn(s.data(), s.size(), sb));
+    }
+    else
+    {
+      CHECKNULL(BN_bin2bn(r.data(), r.size(), rb));
+      CHECKNULL(BN_bin2bn(s.data(), s.size(), sb));
+    }
+
+    Unique_ECDSA_SIG sig;
+    CHECK1(ECDSA_SIG_set0(sig, rb, sb));
+
     int der_size = i2d_ECDSA_SIG(sig, NULL);
     CHECK0(der_size);
     if (der_size < 0)
@@ -393,7 +418,7 @@ namespace RFC4034
     const RFC4034::CanonicalRRSet& dnskey_rrset,
     const std::function<std::string(const Type&)>& type2str)
   {
-    std::vector<std::tuple<crypto::PublicKeyPtr, uint16_t, bool>> pks;
+    std::vector<std::tuple<ccf::crypto::PublicKeyPtr, uint16_t, bool>> pks;
 
     CCF_APP_DEBUG("ADNS: VERIFY: Public keys:");
     for (const auto& rr : dnskey_rrset)
@@ -405,8 +430,9 @@ namespace RFC4034
         small_vector<uint16_t> rdata_bytes = rdata;
         auto tag = keytag(&rdata_bytes[0], rdata_bytes.size());
         CCF_APP_TRACE(
-          "ADNS:    tag: {} x/y: {}", tag, ds::to_hex(rdata.public_key));
-        auto pk = crypto::make_public_key(der_from_coord(rdata.public_key));
+          "ADNS:    tag: {} x/y: {}", tag, ccf::ds::to_hex(rdata.public_key));
+        auto pk =
+          ccf::crypto::make_public_key(der_from_coord(rdata.public_key));
         pks.push_back(std::make_tuple(pk, tag, rdata.is_zone_key()));
       }
     }
@@ -447,11 +473,11 @@ namespace RFC4034
         rr.rdata.put(data_to_sign);
       }
 
-      CCF_APP_TRACE("ADNS: VERIFY: data={}", ds::to_hex(data_to_sign));
+      CCF_APP_TRACE("ADNS: VERIFY: data={}", ccf::ds::to_hex(data_to_sign));
       auto sig = rrsig_rdata.signature;
-      CCF_APP_TRACE("ADNS: VERIFY: r/s sig={}", ds::to_hex(sig));
+      CCF_APP_TRACE("ADNS: VERIFY: r/s sig={}", ccf::ds::to_hex(sig));
       sig = convert_signature_to_der(sig);
-      CCF_APP_TRACE("ADNS: VERIFY: sig={}", ds::to_hex(sig));
+      CCF_APP_TRACE("ADNS: VERIFY: sig={}", ccf::ds::to_hex(sig));
 
       CCF_APP_TRACE(
         "ADNS: VERIFY: try rrsig: {}",
@@ -500,7 +526,15 @@ namespace RFC4034
     const std::function<std::string(const Type&)>& type2str) :
     RFC1035::ResourceRecord(
       crrs.name, U(Type::RRSIG), U(crrs.class_), crrs.ttl, {}),
-    rdata(sign(signing_function, key_tag, algorithm, signer, crrs, sig_inception, sig_expiration, type2str))
+    rdata(sign(
+      signing_function,
+      key_tag,
+      algorithm,
+      signer,
+      crrs,
+      sig_inception,
+      sig_expiration,
+      type2str))
   {
     RFC1035::ResourceRecord::rdata = rdata;
   }
@@ -528,8 +562,8 @@ namespace RFC4034
     if (digest_type != RFC4034::DigestType::SHA384)
       throw std::runtime_error("digest type not supported");
 
-    auto hp = crypto::make_hash_provider();
-    rdata.digest = hp->Hash(t.data(), t.size(), crypto::MDType::SHA384);
+    auto hp = ccf::crypto::make_hash_provider();
+    rdata.digest = hp->Hash(t.data(), t.size(), ccf::crypto::MDType::SHA384);
 
     RFC1035::ResourceRecord::rdata = rdata;
   }

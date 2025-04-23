@@ -102,6 +102,15 @@ public:
     }
   }
 
+  auto begin() const
+  {
+    return data;
+  }
+  auto end() const
+  {
+    return data + size_;
+  }
+
   ~small_vector()
   {
     if (size_ != 0)
@@ -208,18 +217,18 @@ public:
   std::string to_base64(bool urlsafe = true) const
   {
     if (urlsafe)
-      return crypto::b64url_from_raw(
+      return ccf::crypto::b64url_from_raw(
         static_cast<uint8_t*>(data), size_ * sizeof(E));
     else
-      return crypto::b64_from_raw(
+      return ccf::crypto::b64_from_raw(
         static_cast<uint8_t*>(data), size_ * sizeof(E));
   }
 
   static small_vector<T, E> from_base64(
     const std::string& b64, bool url_safe = true)
   {
-    auto bytes =
-      url_safe ? crypto::raw_from_b64url(b64) : crypto::raw_from_b64(b64);
+    auto bytes = url_safe ? ccf::crypto::raw_from_b64url(b64) :
+                            ccf::crypto::raw_from_b64(b64);
     if (bytes.size() >= 1 << (sizeof(T) * 8))
       throw std::runtime_error("data too large for small_vector");
     return small_vector<T, E>(
@@ -245,8 +254,8 @@ public:
     auto sz = s.size() / 2;
     small_vector<T, E> r(sz);
     for (size_t i = 0; i < sz; i++)
-      r[i] = (ds::hex_char_to_int(s[2 * i]) << 4) |
-        ds::hex_char_to_int(s[2 * i + 1]);
+      r[i] = (ccf::ds::hex_char_to_int(s[2 * i]) << 4) |
+        ccf::ds::hex_char_to_int(s[2 * i + 1]);
     return r;
   }
 
@@ -284,7 +293,7 @@ template <typename T, typename E>
 inline void put_n(
   const small_vector<T, E>& vec, std::vector<uint8_t>& r, size_t n)
 {
-  for (T i = 0; i < n; i++)
+  for (size_t i = 0; i < n; i++)
   {
     r.push_back(vec[i]);
   }

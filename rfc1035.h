@@ -283,7 +283,7 @@ namespace RFC1035
         r[p++] = l.size();
         if (p == 0)
           throw std::runtime_error("name too long for small_vector");
-        for (uint8_t i = 0; i < l.size(); i++)
+        for (size_t i = 0; i < l.size(); i++)
         {
           r[p++] = l[i];
           if (p == 0)
@@ -1265,7 +1265,7 @@ namespace RFC1035
       {
         if (!r.empty())
           r += " ";
-        // auto ss = ds::to_hex(s);
+        // auto ss = ccf::ds::to_hex(s);
         std::string ss((const char*)s.raw(), s.size());
         r += std::string("\"") + ss + "\"";
       }

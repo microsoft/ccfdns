@@ -114,7 +114,7 @@ namespace RFC7671
       r += " " + std::to_string(certificate_usage);
       r += " " + std::to_string(selector);
       r += " " + std::to_string(matching_type);
-      r += " " + ds::to_hex(certificate_association_data);
+      r += " " + ccf::ds::to_hex(certificate_association_data);
       return r;
     }
   };

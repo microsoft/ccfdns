@@ -1,18 +1,24 @@
 name: "CodeQL"
 
 on:
-  push:
-    branches: [main]
+  schedule:
+    - cron: "0 0 * * 0"
   pull_request:
-    # The branches below must be a subset of the branches above
-    branches: [main]
-  # schedule:
-  #   - cron: '22 12 * * 1'
+    paths:
+      - ".github/workflows/codeql-analysis.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   analyze:
     name: Analyze
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-24.04
+    container:
+      image: mcr.microsoft.com/azurelinux/base/core:3.0
+      options: --user root
 
     strategy:
       fail-fast: false
@@ -20,58 +26,49 @@ jobs:
         language: ["cpp"]
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v2
+      - name: "Checkout dependencies"
+        shell: bash
+        run: |
+          gpg --import /etc/pki/rpm-gpg/MICROSOFT-RPM-GPG-KEY
+          tdnf -y update
+          tdnf -y install ca-certificates git tar
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Done before CodeQL init to let it find the commit successfully
+      - name: Work around git warning
+        run: git config --global --add safe.directory /__w/ccfdns/ccfdns
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v2
+        uses: github/codeql-action/init@v3
         with:
           languages: ${{ matrix.language }}
-          # If you wish to specify custom queries, you can do so here or in a config file.
-          # By default, queries listed here will override any specified in a config file.
-          # Prefix the list here with "+" to use these queries and those in the config file.
-          # queries: ./path/to/local/query, your-org/your-repo/queries@main
+          queries: security-extended
 
-      - name: Install basics
-        run: sudo apt install wget git build-essential cmake
-
-      - name: Add repositories
+      - name: Install CCF with dependencies
+        shell: bash
         run: |
-          echo 'deb [arch=amd64] https://download.01.org/intel-sgx/sgx_repo/ubuntu focal main' | sudo tee /etc/apt/sources.list.d/intel-sgx.list
-          wget -qO - https://download.01.org/intel-sgx/sgx_repo/ubuntu/intel-sgx-deb.key | sudo apt-key add -
-          echo "deb [arch=amd64] https://packages.microsoft.com/ubuntu/20.04/prod focal main" | sudo tee /etc/apt/sources.list.d/msprod.list
-          wget -qO - https://packages.microsoft.com/keys/microsoft.asc | sudo apt-key add -
-
-      - name: Install packages
-        run: |
-          sudo apt update
-          sudo apt install doctest-dev libcurl4-openssl-dev libssl-dev open-enclave clang-11 libc++-11-dev libc++abi-11-dev libuv1-dev libuv1
-
-      - name: Install Protobuf
-        run: |
-          wget https://github.com/protocolbuffers/protobuf/releases/download/v21.5/protoc-21.5-linux-x86_64.zip
-          sudo mkdir /opt/protoc
-          sudo unzip protoc-21.5-linux-x86_64.zip -d /opt/protoc
-
-      - name: Install CCF
-        run: |
+          set -ex
           git clone https://github.com/microsoft/ccf
           cd ccf
+          git config --global --add safe.directory /__w/CCF/CCF
+          ./scripts/setup-ci.sh
           mkdir build
           cd build
-          cmake -DCMAKE_BUILD_TYPE=Debug -DCMAKE_INSTALL_PREFIX=~/installed/ccf -DCOMPILE_TARGET=virtual -DBUILD_TESTS=OFF -DCMAKE_C_COMPILER=clang-11  -DCMAKE_CXX_COMPILER=clang++-11 ..
+          cmake -DCMAKE_BUILD_TYPE=Debug -DCOMPILE_TARGET=virtual -DBUILD_TESTS=OFF ..
+          make -j16
           make install
 
-      - name: Create Build Environment
-        run: cmake -E make_directory ${{github.workspace}}/build/${{ matrix.build_type }}
-
-      - name: Configure
-        working-directory: ${{github.workspace}}/build/${{ matrix.build_type }}
-        run: cmake -DCMAKE_BUILD_TYPE=Debug -DLVI_MITIGATIONS=OFF -DCMAKE_INSTALL_PREFIX=~/installed/ccf -DSAN=OFF -DCMAKE_C_COMPILER=clang-11  -DCMAKE_CXX_COMPILER=clang++-11 -DVIRTUAL=ON  $GITHUB_WORKSPACE
-
-      - name: Build ccfdns
-        working-directory: ${{github.workspace}}/build/${{ matrix.build_type }}
-        run: cmake --build . --config Debug
+      - name: Build ADNS
+        shell: bash
+        run: |
+          set -ex
+          mkdir build
+          cd build
+          cmake -DVIRTUAL=ON -DCMAKE_BUILD_TYPE=Debug ..
+          make -j16
 
       - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v2
+        uses: github/codeql-action/analyze@v3

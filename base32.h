@@ -4,6 +4,7 @@
 
 #include <string>
 #include <vector>
+#include <cstdint>
 
 std::string base32hex_encode(const uint8_t* data, size_t size);
 
