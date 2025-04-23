@@ -14,6 +14,7 @@
 #include <ccf/_private/enclave/enclave_time.h>
 #include <ccf/_private/node/acme_client.h>
 #include <ccf/_private/node/identity.h>
+#include <ccf/_private/udp/msg_types.h>
 #include <ccf/app_interface.h>
 #include <ccf/base_endpoint_registry.h>
 #include <ccf/common_auth_policies.h>
@@ -331,9 +332,8 @@ namespace ccfdns
         "POST",
         node_address + "/app/internal/install-acme-response",
         {},
-        to_json_bytes(
-          InstallACMEResponse::In{
-            origin, config.service_dns_name + ".", sans, digest_b64}),
+        to_json_bytes(InstallACMEResponse::In{
+          origin, config.service_dns_name + ".", sans, digest_b64}),
         [this, sn, token, sz = sans.size()](
           const ccf::http_status& http_status,
           const ccf::http::HeaderMap& headers,
@@ -982,9 +982,8 @@ namespace ccfdns
         }
       }
 
-      throw std::runtime_error(
-        fmt::format(
-          "private {} signing key not found", key_signing ? "key" : "zone"));
+      throw std::runtime_error(fmt::format(
+        "private {} signing key not found", key_signing ? "key" : "zone"));
     }
 
     virtual void on_new_signing_key(
@@ -2279,12 +2278,11 @@ namespace ccfdns
       // Let the host know that we're done and that it can destroy the
       // associated TCPImpl. Without this, file/socket descriptors will not be
       // closed.
-      // TODO ?
-      // RINGBUFFER_WRITE_MESSAGE(
-      //   tls::tls_stop,
-      //   cp_ess->writer,
-      //   session_id,
-      //   std::string("DNS/TCP Session closed"));
+      RINGBUFFER_WRITE_MESSAGE(
+        tcp::tcp_stop,
+        cp_ess->writer,
+        session_id,
+        std::string("DNS/TCP Session closed"));
     }
 
     virtual void handle_incoming_data(std::span<const uint8_t> data) override
@@ -2379,12 +2377,11 @@ namespace ccfdns
 
         uint8_t size[2] = {(uint8_t)(data.size() >> 8), (uint8_t)(data.size())};
 
-        // TODO ?
-        // RINGBUFFER_TRY_WRITE_MESSAGE(
-        //   tls::tls_outbound,
-        //   cp_ess->writer,
-        //   session_id,
-        //   serializer::ByteRange{size, 2});
+        RINGBUFFER_TRY_WRITE_MESSAGE(
+          tcp::tcp_outbound,
+          cp_ess->writer,
+          session_id,
+          serializer::ByteRange{size, 2});
 
         size_t fragment_size = data.size();
 
@@ -2395,12 +2392,11 @@ namespace ccfdns
 
           try
           {
-            // TODO ?
-            // ok = RINGBUFFER_TRY_WRITE_MESSAGE(
-            //   tls::tls_outbound,
-            //   cp_ess->writer,
-            //   session_id,
-            //   serializer::ByteRange{&data.data()[i], n});
+            ok = RINGBUFFER_TRY_WRITE_MESSAGE(
+              tcp::tcp_outbound,
+              cp_ess->writer,
+              session_id,
+              serializer::ByteRange{&data.data()[i], n});
           }
           catch (const std::exception& ex)
           {
@@ -2470,14 +2466,13 @@ namespace ccfdns
 
       try
       {
-        // TODO ? no udp msg type
-        // auto [sid, family, addr, msg_payload] =
-        //   ringbuffer::read_message<udp::inbound>(data);
+        auto [sid, family, addr, msg_payload] =
+          ringbuffer::read_message<udp::udp_inbound>(data);
 
-        // session_id = sid;
-        // addr_family = family;
-        // addr_data = addr;
-        // payload = {msg_payload.data, msg_payload.data + msg_payload.size};
+        session_id = sid;
+        addr_family = family;
+        addr_data = addr;
+        payload = {msg_payload.data, msg_payload.data + msg_payload.size};
       }
       catch (...)
       {
@@ -2601,17 +2596,16 @@ namespace ccfdns
 
       try
       {
-        // TODO ?
-        // auto ok = RINGBUFFER_TRY_WRITE_MESSAGE(
-        //   udp::outbound,
-        //   cp_ess->writer,
-        //   session_id,
-        //   addr_family,
-        //   addr_data,
-        //   serializer::ByteRange{payload.data(), payload.size()});
+        auto ok = RINGBUFFER_TRY_WRITE_MESSAGE(
+          udp::udp_outbound,
+          cp_ess->writer,
+          session_id,
+          addr_family,
+          addr_data,
+          serializer::ByteRange{payload.data(), payload.size()});
 
-        // if (!ok)
-        // CCF_APP_DEBUG("CCFDNS: UDP write failed.");
+        if (!ok)
+          CCF_APP_DEBUG("CCFDNS: UDP write failed.");
 
         addr_family = 0;
         addr_data.clear();

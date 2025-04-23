@@ -40,7 +40,6 @@ set(COMPILE_TARGET virtual)
 set(SUFFIX virtual)
 find_package(ccf_virtual REQUIRED HINTS ${CCF})
 
-# Used to grab private CCF headers, it seems!
 set(CCF_PKG_DIR ${ccf_virtual_DIR})
 set(CCF_PKG_INC ${CCF_PKG_DIR}/../include)
 
