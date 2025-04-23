@@ -301,7 +301,7 @@ namespace RFC4034
     uint8_t window = type >> 8;
     uint8_t lower = type & 0xFF;
 
-    uint8_t window_index = 0;
+    size_t window_index = 0;
     for (; window_index < windows.size(); window_index++)
     {
       if (windows[window_index].window_block_no == window)
