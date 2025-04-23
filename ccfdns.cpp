@@ -689,9 +689,10 @@ namespace ccfdns
       // we use an internal call instead of
       // UserEndpointRegistry.get_untrusted_host_time_v1 because it is not in
       // scope
-      uint32_t node_time = std::chrono::duration_cast<std::chrono::seconds>(
-                             ccf::get_enclave_time())
-                             .count();
+      const uint32_t node_time =
+        std::chrono::duration_cast<std::chrono::seconds>(
+          std::chrono::system_clock::now().time_since_epoch())
+          .count();
 
       // does *not* support 32-bit rollover, tricky with untrusted host time.
       if (time + quantum < node_time)
