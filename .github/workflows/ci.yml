@@ -44,7 +44,14 @@ jobs:
           ./scripts/ci-checks.sh
         shell: bash
 
-  
+  build-and-test:
+    name: "Build and test (virtual)"
+    needs: checks
+    runs-on: ubuntu-24.04
+    container:
+      image: mcr.microsoft.com/azurelinux/base/core:3.0
+      options: --user root --publish-all --cap-add NET_ADMIN --cap-add NET_RAW --cap-add SYS_PTRACE
+
     steps:
       - name: "Checkout dependencies"
         shell: bash
