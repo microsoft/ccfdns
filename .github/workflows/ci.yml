@@ -67,9 +67,9 @@ jobs:
 
       - uses: robinraju/release-downloader@v1
         with:
-          repository: 'microsoft/CCF'
-          tag: 'ccf-6.0.1'
-          fileName: 'ccf_virtual_devel_6.0.1_x86_64.rpm'
+          repository: "microsoft/CCF"
+          tag: "ccf-6.0.1"
+          fileName: "ccf_virtual_devel_6.0.1_x86_64.rpm"
 
       - name: "Install CCF with dependencies"
         shell: bash
