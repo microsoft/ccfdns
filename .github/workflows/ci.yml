@@ -76,6 +76,7 @@ jobs:
         run: |
           set -ex
           tdnf -y install ccf_virtual_devel_6.0.1_x86_64.rpm
+          ./scripts/setup-ci.sh
 
       - name: "Build Debug"
         run: |
