@@ -4,4 +4,6 @@
 
 set -ex
 
-tdnf -y install zlib-devel
+tdnf -y install zlib-devel  \
+    clang-tools-extra  \
+    python-pip

@@ -40,7 +40,8 @@ jobs:
         run: |
           set -ex
           git config --global --add safe.directory /__w/ccfdns/ccfdns
-          tdnf -y install tar npm build-essential clang-format
+          tdnf -y install tar npm build-essential
+          ./scripts/setup-ci.sh
           ./scripts/ci-checks.sh
         shell: bash
 
