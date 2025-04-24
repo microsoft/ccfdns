@@ -1,2 +1,0 @@
-fun:strdup
-fun:sgx_ql_get_quote_config

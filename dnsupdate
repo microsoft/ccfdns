@@ -1,5 +1,0 @@
-server ns1.attested.name
-zone attested.name
-update add acidns10.attested.name 3600 NS ns1.acidns10.attested.name
-update add ns1.acidns10.attested.name 3600 A 20.160.110.47
-send

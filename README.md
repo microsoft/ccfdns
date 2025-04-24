@@ -50,7 +50,7 @@ The aDNS root certificate is logged in the 'out' file described above.
 The pebble root certificate can be stored in pebble_root.pem by running:
 
 ```
-python3 get_root.py
+python3 python/get_root.py
 ```
 
 ## Contributing

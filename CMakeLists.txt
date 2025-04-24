@@ -47,16 +47,19 @@ find_package(ZLIB)
 add_ccf_app(
   ccfdns
   SRCS
-  ccfdns.cpp
-  resolver.cpp
-  rfc4034.cpp
-  rfc5155.cpp
-  base32.cpp
+  src/ccfdns.cpp
+  src/resolver.cpp
+  src/rfc4034.cpp
+  src/rfc5155.cpp
+  src/base32.cpp
   LINK_LIBS_VIRTUAL
   ZLIB::ZLIB)
 
-target_include_directories(${ENCLAVE_TARGET}
-                           PRIVATE ${CCF_PKG_DIR}/../include/ccf/_private)
+target_include_directories(
+  ${ENCLAVE_TARGET}
+  PRIVATE ${CCF_PKG_DIR}/../include/ccf/_private
+  PRIVATE include)
+
 target_compile_definitions(${ENCLAVE_TARGET} PRIVATE ALWAYS_USE_TCP)
 
 if(CMAKE_BUILD_TYPE MATCHES Debug)
@@ -111,6 +114,10 @@ function(add_unit_test name)
   endif()
 endfunction()
 
-add_unit_test(resolver_tests ../tests/resolver_tests.cpp resolver.cpp
-              rfc4034.cpp rfc5155.cpp base32.cpp)
+add_unit_test(resolver_tests ../tests/resolver_tests.cpp src/resolver.cpp
+              src/rfc4034.cpp src/rfc5155.cpp src/base32.cpp)
 target_link_libraries(resolver_tests PRIVATE ZLIB::ZLIB)
+target_include_directories(
+  resolver_tests
+  PRIVATE include
+  PRIVATE 3rdparty/test)

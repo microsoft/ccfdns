@@ -16,7 +16,7 @@
 
 // DOMAIN NAMES - IMPLEMENTATION AND SPECIFICATION
 // https://datatracker.ietf.org/doc/html/rfc1035
-namespace RFC1035 
+namespace RFC1035
 {
   // https://datatracker.ietf.org/doc/html/rfc1035#section-3.1
 
