@@ -29,10 +29,11 @@ For an example of how to run an aDNS server/service, see [adns_service.py](tests
 
 Note that for a complete service, your server(s) or VM(s) must be SGX-enabled and registered with at least a traditional, DNSSEC-enabled DNS server. Of course, that server may also be another aDNS server.
 
-Additionally, you may have to 
-- Add inbound rules to your network security group/firewall to allow inbound traffic on port 53 
-- Disable the service ```systemd-resolved``` (which uses also uses port 53) and manually add a well-known DNS server to ```/etc/resolve.conf```. 
-- If you are using docker to run the service, then use the host network 
+Additionally, you may have to
+
+- Add inbound rules to your network security group/firewall to allow inbound traffic on port 53
+- Disable the service `systemd-resolved` (which uses also uses port 53) and manually add a well-known DNS server to `/etc/resolve.conf`.
+- If you are using docker to run the service, then use the host network
 
 # aDNS for Kubernetes
 
@@ -47,6 +48,7 @@ The output is in build/workspace/e2e_aci_pebble_0/out
 The aDNS root certificate is logged in the 'out' file described above.
 
 The pebble root certificate can be stored in pebble_root.pem by running:
+
 ```
 python3 get_root.py
 ```

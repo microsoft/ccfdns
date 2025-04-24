@@ -83,19 +83,29 @@ def generate_self_signed_cert(key, subject):
         .add_extension(
             x509.SubjectAlternativeName([x509.DNSName("localhost")]),
             critical=False,
-        ).add_extension(
-            x509.BasicConstraints(ca=True, path_length=None),
-            critical=True
-        ).add_extension(
-            x509.KeyUsage(key_cert_sign=True,digital_signature=False,content_commitment=False,key_encipherment=False,data_encipherment=False,key_agreement=False,crl_sign=True,encipher_only=False,decipher_only=False),
-            critical=True
-        ).add_extension(
-            x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH]),
-            critical=False
-        ).add_extension(
-            x509.SubjectKeyIdentifier.from_public_key(key.public_key()),
-            critical=False
-        ).sign(key, hashes.SHA256())
+        )
+        .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
+        .add_extension(
+            x509.KeyUsage(
+                key_cert_sign=True,
+                digital_signature=False,
+                content_commitment=False,
+                key_encipherment=False,
+                data_encipherment=False,
+                key_agreement=False,
+                crl_sign=True,
+                encipher_only=False,
+                decipher_only=False,
+            ),
+            critical=True,
+        )
+        .add_extension(
+            x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH]), critical=False
+        )
+        .add_extension(
+            x509.SubjectKeyIdentifier.from_public_key(key.public_key()), critical=False
+        )
+        .sign(key, hashes.SHA256())
     )
 
 
@@ -183,43 +193,57 @@ def run_pebble(args):
         args.tls_port,
     )
 
-
-    if not os.path.exists(args.ca_cert_filename) or not os.path.exists(args.ca_key_filename):
+    if not os.path.exists(args.ca_cert_filename) or not os.path.exists(
+        args.ca_key_filename
+    ):
         print("Generating new Pebble certificates")
         ca_key = ec.generate_private_key(ec.SECP384R1(), default_backend())
         ca_cert = generate_self_signed_cert(ca_key, "Pebble Test CA")
         cert_key = ec.generate_private_key(ec.SECP384R1(), default_backend())
 
-        cert = x509.CertificateBuilder().subject_name(
-            x509.Name([
-                x509.NameAttribute(NameOID.COMMON_NAME, u"localhost"),
-            ])
-        ).issuer_name(
-            ca_cert.subject
-        ).public_key(
-            cert_key.public_key()
-        ).serial_number(
-            x509.random_serial_number()
-        ).not_valid_before(
-            datetime.datetime.utcnow()
-        ).not_valid_after(
-            datetime.datetime.utcnow() + datetime.timedelta(days=365)
-        ).add_extension(
-            x509.SubjectAlternativeName([x509.DNSName(u"localhost")]),
-            critical=False
-        ).add_extension(
-            x509.KeyUsage(key_cert_sign=False,digital_signature=True,content_commitment=False,key_encipherment=False,data_encipherment=False,key_agreement=False,crl_sign=False,encipher_only=False,decipher_only=False),
-            critical=True
-        ).add_extension(
-            x509.BasicConstraints(ca=False, path_length=None),
-            critical=True
-        ).add_extension(
-            x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH]),
-            critical=False
-        ).add_extension(
-            x509.AuthorityKeyIdentifier.from_issuer_public_key(ca_key.public_key()),
-            critical=False
-        ).sign(ca_key, hashes.SHA256(), default_backend())
+        cert = (
+            x509.CertificateBuilder()
+            .subject_name(
+                x509.Name(
+                    [
+                        x509.NameAttribute(NameOID.COMMON_NAME, "localhost"),
+                    ]
+                )
+            )
+            .issuer_name(ca_cert.subject)
+            .public_key(cert_key.public_key())
+            .serial_number(x509.random_serial_number())
+            .not_valid_before(datetime.datetime.utcnow())
+            .not_valid_after(datetime.datetime.utcnow() + datetime.timedelta(days=365))
+            .add_extension(
+                x509.SubjectAlternativeName([x509.DNSName("localhost")]), critical=False
+            )
+            .add_extension(
+                x509.KeyUsage(
+                    key_cert_sign=False,
+                    digital_signature=True,
+                    content_commitment=False,
+                    key_encipherment=False,
+                    data_encipherment=False,
+                    key_agreement=False,
+                    crl_sign=False,
+                    encipher_only=False,
+                    decipher_only=False,
+                ),
+                critical=True,
+            )
+            .add_extension(
+                x509.BasicConstraints(ca=False, path_length=None), critical=True
+            )
+            .add_extension(
+                x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH]), critical=False
+            )
+            .add_extension(
+                x509.AuthorityKeyIdentifier.from_issuer_public_key(ca_key.public_key()),
+                critical=False,
+            )
+            .sign(ca_key, hashes.SHA256(), default_backend())
+        )
 
         with open(args.ca_key_filename, "w", encoding="ascii") as f:
             f.write(
@@ -237,7 +261,9 @@ def run_pebble(args):
 
         with open("pebble-root.pem", "w", encoding="ascii") as f:
             f.write(
-                ca_cert.public_bytes(encoding=serialization.Encoding.PEM).decode("ascii")
+                ca_cert.public_bytes(encoding=serialization.Encoding.PEM).decode(
+                    "ascii"
+                )
             )
     else:
         print("Reusing existing Pebble certificates")
@@ -266,7 +292,11 @@ def run_proc(binary_filename, config_filename, dns_address, listen_address, out,
         listen_address,
         out,
         err,
-        env={"PEBBLE_WFE_NONCEREJECT": "0", "PEBBLE_VA_NOSLEEP": "1", "PEBBLE_VA_ALWAYS_VALID":"1"},
+        env={
+            "PEBBLE_WFE_NONCEREJECT": "0",
+            "PEBBLE_VA_NOSLEEP": "1",
+            "PEBBLE_VA_ALWAYS_VALID": "1",
+        },
     )
 
 

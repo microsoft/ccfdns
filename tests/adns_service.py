@@ -57,6 +57,8 @@ aci_policy = """
     }
     r == true;
 """
+
+
 class ServiceCAConfig(dict):
     def __init__(self, name, directory, ca_certificates=[]):
         dict.__init__(
@@ -151,8 +153,10 @@ def configure(base_url, cabundle, config, client_cert=None, num_retries=1):
         try:
             url = base_url + "/app/configure"
 
-            LOG.info("Calling /app/configure with config:" + json.dumps(config, indent=2))
-            
+            LOG.info(
+                "Calling /app/configure with config:" + json.dumps(config, indent=2)
+            )
+
             r = requests.post(
                 url,
                 json.dumps(config),
@@ -383,23 +387,24 @@ def run(
 
     acme_config_name, acme_config = make_acme_config(args, service_dns_name)
     args.acme = {"configurations": {acme_config_name: acme_config}}
-    print("ACME Configuration: "+json.dumps(args.acme))
+    print("ACME Configuration: " + json.dumps(args.acme))
 
     try:
         nodes = []
         for internal, external, ext_name, _ in args.node_addresses:
-            host_spec : Dict[str, RPCInterface] = {}
+            host_spec: Dict[str, RPCInterface] = {}
             int_if = RPCInterface()
             int_if.parse_from_str(internal)
             int_if.forwarding_timeout_ms = 10000
             host_spec[PRIMARY_RPC_INTERFACE] = int_if
-            
+
             ext_if = RPCInterface()
             ext_if.parse_from_str(external)
             ext_if.forwarding_timeout_ms = 10000
             if acme_config_name != None:
                 ext_if.endorsement = Endorsement(
-                    authority=EndorsementAuthority.ACME, acme_configuration=acme_config_name
+                    authority=EndorsementAuthority.ACME,
+                    acme_configuration=acme_config_name,
                 )
             ext_if.public_host = ext_name
             ext_if.public_port = ext_if.port
@@ -425,7 +430,7 @@ def run(
                 )
                 host_spec["udp_dns_if"] = udp_dns_if
 
-            nodes += [HostSpec(rpc_interfaces = host_spec)]
+            nodes += [HostSpec(rpc_interfaces=host_spec)]
 
         network = infra.network.Network(
             nodes,
@@ -546,7 +551,7 @@ if __name__ == "__main__":
             help="Type of service to register",
             action="store",
             dest="service_type",
-            default="CCF"
+            default="CCF",
         )
         parser.add_argument("--wait-forever", help="Wait forever", action="store_true")
 

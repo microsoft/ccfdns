@@ -1,7 +1,6 @@
 import base64
 import requests
 import sys
-import time
 
 import acme
 import acme.client

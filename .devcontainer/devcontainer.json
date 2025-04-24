@@ -3,10 +3,7 @@
   "dockerFile": "Dockerfile",
   "customizations": {
     "vscode": {
-      "extensions": [
-        "ms-vscode.cpptools",
-        "vsls-contrib.codetour"
-      ]    
+      "extensions": ["ms-vscode.cpptools", "vsls-contrib.codetour"]
     }
   },
   "features": {
@@ -19,6 +16,7 @@
   "runArgs": [
     "--device=/dev/sgx_enclave",
     "--device=/dev/sgx_provision",
-    "--network", "host"
+    "--network",
+    "host"
   ]
 }
