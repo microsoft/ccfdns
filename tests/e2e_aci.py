@@ -1,14 +1,12 @@
 # Copyright (c) Microsoft Corporation. All rights reserved.
 # Licensed under the Apache 2.0 License.
 
-import os
 import glob
 import time
 import http
 import base64
 import socket
 import requests
-import json
 
 from cryptography import x509
 from cryptography.x509.oid import NameOID
@@ -24,7 +22,6 @@ import infra.health_watcher
 
 import adns_service
 from adns_service import aDNSConfig, ServiceCAConfig
-import pebble
 
 import dns
 import dns.message
@@ -100,13 +97,18 @@ def gen_csr(domain, key):
         x509.CertificateSigningRequestBuilder()
         .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, domain)]))
         .add_extension(
-            x509.SubjectAlternativeName([
-                x509.DNSName(domain),
-                # Add SANs here
-            ]), critical=False)
+            x509.SubjectAlternativeName(
+                [
+                    x509.DNSName(domain),
+                    # Add SANs here
+                ]
+            ),
+            critical=False,
+        )
         .sign(key, hashes.SHA256())
     )
     return csr
+
 
 def submit_service_registration(
     client, origin, name, address, port, protocol, service_key, service_type
@@ -124,7 +126,9 @@ def submit_service_registration(
     r = client.post(
         "/app/register-service",
         {
-            "csr": base64.b64encode(csr.public_bytes(serialization.Encoding.DER)).decode(),
+            "csr": base64.b64encode(
+                csr.public_bytes(serialization.Encoding.DER)
+            ).decode(),
             # Don't understand why this is in RegistrationRequest
             # This is delegation only for delegated SOA...
             "contact": ["antdl@microsoft.com"],
@@ -135,26 +139,27 @@ def submit_service_registration(
                         "name": name,
                         "ip": address,
                         "protocol": protocol,
-                        "port": port
+                        "port": port,
                     },
-                    "attestation": demo_attestation_aci
+                    "attestation": demo_attestation_aci,
                 }
-            }
+            },
         },
     )
     assert r.status_code == http.HTTPStatus.NO_CONTENT
     return r
 
+
 def get_service_certificate(client, name):
     """Get certificate for the service"""
-    
+
     print("Waiting for service certificate issuance...")
     time.sleep(10)
-    
-    r = client.post("/app/get-certificate", {"service_dns_name": name })
+
+    r = client.post("/app/get-certificate", {"service_dns_name": name})
     print("Client certificate", r)
-    
-    
+
+
 def check_record(host, port, ca, name, stype, expected_data=None):
     """Checks for existence of a specific DNS record"""
     qname = dns.name.from_text(name)
@@ -268,6 +273,7 @@ def test_basic(network, args):
         ds_rrs = get_records(host, port, ca, name, "DS", None)
         assert len(ds_rrs.answer) == 0
 
+
 def test_eat(network, args):
     """Basic tests"""
     primary, _ = network.find_primary()
@@ -278,25 +284,28 @@ def test_eat(network, args):
         ca = primary.session_ca()["ca"]
 
         print("Create two issuer keys")
-        client.post("/eat-create-signing-key",{ "alg": "Secp384R1" })
-        client.post("/eat-create-signing-key",{ "alg": "Secp384R1" })
+        client.post("/eat-create-signing-key", {"alg": "Secp384R1"})
+        client.post("/eat-create-signing-key", {"alg": "Secp384R1"})
 
         print("OpenID Discovery")
-        client.get("/common/v2.0/.well-known/openid-configuration",{})
+        client.get("/common/v2.0/.well-known/openid-configuration", {})
 
         print("Key Discovery")
-        jwks = client.get("/common/discovery/v2.0/keys",{}).body.json()
+        jwks = client.get("/common/discovery/v2.0/keys", {}).body.json()
         print(f"JWKS: {jwks}")
 
         print("Token Issuance")
         service_name = "test.adns.ccf.dev."
-        token = client.get("/common/oauth2/v2.0/token?service_name=" + service_name,{}).body.text()
+        token = client.get(
+            "/common/oauth2/v2.0/token?service_name=" + service_name, {}
+        ).body.text()
         print(f"Token: {token} {type(token)}")
 
         """
         TODO: validate token 
         https://jwt.io/ displays the expected header and payload, but the signature seems invalid
         """
+
 
 def test_service_reg(network, args):
     """Service registration tests"""
@@ -316,7 +325,14 @@ def test_service_reg(network, args):
         service_key = ec.generate_private_key(ec.SECP384R1(), default_backend())
 
         submit_service_registration(
-            client, origin, service_name, "127.0.0.1", port, "tcp", service_key, args.service_type
+            client,
+            origin,
+            service_name,
+            "127.0.0.1",
+            port,
+            "tcp",
+            service_key,
+            args.service_type,
         )
 
         print("Checking record is installed")
@@ -326,7 +342,8 @@ def test_service_reg(network, args):
 
         print("Fetching service certificate")
         get_service_certificate(service_name)
-        
+
+
 def run(args):
     """Run tests"""
     adns_nw = adns_endorsed_certs = None
@@ -347,6 +364,7 @@ def run(args):
     if not adns_nw:
         raise Exception("Failed to start aDNS network")
 
+
 def main():
     """Entry point"""
 
@@ -359,7 +377,7 @@ def main():
             help="Type of service",
             action="store",
             dest="service_type",
-            default="CCF"
+            default="CCF",
         )
 
     targs = infra.e2e_args.cli_args(cliparser)
@@ -370,14 +388,14 @@ def main():
     s.close()
 
     print("Bringing up network on {}", my_ip)
-    
+
     targs.nodes = infra.e2e_args.min_nodes(targs, f=0)
     targs.node_addresses = [
         (
             "local://0.0.0.0:1443",  # primary/internal
             "local://0.0.0.0:8443",  # external/endorsed
             "ns1.acidns10.attested.name",  # public name
-            "20.160.110.47", # public IP
+            "20.160.110.47",  # public IP
         )
     ]
     targs.constitution = glob.glob("../tests/constitution/*")
@@ -437,6 +455,7 @@ def main():
     )
 
     run(targs)
+
 
 if __name__ == "__main__":
     main()

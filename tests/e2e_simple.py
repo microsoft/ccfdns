@@ -8,7 +8,6 @@ import http
 import base64
 import socket
 import requests
-import json
 
 from cryptography import x509
 from cryptography.x509.oid import NameOID
@@ -100,13 +99,18 @@ def gen_csr(domain, key):
         x509.CertificateSigningRequestBuilder()
         .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, domain)]))
         .add_extension(
-            x509.SubjectAlternativeName([
-                x509.DNSName(domain),
-                # Add SANs here
-            ]), critical=False)
+            x509.SubjectAlternativeName(
+                [
+                    x509.DNSName(domain),
+                    # Add SANs here
+                ]
+            ),
+            critical=False,
+        )
         .sign(key, hashes.SHA256())
     )
     return csr
+
 
 def submit_service_registration(
     client, origin, name, address, port, protocol, service_key, service_type
@@ -128,17 +132,19 @@ def submit_service_registration(
     csr = gen_csr(name, service_key)
 
     # For TLSA record - this is redundant with CSR, server should compute this
-    #public_pem = service_key.public_key().public_bytes(
+    # public_pem = service_key.public_key().public_bytes(
     #    encoding=serialization.Encoding.PEM,
     #    format=serialization.PublicFormat.SubjectPublicKeyInfo,
-    #)
+    # )
 
     attestation = demo_attestation if service_type != "ACI" else demo_attestation_aci
 
     r = client.post(
         "/app/register-service",
         {
-            "csr": base64.b64encode(csr.public_bytes(serialization.Encoding.DER)).decode(),
+            "csr": base64.b64encode(
+                csr.public_bytes(serialization.Encoding.DER)
+            ).decode(),
             # Don't understand why this is in RegistrationRequest
             # This is delegation only for delegated SOA...
             "contact": ["antdl@microsoft.com"],
@@ -149,15 +155,16 @@ def submit_service_registration(
                         "name": name,
                         "ip": address,
                         "protocol": protocol,
-                        "port": port
+                        "port": port,
                     },
-                    "attestation": attestation
+                    "attestation": attestation,
                 }
-            }
+            },
         },
     )
     assert r.status_code == http.HTTPStatus.NO_CONTENT
     return r
+
 
 def check_record(host, port, ca, name, stype, expected_data=None):
     """Checks for existence of a specific DNS record"""
@@ -272,6 +279,7 @@ def test_basic(network, args):
         ds_rrs = get_records(host, port, ca, name, "DS", None)
         assert len(ds_rrs.answer) == 0
 
+
 def test_eat(network, args):
     """Basic tests"""
     primary, _ = network.find_primary()
@@ -282,25 +290,28 @@ def test_eat(network, args):
         ca = primary.session_ca()["ca"]
 
         print("Create two issuer keys")
-        client.post("/eat-create-signing-key",{ "alg": "Secp384R1" })
-        client.post("/eat-create-signing-key",{ "alg": "Secp384R1" })
+        client.post("/eat-create-signing-key", {"alg": "Secp384R1"})
+        client.post("/eat-create-signing-key", {"alg": "Secp384R1"})
 
         print("OpenID Discovery")
-        client.get("/common/v2.0/.well-known/openid-configuration",{})
+        client.get("/common/v2.0/.well-known/openid-configuration", {})
 
         print("Key Discovery")
-        jwks = client.get("/common/discovery/v2.0/keys",{}).body.json()
+        jwks = client.get("/common/discovery/v2.0/keys", {}).body.json()
         print(f"JWKS: {jwks}")
 
         print("Token Issuance")
         service_name = "test.adns.ccf.dev."
-        token = client.get("/common/oauth2/v2.0/token?service_name=" + service_name,{}).body.text()
+        token = client.get(
+            "/common/oauth2/v2.0/token?service_name=" + service_name, {}
+        ).body.text()
         print(f"Token: {token} {type(token)}")
 
         """
         TODO: validate token 
         https://jwt.io/ displays the expected header and payload, but the signature seems invalid
         """
+
 
 def test_service_reg(network, args):
     """Service registration tests"""
@@ -319,7 +330,14 @@ def test_service_reg(network, args):
         service_key = ec.generate_private_key(ec.SECP384R1(), default_backend())
 
         submit_service_registration(
-            client, origin, service_name, "127.0.0.1", port, "tcp", service_key, args.service_type
+            client,
+            origin,
+            service_name,
+            "127.0.0.1",
+            port,
+            "tcp",
+            service_key,
+            args.service_type,
         )
 
         print("Checking record is installed")
@@ -349,8 +367,8 @@ def run(args):
         procs += [pebble_proc]
         while not os.path.exists(pebble_args.ca_cert_filename):
             time.sleep(0.2)
-        #ca_certs = pebble.ca_certs(pebble_args.mgmt_address)
-        #ca_certs += pebble.ca_certs_from_file(pebble_args.ca_cert_filename)
+        # ca_certs = pebble.ca_certs(pebble_args.mgmt_address)
+        # ca_certs += pebble.ca_certs_from_file(pebble_args.ca_cert_filename)
         ca_certs = pebble.ca_certs_from_file("pebble-root.pem")
         args.adns.service_ca.ca_certificates += ca_certs
         args.ca_certs += ca_certs
@@ -369,13 +387,13 @@ def run(args):
         if not adns_nw:
             raise Exception("Failed to start aDNS network")
 
-        #test_basic(adns_nw, args)
-        #set_registration_policy(adns_nw, args)
+        # test_basic(adns_nw, args)
+        # set_registration_policy(adns_nw, args)
         test_service_reg(adns_nw, args)
         test_eat(adns_nw, args)
-        #print("Waiting forever...")
+        # print("Waiting forever...")
         time.sleep(5)
-        #while True:
+        # while True:
         #    pass
     finally:
         for p in procs:
@@ -395,7 +413,7 @@ def main():
             help="Type of service",
             action="store",
             dest="service_type",
-            default="CCF"
+            default="CCF",
         )
 
     targs = infra.e2e_args.cli_args(cliparser)
@@ -411,7 +429,7 @@ def main():
             "local://127.0.0.1:1443",  # primary/internal
             "local://127.0.0.1:8443",  # external/endorsed
             "ns1.adns.ccf.dev",  # public name
-            my_ip, # public IP
+            my_ip,  # public IP
         )
     ]
     targs.constitution = glob.glob("../tests/constitution/*")
@@ -439,9 +457,7 @@ def main():
     )
 
     service_ca_config = ServiceCAConfig(
-        name="pebble-dns",
-        directory="https://127.0.0.1:1024/dir",
-        ca_certificates=[]
+        name="pebble-dns", directory="https://127.0.0.1:1024/dir", ca_certificates=[]
     )
 
     targs.ca_certs = []
@@ -477,6 +493,7 @@ def main():
     )
 
     run(targs)
+
 
 if __name__ == "__main__":
     main()

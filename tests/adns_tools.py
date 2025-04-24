@@ -3,7 +3,6 @@
 
 import http
 import time
-import json
 import requests
 import tempfile
 

@@ -40,3 +40,6 @@ build
 build_*
 vbuild*
 logs
+node_modules
+env/
+scripts/env

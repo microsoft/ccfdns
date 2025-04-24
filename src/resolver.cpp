@@ -1283,9 +1283,8 @@ namespace aDNS
       params_rrs = find_records(origin, origin, QType::NSEC3PARAM, class_);
 
       if (params_rrs.empty())
-        throw std::runtime_error(
-          fmt::format(
-            "failed to add NSEC3PARAM record for {}", std::string(origin)));
+        throw std::runtime_error(fmt::format(
+          "failed to add NSEC3PARAM record for {}", std::string(origin)));
     }
 
     return RFC5155::NSEC3PARAM(params_rrs.begin()->rdata).salt;
@@ -1378,10 +1377,9 @@ namespace aDNS
     for (const auto& [id, addr] : cfg.node_addresses)
     {
       if (!addr.name.ends_with(cfg.origin))
-        throw std::runtime_error(
-          fmt::format(
-            "invalid node name; '{}' is outside the zone",
-            std::string(addr.name)));
+        throw std::runtime_error(fmt::format(
+          "invalid node name; '{}' is outside the zone",
+          std::string(addr.name)));
 
       add(
         cfg.origin,
@@ -1615,11 +1613,10 @@ namespace aDNS
         protocol_port_same_forall = false;
 
       if (!name.ends_with(service_name))
-        throw std::runtime_error(
-          fmt::format(
-            "node name '{}' outside of service sub-zone '{}'",
-            std::string(name),
-            std::string(service_name)));
+        throw std::runtime_error(fmt::format(
+          "node name '{}' outside of service sub-zone '{}'",
+          std::string(name),
+          std::string(service_name)));
 
       add(
         origin,

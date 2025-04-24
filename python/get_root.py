@@ -5,4 +5,3 @@ response = requests.get(url, verify=False)
 
 with open("pebble_root.pem", "wb") as file:
     file.write(response.content)
-

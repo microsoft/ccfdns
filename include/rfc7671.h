@@ -7,9 +7,9 @@
 
 #include <ccf/ds/hex.h>
 
-// The DNS-Based Authentication of Named Entities (DANE) Protocol: Updates and Operational Guidance
-// https://www.rfc-editor.org/rfc/rfc7671
-// based on https://www.rfc-editor.org/rfc/rfc6698
+// The DNS-Based Authentication of Named Entities (DANE) Protocol: Updates and
+// Operational Guidance https://www.rfc-editor.org/rfc/rfc7671 based on
+// https://www.rfc-editor.org/rfc/rfc6698
 namespace RFC7671
 {
   enum class Type
