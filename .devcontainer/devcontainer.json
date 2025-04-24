@@ -14,8 +14,6 @@
   },
   "privileged": true,
   "runArgs": [
-    "--device=/dev/sgx_enclave",
-    "--device=/dev/sgx_provision",
     "--network",
     "host"
   ]
