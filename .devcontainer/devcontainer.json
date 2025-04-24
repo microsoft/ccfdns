@@ -13,8 +13,5 @@
     "ghcr.io/devcontainers/features/python:1": {}
   },
   "privileged": true,
-  "runArgs": [
-    "--network",
-    "host"
-  ]
+  "runArgs": ["--network", "host"]
 }
