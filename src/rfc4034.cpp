@@ -10,6 +10,7 @@
 #include "rfc5155.h"
 
 #include <cassert>
+#include <ccf/crypto/ecdsa.h>
 #include <ccf/crypto/hash_provider.h>
 #include <ccf/crypto/key_pair.h>
 #include <ccf/crypto/openssl/openssl_wrappers.h>
@@ -378,29 +379,9 @@ namespace RFC4034
     if (r.size() != s.size())
       throw std::runtime_error("incompatible signature coordinates");
 
-    Unique_BIGNUM rb, sb;
-    if (little_endian)
-    {
-      CHECKNULL(BN_lebin2bn(r.data(), r.size(), rb));
-      CHECKNULL(BN_lebin2bn(s.data(), s.size(), sb));
-    }
-    else
-    {
-      CHECKNULL(BN_bin2bn(r.data(), r.size(), rb));
-      CHECKNULL(BN_bin2bn(s.data(), s.size(), sb));
-    }
-
-    Unique_ECDSA_SIG sig;
-    CHECK1(ECDSA_SIG_set0(sig, rb, sb));
-
-    int der_size = i2d_ECDSA_SIG(sig, NULL);
-    CHECK0(der_size);
-    if (der_size < 0)
-      throw std::runtime_error("not an ECDSA signature");
-    std::vector<uint8_t> res(der_size);
-    auto der_sig_buf = res.data();
-    CHECK0(i2d_ECDSA_SIG(sig, &der_sig_buf));
-    return res;
+    const bool big_endian = !little_endian;
+    return ccf::crypto::ecdsa_sig_from_r_s(
+      r.data(), r.size(), s.data(), s.size(), big_endian);
   }
 
   inline std::vector<uint8_t> convert_signature_to_der(
