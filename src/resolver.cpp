@@ -41,6 +41,7 @@
 #include <openssl/ossl_typ.h>
 #include <openssl/param_build.h>
 #include <openssl/pem.h>
+#include <openssl/types.h>
 #include <openssl/x509.h>
 #include <openssl/x509v3.h>
 #include <set>
@@ -50,6 +51,19 @@
 #include <unordered_set>
 
 using namespace RFC1035;
+
+namespace ccf::crypto::OpenSSL
+{
+  // TODO impl this in CCF crypto interface
+  struct Unique_X509_REQ_DER
+    : public Unique_SSL_OBJECT<X509_REQ, X509_REQ_new, X509_REQ_free>
+  {
+    using Unique_SSL_OBJECT::Unique_SSL_OBJECT;
+    Unique_X509_REQ_DER(BIO* mem) :
+      Unique_SSL_OBJECT(d2i_X509_REQ_bio(mem, NULL), X509_REQ_free)
+    {}
+  };
+}
 
 namespace aDNS
 {
@@ -1549,6 +1563,25 @@ namespace aDNS
       fmt::format("no suitable zone found for {}", std::string(name)));
   }
 
+  namespace
+  {
+    // TODO needs cleanup and wrappers to avoid memleaks (in CCF?..)
+    std::string get_common_name(const X509_NAME* name)
+    {
+      std::string r;
+      int i = X509_NAME_get_index_by_NID(name, NID_commonName, -1);
+      while (i != -1)
+      {
+        X509_NAME_ENTRY* entry = X509_NAME_get_entry(name, i);
+        ASN1_STRING* entry_string = X509_NAME_ENTRY_get_data(entry);
+        r += std::string(r.size() == 0 ? "" : " ") +
+          (char*)ASN1_STRING_get0_data(entry_string);
+        i = X509_NAME_get_index_by_NID(name, NID_commonName, i);
+      }
+      return r;
+    }
+  }
+
   void Resolver::register_service(const RegistrationRequest& rr)
   {
     using namespace RFC7671;
@@ -1560,14 +1593,16 @@ namespace aDNS
 
     std::string csrtxt(rr.csr.begin(), rr.csr.end());
     CCF_APP_INFO("ADNS: Importing CSR: {}", csrtxt);
-    ccf::crypto::OpenSSL::Unique_BIO mem(ccf::crypto::Pem(rr.csr));
-    ccf::crypto::OpenSSL::Unique_X509_REQ req(mem);
+    ccf::crypto::OpenSSL::Unique_BIO mem(rr.csr.data(), rr.csr.size());
+    ccf::crypto::OpenSSL::Unique_X509_REQ_DER req(mem);
 
     auto public_key = X509_REQ_get0_pubkey(req);
     ccf::crypto::OpenSSL::CHECK1(X509_REQ_verify(req, public_key));
 
-    auto subject_name = ccf::crypto::get_subject_name(ccf::crypto::Pem(rr.csr));
-    Name service_name(subject_name);
+    auto subject_name = X509_REQ_get_subject_name(req);
+    ccf::crypto::OpenSSL::CHECKNULL(subject_name);
+    auto common_name = get_common_name(subject_name);
+    Name service_name(common_name);
 
     if (!service_name.is_absolute())
       service_name += std::vector<Label>{Label()};
@@ -1775,16 +1810,19 @@ namespace aDNS
     auto origin =
       find_zone(dr.subdomain); // how does it return the new subzone??
 
-    ccf::crypto::OpenSSL::Unique_BIO mem(ccf::crypto::Pem(dr.csr));
-    ccf::crypto::OpenSSL::Unique_X509_REQ req(mem);
+    ccf::crypto::OpenSSL::Unique_BIO mem(dr.csr.data(), dr.csr.size());
+    ccf::crypto::OpenSSL::Unique_X509_REQ_DER req(mem);
 
     auto public_key = X509_REQ_get0_pubkey(req);
     ccf::crypto::OpenSSL::CHECK1(X509_REQ_verify(req, public_key));
 
-    auto subject_name = ccf::crypto::get_subject_name(ccf::crypto::Pem(dr.csr));
-    Name service_name(subject_name);
+    auto subject_name = X509_REQ_get_subject_name(req);
+    ccf::crypto::OpenSSL::CHECKNULL(subject_name);
+    auto common_name = get_common_name(subject_name);
 
-    Name name(subject_name);
+    Name service_name(common_name);
+
+    Name name(common_name);
     // this is the delegate DNS name
 
     if (!name.is_absolute())
