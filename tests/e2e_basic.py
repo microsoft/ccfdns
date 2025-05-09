@@ -50,7 +50,7 @@ def add_record(client, origin, name, stype, rdata_obj):
             },
         },
     )
-    printf(response={r})
+    print(response={r})
     assert r.status_code == http.HTTPStatus.NO_CONTENT
     return r
 
@@ -274,39 +274,6 @@ def test_basic(network, args):
         assert len(ds_rrs.answer) == 0
 
 
-def test_eat(network, args):
-    """Basic tests"""
-    primary, _ = network.find_primary()
-
-    with primary.client(identity="member0") as client:
-        host = primary.get_public_rpc_host()
-        port = primary.get_public_rpc_port()
-        ca = primary.session_ca()["ca"]
-
-        print("Create two issuer keys")
-        client.post("/eat-create-signing-key", {"alg": "Secp384R1"})
-        client.post("/eat-create-signing-key", {"alg": "Secp384R1"})
-
-        print("OpenID Discovery")
-        client.get("/common/v2.0/.well-known/openid-configuration", {})
-
-        print("Key Discovery")
-        jwks = client.get("/common/discovery/v2.0/keys", {}).body.json()
-        print(f"JWKS: {jwks}")
-
-        print("Token Issuance")
-        service_name = "test.adns.ccf.dev."
-        token = client.get(
-            "/common/oauth2/v2.0/token?service_name=" + service_name, {}
-        ).body.text()
-        print(f"Token: {token} {type(token)}")
-
-        """
-        TODO: validate token 
-        https://jwt.io/ displays the expected header and payload, but the signature seems invalid
-        """
-
-
 def test_service_reg(network, args):
     """Service registration tests"""
     primary, _ = network.find_primary()
@@ -360,6 +327,7 @@ def run(args):
     time.sleep(3)
 
     test_service_reg(adns_nw, args)
+    test_basic(adns_nw, args)
 
     if not adns_nw:
         raise Exception("Failed to start aDNS network")
@@ -402,7 +370,7 @@ def main():
     targs.package = "libccfdns.virtual.so"
     targs.acme_config_name = "custom"
 
-    targs.wait_forever = True
+    targs.wait_forever = False
     targs.http2 = False
     targs.initial_node_cert_validity_days = 365
     targs.initial_service_cert_validity_days = 365
