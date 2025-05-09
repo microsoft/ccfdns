@@ -399,7 +399,7 @@ def main():
         )
     ]
     targs.constitution = glob.glob("../tests/constitution/*")
-    targs.package = "libccfdns.enclave.so.signed"
+    targs.package = "libccfdns.virtual.so"
     targs.acme_config_name = "custom"
 
     targs.wait_forever = True

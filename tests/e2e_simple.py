@@ -390,7 +390,7 @@ def run(args):
         # test_basic(adns_nw, args)
         # set_registration_policy(adns_nw, args)
         test_service_reg(adns_nw, args)
-        test_eat(adns_nw, args)
+        # test_eat(adns_nw, args)
         # print("Waiting forever...")
         time.sleep(5)
         # while True:
