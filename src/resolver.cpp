@@ -25,6 +25,11 @@
 #include <ccf/crypto/sha256_hash.h>
 #include <ccf/crypto/verifier.h>
 #include <ccf/ds/logger.h>
+#include <ccf/ds/quote_info.h>
+#include <ccf/pal/attestation.h>
+#include <ccf/pal/attestation_sev_snp.h>
+#include <ccf/pal/measurement.h>
+#include <ccf/pal/report_data.h>
 #include <cctype>
 #include <chrono>
 #include <cstddef>
@@ -1618,10 +1623,58 @@ namespace aDNS
       std::string(origin));
     save_service_registration_request(service_name, rr);
 
-    bool policy_ok = false;
+    bool policy_ok = true;
 
     // TODO attestation check
-    policy_ok = true;
+    for (const auto& [id, info] : rr.node_information)
+    {
+      // Assume the attestation string is a JSON object
+      // with "evidence", "endorsements" and "uvm_endorsements" base64-encoded
+      // fields
+      auto attestation = nlohmann::json::parse(info.attestation);
+      auto evidence = attestation["evidence"].get<std::string>();
+      auto endorsements = attestation["endorsements"].get<std::string>();
+      // auto uvm_endorsements =
+      // attestation["uvm_endorsements"].get<std::string>();
+
+      ccf::pal::PlatformAttestationMeasurement measurement = {};
+      ccf::pal::PlatformAttestationReportData report_data = {};
+      ccf::QuoteInfo quote_info = {};
+      quote_info.format = ccf::QuoteFormat::amd_sev_snp_v1;
+      quote_info.quote = ccf::crypto::raw_from_b64(evidence);
+      quote_info.endorsements = ccf::crypto::raw_from_b64(endorsements);
+      // auto uvm_endorsements_raw =
+      //  ccf::crypto::raw_from_b64(uvm_endorsements);
+      // ccf::UVMEndorsements uvm_endorsements_descriptor = {};
+      try
+      {
+        ccf::pal::verify_snp_attestation_report(
+          quote_info, measurement, report_data);
+        // TODO: this is not exposed by CCF publicly yet
+        // uvm_endorsements_descriptor =
+        // ccf::verify_uvm_endorsements(uvm_endorsements_raw, measurement, {},
+        // false /* Do not authz the descriptor, the policy will take care of
+        // that */);
+      }
+      catch (const std::exception& e)
+      {
+        CCF_APP_FAIL(
+          "ADNS: Failed to verify attestation report for {} : {}",
+          id,
+          e.what());
+        policy_ok = false;
+      }
+      auto parsed_attestation =
+        *reinterpret_cast<const ccf::pal::snp::Attestation*>(
+          quote_info.quote.data());
+      // TODO Create a report with
+      // - parsed_attestation.host_data
+      // - uvm_endorsements_descriptor
+      // - ...
+      // and present it to the policy engine
+      // TODO check binding between report_data and the node key, or push that
+      // to the policy as was done in the sgx impl?
+    }
 
     if (!policy_ok)
       throw std::runtime_error("service registration policy evaluation failed");
