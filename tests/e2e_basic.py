@@ -150,16 +150,6 @@ def submit_service_registration(
     return r
 
 
-def get_service_certificate(client, name):
-    """Get certificate for the service"""
-
-    print("Waiting for service certificate issuance...")
-    time.sleep(10)
-
-    r = client.post("/app/get-certificate", {"service_dns_name": name})
-    print("Client certificate", r)
-
-
 def check_record(host, port, ca, name, stype, expected_data=None):
     """Checks for existence of a specific DNS record"""
     qname = dns.name.from_text(name)
@@ -306,9 +296,6 @@ def test_service_reg(network, args):
         check_record(host, port, ca, service_name, "A", A("127.0.0.1"))
         r = get_records(host, port, ca, service_name, "A", keys)
         print(r)
-
-        print("Fetching service certificate")
-        get_service_certificate(service_name)
 
 
 def run(args):

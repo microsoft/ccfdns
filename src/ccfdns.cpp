@@ -257,220 +257,6 @@ namespace ccfdns
     std::shared_ptr<ccf::ACMESubsystemInterface> acme_ss;
   };
 
-  class ACMEClient : public ACME::Client,
-                     public std::enable_shared_from_this<ACMEClient>
-  {
-  public:
-    ACMEClient(
-      Resolver& resolver,
-      const std::string& origin,
-      const ACME::ClientConfig& config,
-      const std::vector<uint8_t>& service_csr,
-      const std::string& node_address,
-      std::shared_ptr<ccf::ACMESubsystemInterface> acme_ss,
-      std::shared_ptr<ccf::crypto::KeyPair> account_key_pair = nullptr) :
-      ACME::Client(config, account_key_pair),
-      acme_ss(acme_ss),
-      http_client(acme_ss),
-      resolver(resolver),
-      node_address(node_address),
-      origin(origin),
-      service_csr(service_csr)
-    {}
-
-    virtual ~ACMEClient() = default;
-
-    void reconfigure(
-      const std::string& origin_,
-      const ACME::ClientConfig& config_,
-      const std::vector<uint8_t>& service_csr_,
-      const std::string& node_address_,
-      std::shared_ptr<ccf::ACMESubsystemInterface> acme_ss_,
-      std::shared_ptr<ccf::crypto::KeyPair> account_key_pair_ = nullptr)
-    {
-      this->origin = origin_;
-      this->service_csr = service_csr_;
-      this->node_address = node_address_;
-      this->acme_ss = acme_ss_;
-
-      this->config = config_;
-      this->account_key_pair = account_key_pair_;
-
-      active_orders.clear();
-      this->challenges_todo.clear();
-      num_failed_attempts = 0;
-    }
-
-    static std::string key_authorization_digest(
-      const std::string& token, const std::string& response)
-    {
-      auto key_authorization = token + "." + response;
-      auto digest = ccf::crypto::sha256(
-        (uint8_t*)key_authorization.data(), key_authorization.size());
-      return ccf::crypto::b64url_from_raw(
-        (uint8_t*)digest.data(), digest.size(), false);
-    }
-
-    virtual void on_challenge(
-      const std::string& token, const std::string& response) override
-    {
-      auto sn = config.service_dns_name;
-      CCF_APP_DEBUG("CCFDNS: ACME: on_challenge for {}", sn);
-
-      auto digest_b64 = key_authorization_digest(token, response);
-
-      std::vector<Name> sans;
-      for (const auto& n : config.alternative_names)
-        sans.push_back(n + ".");
-
-      {
-        std::lock_guard<std::mutex> lock(challenges_todo_mtx);
-        challenges_todo[sn].insert(token);
-      }
-
-      acme_ss->make_http_request(
-        "POST",
-        node_address + "/app/internal/install-acme-response",
-        {},
-        to_json_bytes(InstallACMEResponse::In{
-          origin, config.service_dns_name + ".", sans, digest_b64}),
-        [this, sn, token, sz = sans.size()](
-          const ccf::http_status& http_status,
-          const ccf::http::HeaderMap& headers,
-          const std::vector<uint8_t>& body) {
-          if (
-            http_status == HTTP_STATUS_OK ||
-            http_status == HTTP_STATUS_NO_CONTENT)
-          {
-            std::lock_guard<std::mutex> lock(challenges_todo_mtx);
-            auto it = challenges_todo.find(sn);
-            if (it == challenges_todo.end() || it->second.size() >= sz)
-            {
-              struct StartChallengeMsg
-              {
-                StartChallengeMsg(
-                  std::shared_ptr<ACMEClient> client, const std::string& sn) :
-                  client(client),
-                  sn(sn)
-                {}
-                std::shared_ptr<ACMEClient> client;
-                std::string sn;
-              };
-
-              auto msg = std::make_unique<threading::Tmsg<StartChallengeMsg>>(
-                [](std::unique_ptr<threading::Tmsg<StartChallengeMsg>> msg) {
-                  auto client = msg->data.client;
-                  std::lock_guard<std::mutex> lock(client->challenges_todo_mtx);
-                  auto it = client->challenges_todo.find(msg->data.sn);
-                  for (auto& t : it->second)
-                    client->start_challenge(t);
-                },
-                shared_from_this(),
-                sn);
-
-              threading::ThreadMessaging::instance().add_task_after(
-                std::move(msg), std::chrono::seconds(3));
-            }
-          }
-          else
-          {
-            std::string sbody(body.begin(), body.end());
-            CCF_APP_FAIL(
-              "CCFDNS: ACME: error http_status={} body:\n{}",
-              http_status,
-              sbody);
-          }
-          return true;
-        },
-        config.ca_certs,
-        "HTTP1",
-        true);
-    }
-
-    virtual void on_challenge_finished(const std::string& token) override
-    {
-      CCF_APP_DEBUG("CCFDNS: ACME: on_challenge_finished");
-
-      {
-        std::lock_guard<std::mutex> lock(challenges_todo_mtx);
-        auto it = challenges_todo.find(config.service_dns_name);
-        if (it != challenges_todo.end())
-          it->second.erase(token);
-      }
-
-      return; // TODO: Remove
-
-      acme_ss->make_http_request(
-        "POST",
-        node_address + "/app/internal/remove-acme-response",
-        {},
-        to_json_bytes(
-          RemoveACMEToken::In{origin, config.service_dns_name + "."}),
-        [](
-          const ccf::http_status& http_status,
-          const ccf::http::HeaderMap&,
-          const std::vector<uint8_t>&) { return true; },
-        config.ca_certs,
-        "HTTP1",
-        true);
-    }
-
-    virtual void on_certificate(const std::string& certificate) override
-    {
-      CCF_APP_DEBUG("CCFDNS: ACME: on_certificate");
-
-      acme_ss->make_http_request(
-        "POST",
-        node_address + "/app/internal/set-certificate",
-        {},
-        to_json_bytes(SetCertificate::In{config.service_dns_name, certificate}),
-        [](
-          const ccf::http_status& http_status,
-          const ccf::http::HeaderMap&,
-          const std::vector<uint8_t>&) { return true; },
-        config.ca_certs,
-        "HTTP1",
-        true);
-    }
-
-    virtual std::vector<uint8_t> get_service_csr() override
-    {
-      return service_csr;
-    }
-
-    virtual void on_http_request(
-      const http::URL& url,
-      http::Request&& req,
-      std::function<
-        bool(ccf::http_status, ccf::http::HeaderMap&&, std::vector<uint8_t>&&)>
-        callback) override
-    {
-      std::string method = req.get_method() == HTTP_GET ? "GET" : "POST";
-      std::string body(
-        req.get_content_data(),
-        req.get_content_data() + req.get_content_length());
-      auto url_str = url.scheme + "://" + url.host + ":" + url.port + url.path;
-      ccf::http::HeaderMap headers = req.get_headers();
-      http_client.request(
-        std::move(method),
-        std::move(url_str),
-        std::move(headers),
-        std::move(body),
-        config.ca_certs,
-        callback);
-    }
-
-  private:
-    std::shared_ptr<ccf::ACMESubsystemInterface> acme_ss;
-    HTTPClient http_client;
-    Resolver& resolver;
-    std::string node_address;
-    std::string origin;
-    std::vector<uint8_t> service_csr;
-    std::map<std::string, std::set<std::string>> challenges_todo;
-    std::mutex challenges_todo_mtx;
-  };
-
   using namespace ccf::indexing::strategies;
 
   class LastWriteTxIDByKey : public VisitEachEntryInMap
@@ -521,8 +307,6 @@ namespace ccfdns
       cp_ss(cp_ss),
       http_client(acme_ss)
     {
-      acme_account_key_pair =
-        ccf::crypto::make_key_pair(ccf::crypto::CurveID::SECP384R1);
       registration_index_strategy = std::make_shared<RegistrationRequestsIndex>(
         registration_requests_table_name);
       istrats.install_strategy(registration_index_strategy);
@@ -541,9 +325,7 @@ namespace ccfdns
       for (const auto& iface : ncs.node_config.network.rpc_interfaces)
       {
         const auto& e = iface.second.endorsement;
-        if (e->authority == ccf::Authority::ACME && e->acme_configuration)
-          acme_config_name = *iface.second.endorsement->acme_configuration;
-        else if (
+        if (
           iface.second.app_protocol != "DNSTCP" &&
           iface.second.app_protocol != "DNSUDP")
           internal_node_address = "https://" + iface.second.published_address;
@@ -552,7 +334,6 @@ namespace ccfdns
 
     std::string node_id;
     std::string my_name; // Certifiable FQDN for this node of the DNS service
-    std::vector<uint8_t> my_acme_csr;
 
     // Declaring CCF Table types and names
 
@@ -1224,66 +1005,6 @@ namespace ccfdns
     using Resolver::register_delegation;
     using Resolver::register_service;
 
-    virtual void set_service_certificate(
-      const std::string& service_name,
-      const std::string& certificate_pem) override
-    {
-      check_context();
-
-      if (
-        service_name == get_configuration().origin ||
-        service_name + "." == get_configuration().origin)
-      {
-        auto tbl = rwtx().template rw<ccf::ACMECertificates>(
-          ccf::Tables::ACME_CERTIFICATES);
-        if (!tbl)
-          throw std::runtime_error("missing ACME certificate table");
-        tbl->put(acme_config_name, certificate_pem);
-      }
-      else
-      {
-        auto tbl =
-          rwtx().rw<ServiceCertificates>(service_certificates_table_name);
-        tbl->put(service_name, certificate_pem);
-        acme_clients.erase(service_name);
-      }
-    }
-
-    virtual std::string get_service_certificate(
-      const std::string& service_name) override
-    {
-      check_context();
-
-      const auto& cfg = get_configuration();
-
-      // auto priv_key = get_certificate_signing_key();
-      // auto root_cert = get_root_certificate();
-
-      if (
-        service_name == my_name || service_name == cfg.origin ||
-        service_name == my_name + "." ||
-        service_name == cfg.origin.unterminated())
-      {
-        auto t = rwtx().template rw<ccf::ACMECertificates>(
-          ccf::Tables::ACME_CERTIFICATES);
-        if (!t)
-          throw std::runtime_error("service certificate table empty");
-        auto v = t->get(acme_config_name);
-        if (!v)
-          throw std::runtime_error("service certificate not available");
-        return v->str();
-      }
-      else
-      {
-        auto tbl =
-          rotx().ro<ServiceCertificates>(service_certificates_table_name);
-        auto r = tbl->get(service_name);
-        if (!r)
-          throw std::runtime_error("no such certificate");
-        return *r;
-      }
-    }
-
     virtual std::map<std::string, NodeInfo> get_node_information() override
     {
       check_context();
@@ -1308,77 +1029,10 @@ namespace ccfdns
       return r;
     }
 
-    void start_acme_client()
-    {
-      const auto& cfg = get_configuration();
-
-      if (!cfg.parent_base_url)
-      {
-        // No parent, i.e. we are a TLD and need to get our TLS certificate
-        // directly from the CA, instead of a parent aDNS instance.
-
-        // Check the top delegation policy is set, without parent policies.
-        auto policy = delegation_policy();
-        if (policy.size() != 1)
-          throw std::runtime_error(
-            "attested TLS must have exactly one delegation policy");
-
-        auto cn = cfg.origin.unterminated();
-
-        std::vector<std::string> acme_contact;
-        for (const auto& email : cfg.contact)
-          acme_contact.push_back("mailto:" + email);
-
-        ACME::ClientConfig acme_client_config = {
-          .ca_certs = cfg.service_ca.ca_certificates,
-          .directory_url = cfg.service_ca.directory,
-          .service_dns_name = cn,
-          .alternative_names = {cn},
-          .contact = acme_contact,
-          .terms_of_service_agreed = true,
-          .challenge_type = "dns-01",
-          .not_before = std::nullopt,
-          .not_after = std::nullopt};
-
-        acme_client_config.ca_certs.push_back(nwid_ss->get()->cert.str());
-
-        std::vector<ccf::crypto::SubjectAltName> sans;
-        sans.push_back({cn, false});
-
-        for (const auto& [id, addr] : cfg.node_addresses)
-        {
-          auto name = addr.name.unterminated();
-          acme_client_config.alternative_names.push_back(name);
-          sans.push_back({name, false});
-        }
-
-        auto tls_key = get_tls_key();
-        auto csr =
-          tls_key->create_csr_der("CN=" + cn, sans, tls_key->public_key_pem());
-
-        CCF_APP_DEBUG("CCFDNS: Starting ACME client");
-
-        auto acme_client = std::make_shared<ccfdns::ACMEClient>(
-          *this,
-          cfg.origin,
-          acme_client_config,
-          csr,
-          internal_node_address,
-          acme_ss,
-          acme_account_key_pair);
-
-        CCF_APP_DEBUG("CCFDNS: ACME Get certificate");
-        acme_client->get_certificate(acme_account_key_pair);
-
-        acme_clients[cn] = acme_client;
-      }
-    }
-
     virtual RegistrationInformation configure(const Configuration& cfg) override
     {
       check_context();
       auto reginfo = Resolver::configure(cfg);
-      my_acme_csr = reginfo.csr;
 
       if (reginfo.dnskey_records)
       {
@@ -1419,7 +1073,6 @@ namespace ccfdns
       if (!cfg.parent_base_url)
       {
         create_certificate_signing_key("");
-        start_acme_client();
         CCF_APP_INFO("CCFDNS: ACME Client started");
       }
       else
@@ -1575,11 +1228,6 @@ namespace ccfdns
         throw std::runtime_error(
           "could not access delegation registration request table");
       drtbl->put(name, {dr, drtbl->get_version_of_previous_write(name)});
-    }
-
-    bool have_acme_client(const std::string& name) const
-    {
-      return acme_clients.find(name) != acme_clients.end();
     }
 
     std::string dump()
@@ -1892,60 +1540,6 @@ namespace ccfdns
       return req;
     }
 
-    virtual void generate_leaf_certificate(
-      const Name& name, const std::vector<uint8_t>& csr) override
-    {
-      std::string root_key_str = get_certificate_signing_key();
-      std::string root_cert_str = get_root_certificate();
-
-      EVP_PKEY* root_key = convertStringToEVP_PKEY(root_key_str);
-      X509* root_cert = convertStringToX509(root_cert_str);
-
-      X509_REQ* req = convertVectorToX509_REQ(csr);
-      EVP_PKEY* leaf_key = X509_REQ_get_pubkey(req);
-
-      // Create a new X509 certificate for the leaf
-      X509* leaf_cert = X509_new();
-      ASN1_INTEGER_set(X509_get_serialNumber(leaf_cert), 2);
-      X509_gmtime_adj(X509_get_notBefore(leaf_cert), 0);
-      X509_gmtime_adj(X509_get_notAfter(leaf_cert), 31536000L); // 1 year
-      X509_set_subject_name(leaf_cert, X509_REQ_get_subject_name(req));
-      X509_set_pubkey(leaf_cert, leaf_key);
-      X509_set_issuer_name(leaf_cert, X509_get_subject_name(root_cert));
-
-      // Add SANs to prevent certificate validation issues
-      X509_EXTENSION* ext;
-      X509V3_CTX san_ctx;
-      X509V3_set_ctx_nodb(&san_ctx);
-      X509V3_set_ctx(&san_ctx, leaf_cert, root_cert, nullptr, nullptr, 0);
-
-      // Include multiple DNS entries
-      ext = X509V3_EXT_conf_nid(
-        nullptr,
-        &san_ctx,
-        NID_subject_alt_name,
-        "DNS:*.acidns10.attested.name,DNS:localhost");
-      if (!ext)
-      {
-        X509_free(leaf_cert);
-        return;
-      }
-      X509_add_ext(leaf_cert, ext, -1);
-      X509_EXTENSION_free(ext);
-
-      // Sign the leaf certificate with the root private key
-      X509_sign(leaf_cert, root_key, EVP_sha256());
-
-      std::string pem_str_cert = certificate_to_pem(leaf_cert);
-      std::string service_name = name.unterminated();
-
-      CCF_APP_INFO(
-        "aDNS: Create leaf certificate while acting as root CA\n{}",
-        pem_str_cert);
-
-      set_service_certificate(service_name, pem_str_cert);
-    }
-
     std::string eat_create_signing_key(std::string alg)
     {
       try
@@ -2188,7 +1782,6 @@ namespace ccfdns
   protected:
     ccf::endpoints::CommandEndpointContext* ctx = nullptr;
     bool ctx_writable = false;
-    std::map<std::string, std::shared_ptr<ccfdns::ACMEClient>> acme_clients;
     std::mutex reply_mtx;
 
     std::shared_ptr<ccf::ACMESubsystemInterface> acme_ss;
@@ -2197,9 +1790,7 @@ namespace ccfdns
     std::shared_ptr<ccf::CustomProtocolSubsystemInterface> cp_ss;
     HTTPClient http_client;
 
-    ccf::crypto::KeyPairPtr acme_account_key_pair;
     std::string internal_node_address = "https://127.0.0.1";
-    std::string acme_config_name;
 
     std::string names_table_name(const Name& origin) const
     {
@@ -2905,58 +2496,6 @@ namespace ccfdns
         .set_forwarding_required(ccf::endpoints::ForwardingRequired::Always)
         .install();
 
-      auto install_acme_response = [this](auto& ctx, nlohmann::json&& params) {
-        try
-        {
-          ContextContext cc(ccfdns, ctx);
-          const auto in = params.get<InstallACMEResponse::In>();
-          CCF_APP_DEBUG(
-            "ADNS: install ACME response for {}: {}",
-            std::string(in.name),
-            in.key_authorization);
-          ccfdns->install_acme_response(
-            in.origin, in.name, in.alternative_names, in.key_authorization);
-          return ccf::make_success();
-        }
-        catch (std::exception& ex)
-        {
-          return ccf::make_error(
-            HTTP_STATUS_BAD_REQUEST, ccf::errors::InternalError, ex.what());
-        }
-      };
-
-      make_endpoint(
-        "/internal/install-acme-response",
-        HTTP_POST,
-        ccf::json_adapter(install_acme_response),
-        {std::make_shared<ccf::NodeCertAuthnPolicy>()})
-        .set_openapi_hidden(true)
-        .set_forwarding_required(ccf::endpoints::ForwardingRequired::Always)
-        .install();
-
-      auto remove_acme_response = [this](auto& ctx, nlohmann::json&& params) {
-        try
-        {
-          ContextContext cc(ccfdns, ctx);
-          const auto in = params.get<RemoveACMEToken::In>();
-          ccfdns->remove_acme_response(in.origin, in.name);
-          return ccf::make_success();
-        }
-        catch (std::exception& ex)
-        {
-          return ccf::make_error(
-            HTTP_STATUS_BAD_REQUEST, ccf::errors::InternalError, ex.what());
-        }
-      };
-
-      make_endpoint(
-        "/internal/remove-acme-response",
-        HTTP_POST,
-        ccf::json_adapter(remove_acme_response),
-        {std::make_shared<ccf::NodeCertAuthnPolicy>()})
-        .set_openapi_hidden(true)
-        .install();
-
       auto add = [this](auto& ctx, nlohmann::json&& params) {
         try
         {
@@ -2978,28 +2517,6 @@ namespace ccfdns
         ccf::json_adapter(add),
         {std::make_shared<ccf::MemberCertAuthnPolicy>()})
         .set_openapi_hidden(true)
-        .set_forwarding_required(ccf::endpoints::ForwardingRequired::Always)
-        .install();
-
-      auto acme_refresh = [this](auto& ctx) {
-        try
-        {
-          ContextContext cc(ccfdns, ctx);
-          ccfdns->start_acme_client();
-          return ccf::make_success();
-        }
-        catch (std::exception& ex)
-        {
-          return ccf::make_error(
-            HTTP_STATUS_BAD_REQUEST, ccf::errors::InternalError, ex.what());
-        }
-      };
-
-      make_endpoint(
-        "/acme_refresh",
-        HTTP_GET,
-        acme_refresh,
-        {std::make_shared<ccf::UserCertAuthnPolicy>()})
         .set_forwarding_required(ccf::endpoints::ForwardingRequired::Always)
         .install();
 
@@ -3124,56 +2641,6 @@ namespace ccfdns
         {std::make_shared<ccf::MemberCertAuthnPolicy>()})
         .set_auto_schema<RegisterDelegation::In, RegisterDelegation::Out>()
         .set_forwarding_required(ccf::endpoints::ForwardingRequired::Always)
-        .install();
-
-      auto set_certificate = [this](auto& ctx, nlohmann::json&& params) {
-        try
-        {
-          ContextContext cc(ccfdns, ctx);
-          const auto in = params.get<SetCertificate::In>();
-          ccfdns->set_service_certificate(in.service_dns_name, in.certificate);
-          return ccf::make_success();
-        }
-        catch (std::exception& ex)
-        {
-          return ccf::make_error(
-            HTTP_STATUS_BAD_REQUEST, ccf::errors::InternalError, ex.what());
-        }
-      };
-
-      make_endpoint(
-        "/internal/set-certificate",
-        HTTP_POST,
-        ccf::json_adapter(set_certificate),
-        {std::make_shared<ccf::NodeCertAuthnPolicy>()})
-        .set_openapi_hidden(true)
-        .set_forwarding_required(ccf::endpoints::ForwardingRequired::Always)
-        .install();
-
-      auto get_certificate = [this](auto& ctx, nlohmann::json&& params) {
-        try
-        {
-          ContextContext cc(ccfdns, ctx);
-          const auto in = params.get<GetCertificate::In>();
-          GetCertificate::Out out;
-          out.certificate =
-            ccfdns->get_service_certificate(in.service_dns_name);
-          return ccf::make_success(out);
-        }
-        catch (std::exception& ex)
-        {
-          return ccf::make_error(
-            HTTP_STATUS_BAD_REQUEST, ccf::errors::InternalError, ex.what());
-        }
-      };
-
-      make_endpoint(
-        "/get-certificate",
-        HTTP_POST,
-        ccf::json_adapter(get_certificate),
-        ccf::no_auth_required)
-        .set_auto_schema<GetCertificate::In, GetCertificate::Out>()
-        .set_forwarding_required(ccf::endpoints::ForwardingRequired::Never)
         .install();
 
       auto resign = [this](auto& ctx, nlohmann::json&& params) {
@@ -3325,32 +2792,6 @@ namespace ccfdns
         "/eat-create-signing-key",
         HTTP_POST,
         eat_create_signing_key,
-        ccf::no_auth_required)
-        .set_forwarding_required(ccf::endpoints::ForwardingRequired::Never)
-        .install();
-
-      auto create_certificate_signing_key = [this](auto& ctx) {
-        try
-        {
-          ContextContext cc(ccfdns, ctx);
-          auto body = ctx.rpc_ctx->get_request_body();
-          auto j = nlohmann::json::parse(body);
-          auto alg = j.at("alg").template get<std::string>();
-          ccfdns->create_certificate_signing_key(alg);
-          ctx.rpc_ctx->set_response_body("");
-          ctx.rpc_ctx->set_response_status(HTTP_STATUS_OK);
-        }
-        catch (std::exception& ex)
-        {
-          ctx.rpc_ctx->set_response_body(ex.what());
-          ctx.rpc_ctx->set_response_status(HTTP_STATUS_INTERNAL_SERVER_ERROR);
-        }
-      };
-
-      make_endpoint(
-        "/create-certificate-signing-key",
-        HTTP_POST,
-        create_certificate_signing_key,
         ccf::no_auth_required)
         .set_forwarding_required(ccf::endpoints::ForwardingRequired::Never)
         .install();

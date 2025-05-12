@@ -40,7 +40,7 @@ jobs:
         run: |
           set -ex
           git config --global --add safe.directory /__w/ccfdns/ccfdns
-          tdnf -y install tar npm build-essential
+          tdnf -y install tar build-essential
           ./scripts/setup-ci.sh
           ./scripts/ci-checks.sh
         shell: bash
@@ -86,4 +86,11 @@ jobs:
           cd build
           cmake -GNinja -DVIRTUAL=ON -DCMAKE_BUILD_TYPE=Debug ..
           ninja
+        shell: bash
+
+      - name: "Run tests"
+        run: |
+          set -ex
+          cd build
+          ./tests.sh -VV
         shell: bash

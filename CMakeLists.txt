@@ -82,9 +82,8 @@ if(VIRTUAL)
   set(TEST_PLATFORM_ARGS -e virtual -t virtual)
 endif()
 
-add_test(NAME e2e_basic
-         COMMAND python ../tests/e2e_basic.py -b "${CCF_PKG_DIR}/../bin"
-                 ${TEST_PLATFORM_ARGS})
+add_test(NAME e2e_basic COMMAND python ../tests/e2e_basic.py -b
+                                "${CCF_PKG_DIR}/../bin" ${TEST_PLATFORM_ARGS})
 
 function(add_unit_test name)
   add_executable(${name} ${ARGN})

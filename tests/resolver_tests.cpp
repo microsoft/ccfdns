@@ -191,10 +191,6 @@ public:
       zone_signing_keys[origin] = pem;
   }
 
-  void generate_leaf_certificate(
-    const Name& name, const std::vector<uint8_t>& csr = {}) override
-  {}
-
   virtual void show(const Name& origin) const
   {
     CCF_APP_DEBUG("Current entries at {}:", std::string(origin));
@@ -239,17 +235,6 @@ public:
     const std::string& data) const override
   {
     return true;
-  }
-
-  virtual void set_service_certificate(
-    const std::string& service_dns_name,
-    const std::string& certificate_pem) override
-  {}
-
-  virtual std::string get_service_certificate(
-    const std::string& service_dns_name) override
-  {
-    return "";
   }
 
   uint32_t get_fresh_time() override
@@ -735,12 +720,6 @@ TEST_CASE("Service registration")
   // REQUIRE(RFC4034::verify_rrsigs(r.answers, dnskey_rrs, type2str));
 
   r = s.resolve(service_name, aDNS::QType::A, aDNS::QClass::IN);
-  REQUIRE(RFC4034::verify_rrsigs(r.answers, dnskey_rrs, type2str));
-
-  s.install_acme_response(
-    cfg.origin, service_name, {}, RFC1035::TXT("sometoken"));
-  auto challenge_name = Name("_acme-challenge") + service_name;
-  r = s.resolve(challenge_name, aDNS::QType::TXT, aDNS::QClass::IN);
   REQUIRE(RFC4034::verify_rrsigs(r.answers, dnskey_rrs, type2str));
 }
 

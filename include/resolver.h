@@ -281,17 +281,6 @@ namespace aDNS
       const ccf::crypto::Pem& pem,
       bool key_signing) = 0;
 
-    virtual void generate_leaf_certificate(
-      const Name& name, const std::vector<uint8_t>& csr = {}) = 0;
-
-    virtual void install_acme_response(
-      const Name& origin,
-      const Name& name,
-      const std::vector<Name>& alternative_names,
-      const std::string& key_authorization);
-
-    virtual void remove_acme_response(const Name& origin, const Name& name);
-
     virtual void register_service(const RegistrationRequest& req);
 
     virtual std::string service_registration_policy() const = 0;
@@ -312,13 +301,6 @@ namespace aDNS
     virtual void set_configuration(const Configuration& cfg) = 0;
 
     virtual uint32_t get_fresh_time() = 0;
-
-    virtual void set_service_certificate(
-      const std::string& service_dns_name,
-      const std::string& certificate_pem) = 0;
-
-    virtual std::string get_service_certificate(
-      const std::string& service_dns_name) = 0;
 
     virtual void save_service_registration_request(
       const Name& name, const RegistrationRequest& rr) = 0;

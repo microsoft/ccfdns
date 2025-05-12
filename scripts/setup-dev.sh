@@ -6,4 +6,5 @@ set -ex
 
 tdnf -y install  \
     vim  \
-    procps
+    procps  \
+    lldb
