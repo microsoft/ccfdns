@@ -33,28 +33,6 @@ namespace ccfdns
 
   typedef AddRecord RemoveRecord;
 
-  struct InstallACMEResponse
-  {
-    struct In
-    {
-      aDNS::Name origin;
-      aDNS::Name name;
-      std::vector<aDNS::Name> alternative_names;
-      std::string key_authorization;
-    };
-    using Out = void;
-  };
-
-  struct RemoveACMEToken
-  {
-    struct In
-    {
-      aDNS::Name origin;
-      aDNS::Name name;
-    };
-    using Out = void;
-  };
-
   struct RemoveAll
   {
     struct In
