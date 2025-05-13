@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft Corporation. All rights reserved.
 # Licensed under the Apache 2.0 License.
 
-import os
 import glob
 import time
 import http
@@ -23,7 +22,6 @@ import infra.health_watcher
 
 import adns_service
 from adns_service import aDNSConfig, ServiceCAConfig
-import pebble
 
 import dns
 import dns.message
@@ -52,7 +50,7 @@ def add_record(client, origin, name, stype, rdata_obj):
             },
         },
     )
-    printf(response={r})
+    print(response={r})
     assert r.status_code == http.HTTPStatus.NO_CONTENT
     return r
 
@@ -150,16 +148,6 @@ def submit_service_registration(
     )
     assert r.status_code == http.HTTPStatus.NO_CONTENT
     return r
-
-
-def get_service_certificate(client, name):
-    """Get certificate for the service"""
-
-    print("Waiting for service certificate issuance...")
-    time.sleep(10)
-
-    r = client.post("/app/get-certificate", {"service_dns_name": name})
-    print("Client certificate", r)
 
 
 def check_record(host, port, ca, name, stype, expected_data=None):
@@ -276,39 +264,6 @@ def test_basic(network, args):
         assert len(ds_rrs.answer) == 0
 
 
-def test_eat(network, args):
-    """Basic tests"""
-    primary, _ = network.find_primary()
-
-    with primary.client(identity="member0") as client:
-        host = primary.get_public_rpc_host()
-        port = primary.get_public_rpc_port()
-        ca = primary.session_ca()["ca"]
-
-        print("Create two issuer keys")
-        client.post("/eat-create-signing-key", {"alg": "Secp384R1"})
-        client.post("/eat-create-signing-key", {"alg": "Secp384R1"})
-
-        print("OpenID Discovery")
-        client.get("/common/v2.0/.well-known/openid-configuration", {})
-
-        print("Key Discovery")
-        jwks = client.get("/common/discovery/v2.0/keys", {}).body.json()
-        print(f"JWKS: {jwks}")
-
-        print("Token Issuance")
-        service_name = "test.adns.ccf.dev."
-        token = client.get(
-            "/common/oauth2/v2.0/token?service_name=" + service_name, {}
-        ).body.text()
-        print(f"Token: {token} {type(token)}")
-
-        """
-        TODO: validate token 
-        https://jwt.io/ displays the expected header and payload, but the signature seems invalid
-        """
-
-
 def test_service_reg(network, args):
     """Service registration tests"""
     primary, _ = network.find_primary()
@@ -342,84 +297,27 @@ def test_service_reg(network, args):
         r = get_records(host, port, ca, service_name, "A", keys)
         print(r)
 
-        print("Fetching service certificate")
-        get_service_certificate(service_name)
-
-
-# def run(args):
-#     """Run tests"""
-#     adns_nw = adns_endorsed_certs = None
-
-#     adns_nw, adns_process, adns_endorsed_certs, reginfo = adns_service.run(
-#         args,
-#         wait_for_endorsed_cert=False,
-#         with_proxies=False,
-#         tcp_port=53,
-#         udp_port=53,
-#     )
-
-#     print("Service started")
-#     time.sleep(3)
-
-#     test_service_reg(adns_nw, args)
-
-#     if not adns_nw:
-#         raise Exception("Failed to start aDNS network")
-
 
 def run(args):
     """Run tests"""
     adns_nw = adns_endorsed_certs = None
-    procs = []
 
-    try:
-        pebble_args = pebble.Arguments(
-            # dns_address="10.1.0.4:53",
-            binary_filename="/usr/local/go/bin/pebble",
-            wait_forever=False,
-            http_port=8080,
-            ca_cert_filename="pebble-tls-cert.pem",
-            config_filename="pebble.config.json",
-            listen_address="0.0.0.0:1024",
-            mgmt_address="0.0.0.0:1025",
-        )
+    adns_nw, adns_process, adns_endorsed_certs, reginfo = adns_service.run(
+        args,
+        wait_for_endorsed_cert=False,
+        with_proxies=False,
+        tcp_port=53,
+        udp_port=53,
+    )
 
-        pebble_proc, _, _ = pebble.run_pebble(pebble_args)
-        procs += [pebble_proc]
-        while not os.path.exists(pebble_args.ca_cert_filename):
-            time.sleep(0.2)
-        # ca_certs = pebble.ca_certs(pebble_args.mgmt_address)
-        # ca_certs += pebble.ca_certs_from_file(pebble_args.ca_cert_filename)
-        ca_certs = pebble.ca_certs_from_file("pebble-root.pem")
-        args.adns.service_ca.ca_certificates += ca_certs
-        args.ca_certs += ca_certs
+    print("Service started")
+    time.sleep(3)
 
-        adns_nw, adns_process, adns_endorsed_certs, reginfo = adns_service.run(
-            args,
-            wait_for_endorsed_cert=False,
-            with_proxies=False,
-            tcp_port=53,
-            udp_port=53,
-        )
+    test_service_reg(adns_nw, args)
+    test_basic(adns_nw, args)
 
-        print("Service started")
-        time.sleep(3)
-
-        if not adns_nw:
-            raise Exception("Failed to start aDNS network")
-
-        # test_basic(adns_nw, args)
-        # set_registration_policy(adns_nw, args)
-        test_service_reg(adns_nw, args)
-        # test_eat(adns_nw, args)
-        # print("Waiting forever...")
-        time.sleep(5)
-        # while True:
-        #    pass
-    finally:
-        for p in procs:
-            if p:
-                p.kill()
+    if not adns_nw:
+        raise Exception("Failed to start aDNS network")
 
 
 def main():
@@ -456,10 +354,10 @@ def main():
         )
     ]
     targs.constitution = glob.glob("../tests/constitution/*")
-    targs.package = "libccfdns.enclave.so.signed"
+    targs.package = "libccfdns.virtual.so"
     targs.acme_config_name = "custom"
 
-    targs.wait_forever = True
+    targs.wait_forever = False
     targs.http2 = False
     targs.initial_node_cert_validity_days = 365
     targs.initial_service_cert_validity_days = 365
@@ -477,10 +375,6 @@ def main():
             "-----BEGIN CERTIFICATE-----\nMIICTjCCAdSgAwIBAgIRAIPgc3k5LlLVLtUUvs4K/QcwCgYIKoZIzj0EAwMwaDEL\nMAkGA1UEBhMCVVMxMzAxBgNVBAoTKihTVEFHSU5HKSBJbnRlcm5ldCBTZWN1cml0\neSBSZXNlYXJjaCBHcm91cDEkMCIGA1UEAxMbKFNUQUdJTkcpIEJvZ3VzIEJyb2Nj\nb2xpIFgyMB4XDTIwMDkwNDAwMDAwMFoXDTQwMDkxNzE2MDAwMFowaDELMAkGA1UE\nBhMCVVMxMzAxBgNVBAoTKihTVEFHSU5HKSBJbnRlcm5ldCBTZWN1cml0eSBSZXNl\nYXJjaCBHcm91cDEkMCIGA1UEAxMbKFNUQUdJTkcpIEJvZ3VzIEJyb2Njb2xpIFgy\nMHYwEAYHKoZIzj0CAQYFK4EEACIDYgAEOvS+w1kCzAxYOJbA06Aw0HFP2tLBLKPo\nFQqR9AMskl1nC2975eQqycR+ACvYelA8rfwFXObMHYXJ23XLB+dAjPJVOJ2OcsjT\nVqO4dcDWu+rQ2VILdnJRYypnV1MMThVxo0IwQDAOBgNVHQ8BAf8EBAMCAQYwDwYD\nVR0TAQH/BAUwAwEB/zAdBgNVHQ4EFgQU3tGjWWQOwZo2o0busBB2766XlWYwCgYI\nKoZIzj0EAwMDaAAwZQIwRcp4ZKBsq9XkUuN8wfX+GEbY1N5nmCRc8e80kUkuAefo\nuc2j3cICeXo1cOybQ1iWAjEA3Ooawl8eQyR4wrjCofUE8h44p0j7Yl/kBlJZT8+9\nvbtH7QiVzeKCOTQPINyRql6P\n-----END CERTIFICATE-----\n",
             "-----BEGIN CERTIFICATE-----\nMIIFmDCCA4CgAwIBAgIQU9C87nMpOIFKYpfvOHFHFDANBgkqhkiG9w0BAQsFADBm\nMQswCQYDVQQGEwJVUzEzMDEGA1UEChMqKFNUQUdJTkcpIEludGVybmV0IFNlY3Vy\naXR5IFJlc2VhcmNoIEdyb3VwMSIwIAYDVQQDExkoU1RBR0lORykgUHJldGVuZCBQ\nZWFyIFgxMB4XDTE1MDYwNDExMDQzOFoXDTM1MDYwNDExMDQzOFowZjELMAkGA1UE\nBhMCVVMxMzAxBgNVBAoTKihTVEFHSU5HKSBJbnRlcm5ldCBTZWN1cml0eSBSZXNl\nYXJjaCBHcm91cDEiMCAGA1UEAxMZKFNUQUdJTkcpIFByZXRlbmQgUGVhciBYMTCC\nAiIwDQYJKoZIhvcNAQEBBQADggIPADCCAgoCggIBALbagEdDTa1QgGBWSYkyMhsc\nZXENOBaVRTMX1hceJENgsL0Ma49D3MilI4KS38mtkmdF6cPWnL++fgehT0FbRHZg\njOEr8UAN4jH6omjrbTD++VZneTsMVaGamQmDdFl5g1gYaigkkmx8OiCO68a4QXg4\nwSyn6iDipKP8utsE+x1E28SA75HOYqpdrk4HGxuULvlr03wZGTIf/oRt2/c+dYmD\noaJhge+GOrLAEQByO7+8+vzOwpNAPEx6LW+crEEZ7eBXih6VP19sTGy3yfqK5tPt\nTdXXCOQMKAp+gCj/VByhmIr+0iNDC540gtvV303WpcbwnkkLYC0Ft2cYUyHtkstO\nfRcRO+K2cZozoSwVPyB8/J9RpcRK3jgnX9lujfwA/pAbP0J2UPQFxmWFRQnFjaq6\nrkqbNEBgLy+kFL1NEsRbvFbKrRi5bYy2lNms2NJPZvdNQbT/2dBZKmJqxHkxCuOQ\nFjhJQNeO+Njm1Z1iATS/3rts2yZlqXKsxQUzN6vNbD8KnXRMEeOXUYvbV4lqfCf8\nmS14WEbSiMy87GB5S9ucSV1XUrlTG5UGcMSZOBcEUpisRPEmQWUOTWIoDQ5FOia/\nGI+Ki523r2ruEmbmG37EBSBXdxIdndqrjy+QVAmCebyDx9eVEGOIpn26bW5LKeru\nmJxa/CFBaKi4bRvmdJRLAgMBAAGjQjBAMA4GA1UdDwEB/wQEAwIBBjAPBgNVHRMB\nAf8EBTADAQH/MB0GA1UdDgQWBBS182Xy/rAKkh/7PH3zRKCsYyXDFDANBgkqhkiG\n9w0BAQsFAAOCAgEAncDZNytDbrrVe68UT6py1lfF2h6Tm2p8ro42i87WWyP2LK8Y\nnLHC0hvNfWeWmjZQYBQfGC5c7aQRezak+tHLdmrNKHkn5kn+9E9LCjCaEsyIIn2j\nqdHlAkepu/C3KnNtVx5tW07e5bvIjJScwkCDbP3akWQixPpRFAsnP+ULx7k0aO1x\nqAeaAhQ2rgo1F58hcflgqKTXnpPM02intVfiVVkX5GXpJjK5EoQtLceyGOrkxlM/\nsTPq4UrnypmsqSagWV3HcUlYtDinc+nukFk6eR4XkzXBbwKajl0YjztfrCIHOn5Q\nCJL6TERVDbM/aAPly8kJ1sWGLuvvWYzMYgLzDul//rUF10gEMWaXVZV51KpS9DY/\n5CunuvCXmEQJHo7kGcViT7sETn6Jz9KOhvYcXkJ7po6d93A/jy4GKPIPnsKKNEmR\nxUuXY4xRdh45tMJnLTUDdC9FIU0flTeO9/vNpVA8OPU1i14vCz+MU8KX1bV3GXm/\nfxlB7VBBjX9v5oUep0o/j68R/iDlCOM4VVfRa8gX6T2FU7fNdatvGro7uQzIvWof\ngN9WUwCbEMBy/YhBSrXycKA8crgGg3x1mIsopn88JKwmMBa68oS7EHM9w7C4y71M\n7DiA+/9Qdp9RBWJpTS9i/mDnJg1xvo8Xz49mrrgfmcAXTCJqXi24NatI3Oc=\n-----END CERTIFICATE-----\n",
         ],
-    )
-
-    service_ca_config = ServiceCAConfig(
-        name="pebble-dns", directory="https://127.0.0.1:1024/dir", ca_certificates=[]
     )
 
     targs.ca_certs = []

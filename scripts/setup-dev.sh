@@ -4,9 +4,7 @@
 
 set -ex
 
-tdnf -y install zlib-devel  \
-    clang-tools-extra  \
-    python3  \
-    python-pip  \
-    git  \
-    npm
+tdnf -y install  \
+    vim  \
+    procps  \
+    lldb
