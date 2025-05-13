@@ -94,3 +94,10 @@ jobs:
           cd build
           ./tests.sh -L unit
         shell: bash
+
+      - name: "Run all other (e2e) tests"
+        run: |
+          set -ex
+          cd build
+          ./tests.sh -LE unit
+        shell: bash
