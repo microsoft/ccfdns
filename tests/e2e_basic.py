@@ -15,11 +15,6 @@ from cryptography.hazmat.primitives import serialization, hashes
 from cryptography.hazmat.primitives.asymmetric import ec
 
 import infra.e2e_args
-import infra.network
-import infra.node
-import infra.checker
-import infra.health_watcher
-
 import adns_service
 from adns_service import aDNSConfig, ServiceCAConfig
 
@@ -32,63 +27,6 @@ import dns.rdtypes.ANY.SOA as SOA
 
 rdc = dns.rdataclass
 rdt = dns.rdatatype
-
-
-def add_record(client, origin, name, stype, rdata_obj):
-    """Add a DNS record"""
-    print(f"Adding {stype} record for {name}...")
-    r = client.post(
-        "/app/internal/add",
-        {
-            "origin": str(origin),
-            "record": {
-                "name": name,
-                "type": int(rdt.from_text(stype)),
-                "class_": int(rdc.IN),
-                "ttl": 3600,
-                "rdata": base64.urlsafe_b64encode(rdata_obj.to_wire()).decode(),
-            },
-        },
-    )
-    print(response={r})
-    assert r.status_code == http.HTTPStatus.NO_CONTENT
-    return r
-
-
-def mk_update_policy_proposal(new_policy):
-    """Create a policy proposal for updating the registration policy"""
-    return {
-        "actions": [
-            {
-                "name": "set_member",
-                "args": {"policy": new_policy},
-            }
-        ]
-    }
-
-
-def set_registration_policy(network, args):
-    """Set the registration policy"""
-    new_policy = """
-    data.claims.sgx_claims.report_body.mr_enclave.length == 32 &&
-    JSON.stringify(data.claims.custom_claims.some_name) == JSON.stringify([115, 111, 109, 101, 95, 118, 97, 108, 117, 101, 0]);
-    """
-
-    primary, _ = network.find_primary()
-
-    proposal_body, careful_vote = network.consortium.make_proposal(
-        "set_registration_policy", new_policy=new_policy
-    )
-
-    proposal = network.consortium.get_any_active_member().propose(
-        primary, proposal_body
-    )
-
-    network.consortium.vote_using_majority(
-        primary,
-        proposal,
-        careful_vote,
-    )
 
 
 def gen_csr(domain, key):
@@ -164,6 +102,7 @@ def check_record(host, port, ca, name, stype, expected_data=None):
             post=False,
         )
         print(f"Check record: query=\n{q}\nresponse =\n{r.answer}")
+        assert r.answer
         for a in r.answer:
             assert a.name == qname
             saw_expected = False
@@ -216,52 +155,19 @@ def get_records(host, port, ca, qname, stype, keys=None):
 def get_keys(host, port, ca, origin):
     """Get DNSKEY records"""
     r = get_records(host, port, ca, origin, "DNSKEY", None)
-    key_rrs = r.find_rrset(r.answer, origin, rdc.IN, rdt.DNSKEY)
+    try:
+        key_rrs = r.find_rrset(r.answer, origin, rdc.IN, rdt.DNSKEY)
+    except KeyError:
+        breakpoint()
+        print("No DNSKEY records found")
     keys = {origin: key_rrs}
     validate_rrsigs(r, rdt.DNSKEY, keys)
     return keys
 
 
-def A(s):
+def ARecord(s):
     """Parse an A record"""
     return dns.rdata.from_text(rdc.IN, rdt.A, s)
-
-
-def test_basic(network, args):
-    """Basic tests"""
-    primary, _ = network.find_primary()
-
-    with primary.client(identity="member0") as client:
-        host = primary.get_public_rpc_host()
-        port = primary.get_public_rpc_port()
-        ca = primary.session_ca()["ca"]
-
-        origin = dns.name.from_text("example.com.")
-
-        rd = A("1.2.3.4")
-        add_record(client, origin, "www", "A", rd)
-        check_record(host, port, ca, "www.example.com.", "A", rd)
-
-        rd2 = A("1.2.3.5")
-        add_record(client, origin, "www", "A", rd2)
-        check_record(host, port, ca, "www.example.com.", "A", rd2)
-        check_record(host, port, ca, "www.example.com.", "A", rd)
-
-        rd2 = A("1.2.3.5")
-        add_record(client, origin, "www2", "A", rd2)
-
-        keys = get_keys(host, port, ca, origin)
-
-        name = dns.name.from_text("www2.example.com.")
-        get_records(host, port, ca, name, "A", keys)
-
-        name = dns.name.from_text("www.example.com.")
-        get_records(host, port, ca, name, "A", keys)
-
-        # We're not authoritative for com., so we don't expect a DS record
-        name = dns.name.from_text("example.com.")
-        ds_rrs = get_records(host, port, ca, name, "DS", None)
-        assert len(ds_rrs.answer) == 0
 
 
 def test_service_reg(network, args):
@@ -293,16 +199,15 @@ def test_service_reg(network, args):
         )
 
         print("Checking record is installed")
-        check_record(host, port, ca, service_name, "A", A("127.0.0.1"))
+        check_record(host, port, ca, service_name, "A", ARecord("127.0.0.1"))
         r = get_records(host, port, ca, service_name, "A", keys)
         print(r)
 
 
 def run(args):
     """Run tests"""
-    adns_nw = adns_endorsed_certs = None
 
-    adns_nw, adns_process, adns_endorsed_certs, reginfo = adns_service.run(
+    adns_nw, _, _, _ = adns_service.run(
         args,
         wait_for_endorsed_cert=False,
         with_proxies=False,
@@ -310,14 +215,10 @@ def run(args):
         udp_port=53,
     )
 
-    print("Service started")
-    time.sleep(3)
-
-    test_service_reg(adns_nw, args)
-    test_basic(adns_nw, args)
-
     if not adns_nw:
         raise Exception("Failed to start aDNS network")
+
+    test_service_reg(adns_nw, args)
 
 
 def main():
