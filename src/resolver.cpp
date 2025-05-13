@@ -1790,67 +1790,6 @@ namespace aDNS
     sign(origin);
 
     // TODO save endorsements
-
-    // TODO: the code below should be modified to include both branches,
-    // depending on which type of service (frontend/backend) is being
-    // registered.
-    // TODO: for frontend service, we need to return an array of two
-    // certificates.
-
-    // flow for aDNS as root CA
-    CCF_APP_INFO("ADNS: Going to generate a leaf cert\n");
-    generate_leaf_certificate(service_name, rr.csr);
-
-    // flow for ACME-based CA
-    //  start_service_acme(origin, service_name, rr.csr, rr.contact);
-  }
-
-  void Resolver::install_acme_response(
-    const Name& origin,
-    const Name& name,
-    const std::vector<Name>& alternative_names,
-    const std::string& key_authorization)
-  {
-    auto configuration = get_configuration();
-
-    if (!origin_exists(origin))
-      throw std::runtime_error("invalid origin");
-
-    if (!name.ends_with(origin))
-      throw std::runtime_error("name outside of zone");
-
-    add(
-      origin,
-      mk_rr(
-        Name("_acme-challenge") + name,
-        Type::TXT,
-        Class::IN,
-        60,
-        TXT(key_authorization)));
-
-    for (const auto& n : alternative_names)
-      if (n != name)
-        add(
-          origin,
-          mk_rr(
-            Name("_acme-challenge") + n,
-            Type::TXT,
-            Class::IN,
-            60,
-            TXT(key_authorization)));
-
-    sign(origin);
-  }
-
-  void Resolver::remove_acme_response(const Name& origin, const Name& name)
-  {
-    if (!origin_exists(origin))
-      throw std::runtime_error("invalid origin");
-
-    if (!name.ends_with(origin))
-      throw std::runtime_error("name outside of zone");
-
-    remove(origin, Name("_acme-challenge") + name, Class::IN, Type::TXT);
   }
 
   void Resolver::register_delegation(const DelegationRequest& dr)
