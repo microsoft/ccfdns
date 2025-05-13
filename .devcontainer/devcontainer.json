@@ -16,7 +16,8 @@
         "ms-python.python",
         "ms-vscode.cpptools",
         "github.copilot",
-        "ms-vscode.cmake-tools"
+        "ms-vscode.cmake-tools",
+        "xaver.clang-format"
       ]
     },
     "settings": {
