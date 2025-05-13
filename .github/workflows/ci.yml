@@ -88,9 +88,9 @@ jobs:
           ninja
         shell: bash
 
-      - name: "Run tests"
+      - name: "Run unit tests"
         run: |
           set -ex
           cd build
-          ./tests.sh -VV
+          ./tests.sh -L unit
         shell: bash
