@@ -51,12 +51,6 @@ namespace ccfdns
     using Out = void;
   };
 
-  struct RegisterDelegation
-  {
-    using In = aDNS::Resolver::DelegationRequest;
-    using Out = void;
-  };
-
   struct SetCertificate
   {
     struct In

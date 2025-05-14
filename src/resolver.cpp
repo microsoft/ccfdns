@@ -635,20 +635,8 @@ namespace aDNS
 
     RFC4034::CanonicalRRSet records;
 
-    bool delegated = is_delegated(origin, qname);
-
-    if (!delegated || qtype == QType::DS)
-    {
-      records = find_records(origin, qname, qtype, qclass);
-      result.is_authoritative = true;
-    }
-    else if (qtype == QType::A || qtype == QType::AAAA)
-    {
-      // Direct query for glue records. Not sure queries of this form are
-      // standards compliant.
-      records = find_records(origin + Name("glue."), qname, qtype, qclass);
-      result.is_authoritative = true;
-    }
+    records = find_records(origin, qname, qtype, qclass);
+    result.is_authoritative = true;
 
     for (const auto& rr : records)
       if (rr.name == qname)
@@ -662,40 +650,13 @@ namespace aDNS
       auto cfg = get_configuration();
       auto& ra = result.authorities;
 
-      if (delegated)
-      {
-        for (Name n = qname; n != origin && !n.is_root(); n = n.parent())
-        {
-          // Delegation records
-          ra += find_records(origin, n, QType::NS, qclass);
+      ra += find_records(origin, origin, QType::SOA, qclass);
+      ra += find_rrsigs(origin, origin, qclass, Type::SOA);
 
-          ra += find_records(origin, n, QType::DS, qclass);
-          ra += find_rrsigs(origin, n, qclass, Type::DS);
-
-          // Glue records
-          for (const auto& rr : ra)
-            if (rr.type == static_cast<uint16_t>(Type::NS))
-            {
-              result.additionals += find_records(
-                origin + Name("glue."),
-                NS(rr.rdata).nsdname,
-                static_cast<QType>(Type::A),
-                qclass);
-            }
-        }
-
-        result.response_code = ResponseCode::NO_ERROR;
-      }
+      if (cfg.use_nsec3)
+        result.response_code = find_nsec3_records(origin, qclass, qname, ra);
       else
-      {
-        ra += find_records(origin, origin, QType::SOA, qclass);
-        ra += find_rrsigs(origin, origin, qclass, Type::SOA);
-
-        if (cfg.use_nsec3)
-          result.response_code = find_nsec3_records(origin, qclass, qname, ra);
-        else
-          result.response_code = find_nsec_records(origin, qclass, qname, ra);
-      }
+        result.response_code = find_nsec_records(origin, qclass, qname, ra);
     }
 
     CCF_APP_DEBUG(
@@ -1735,124 +1696,6 @@ namespace aDNS
       origin, service_name, configuration.service_ca.name, rr.contact);
 
     sign(origin);
-
-    // TODO save endorsements
-  }
-
-  void Resolver::register_delegation(const DelegationRequest& dr)
-  {
-    auto cfg = get_configuration();
-
-    // TODO dr.subdomain must be exactly one (relative) label
-    // hence origin = cfg.origin
-
-    auto origin =
-      find_zone(dr.subdomain); // how does it return the new subzone??
-
-    ccf::crypto::OpenSSL::Unique_BIO mem(dr.csr.data(), dr.csr.size());
-    ccf::crypto::OpenSSL::Unique_X509_REQ_DER req(mem);
-
-    auto public_key = X509_REQ_get0_pubkey(req);
-    ccf::crypto::OpenSSL::CHECK1(X509_REQ_verify(req, public_key));
-
-    auto subject_name = X509_REQ_get_subject_name(req);
-    ccf::crypto::OpenSSL::CHECKNULL(subject_name);
-    auto common_name = get_common_name(subject_name);
-
-    Name service_name(common_name);
-
-    Name name(common_name);
-    // this is the delegate DNS name
-
-    if (!name.is_absolute())
-      name += std::vector<Label>{Label()};
-
-    // TODO name must be exactly subdomain.origin
-    // currently it could be for a sibling!
-
-    CCF_APP_INFO(
-      "ADNS: Register delegation {} in {}",
-      std::string(name),
-      std::string(origin));
-
-    save_delegation_request(name, dr);
-
-    if (!name.ends_with(origin))
-      throw std::runtime_error("name outside of origin");
-
-    bool policy_ok = false;
-
-    // TODO attestation check
-    policy_ok = true;
-
-    if (!policy_ok)
-      throw std::runtime_error(
-        "delegation registration policy evaluation failed");
-
-    remove(origin, dr.subdomain, Class::IN, Type::NS);
-
-    for (const auto& [id, info] : dr.node_information)
-    {
-      add(
-        origin,
-        mk_rr(
-          dr.subdomain,
-          Type::NS,
-          Class::IN,
-          cfg.default_ttl,
-          NS(info.address.name)));
-    }
-
-    for (const auto& dnskey_rr : dr.dnskey_records)
-      remove(origin, dnskey_rr.name, Class::IN, Type::DS);
-
-    for (const auto& dnskey_rr : dr.dnskey_records)
-    {
-      if (!dnskey_rr.name.ends_with(origin))
-        throw std::runtime_error("DNSKEY record name not within the zone");
-
-      RFC4034::DNSKEY dnskey(dnskey_rr.rdata);
-      auto key_tag = get_key_tag(dnskey);
-
-      add(
-        origin,
-        RFC4034::DSRR(
-          dnskey_rr.name,
-          static_cast<RFC1035::Class>(dnskey_rr.class_),
-          dnskey_rr.ttl,
-          key_tag,
-          dnskey.algorithm,
-          cfg.digest_type,
-          dnskey_rr.rdata));
-    }
-
-    add_attestation_records(dr.subdomain, dr.subdomain, dr.node_information);
-
-    sign(origin);
-
-    // TODO them being unsigned should be an intrinsic property, not something
-    // relying on the ordering of signing vs adding.
-    // TODO the NS records above should probably not be signed either.
-
-    // Glue records are not signed
-    // (https://datatracker.ietf.org/doc/html/rfc4035#section-2.2)
-    // Note: we shouldn't answer direct queries for glue records, so we put
-    // them into a special origin.
-
-    for (const auto& [id, info] : dr.node_information)
-      remove(origin + Name("glue."), info.address.name, Class::IN, Type::A);
-
-    for (const auto& [id, info] : dr.node_information)
-    {
-      add(
-        origin + Name("glue."),
-        mk_rr(
-          info.address.name,
-          Type::A,
-          Class::IN,
-          cfg.default_ttl,
-          RFC1035::A(info.address.ip)));
-    }
 
     // TODO save endorsements
   }
