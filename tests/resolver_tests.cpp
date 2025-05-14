@@ -41,7 +41,6 @@ public:
     RFC4034::CanonicalNameOrdering>
     zones;
   std::set<Name, RFC4034::CanonicalNameOrdering> origins;
-  std::set<Name, RFC4034::CanonicalNameOrdering> delegated_zones;
 
   std::map<Name, ccf::crypto::Pem, RFC4034::CanonicalNameOrdering>
     key_signing_keys;
@@ -49,7 +48,6 @@ public:
     zone_signing_keys;
 
   std::string service_registration_policy_str;
-  std::string delegation_policy_str;
 
   Resolver::Configuration configuration;
 
@@ -158,11 +156,6 @@ public:
     return origins.contains(origin.lowered());
   }
 
-  virtual bool is_delegated(const Name& origin, const Name& name) const override
-  {
-    return delegated_zones.contains(name.lowered());
-  }
-
   virtual ccf::crypto::Pem get_private_key(
     const Name& origin,
     uint16_t tag,
@@ -221,22 +214,6 @@ public:
     return true;
   }
 
-  virtual std::vector<std::string> delegation_policy() const override
-  {
-    return {delegation_policy_str};
-  }
-
-  virtual void set_delegation_policy(const std::string& new_policy) override
-  {
-    delegation_policy_str = new_policy;
-  }
-
-  virtual bool evaluate_delegation_policy(
-    const std::string& data) const override
-  {
-    return true;
-  }
-
   uint32_t get_fresh_time() override
   {
     return 0;
@@ -245,12 +222,6 @@ public:
   virtual void save_service_registration_request(
     const Name& name, const RegistrationRequest& rr) override
   {}
-
-  virtual void save_delegation_request(
-    const Name& name, const DelegationRequest& rr) override
-  {
-    delegated_zones.insert(name);
-  }
 
   virtual std::map<std::string, Resolver::NodeInfo> get_node_information()
     override
@@ -659,19 +630,6 @@ TEST_CASE("RRSIG tests")
   s.show(origin);
 }
 
-namespace ccf::crypto::OpenSSL
-{
-  // TODO impl this in CCF crypto interface
-  struct Unique_X509_REQ_DER
-    : public Unique_SSL_OBJECT<X509_REQ, X509_REQ_new, X509_REQ_free>
-  {
-    using Unique_SSL_OBJECT::Unique_SSL_OBJECT;
-    Unique_X509_REQ_DER(BIO* mem) :
-      Unique_SSL_OBJECT(d2i_X509_REQ_bio(mem, NULL), X509_REQ_free)
-    {}
-  };
-}
-
 TEST_CASE("Service registration")
 {
   TestResolver s;
@@ -721,79 +679,6 @@ TEST_CASE("Service registration")
 
   r = s.resolve(service_name, aDNS::QType::A, aDNS::QClass::IN);
   REQUIRE(RFC4034::verify_rrsigs(r.answers, dnskey_rrs, type2str));
-}
-
-TEST_CASE("Delegation")
-{
-  TestResolver main, sub;
-
-  Resolver::Configuration main_cfg, sub_cfg;
-
-  main_cfg = {
-    .origin = Name("example.com."),
-    .soa = "ns1.example.com. joe.example.com. 4 604800 86400 2419200 0",
-    .contact = {"joe@example.com"},
-    .service_ca = {.name = "myCA"},
-    .node_addresses =
-      {{"id",
-        Resolver::NodeAddress{
-          .name = Name("ns1.example.com."),
-          .ip = "127.0.0.1",
-          .protocol = "tcp",
-          .port = 53}}},
-  };
-
-  auto main_reginfo = main.configure(main_cfg);
-
-  sub_cfg = {
-    .origin = Name("sub.example.com."),
-    .soa = "ns1.sub.example.com. joe.sub.example.com. 4 604800 86400 2419200 0",
-    .contact = {"joe@sub.example.com"},
-    .service_ca = {.name = "myCA"},
-    .node_addresses =
-      {{"id",
-        Resolver::NodeAddress{
-          .name = Name("ns1.sub.example.com."),
-          .ip = "127.0.1.1",
-          .protocol = "tcp",
-          .port = 53}}},
-  };
-
-  auto sub_reginfo = sub.configure(sub_cfg);
-
-  REQUIRE(sub_reginfo.dnskey_records != std::nullopt);
-  REQUIRE(!sub_reginfo.node_information.empty());
-
-  Resolver::DelegationRequest dr = {
-    .subdomain = sub_cfg.origin,
-    .csr = sub_reginfo.csr,
-    .contact = {"someone@sub.example.com"},
-    .node_information = sub_reginfo.node_information,
-    .dnskey_records = *sub_reginfo.dnskey_records};
-
-  main.register_delegation(dr);
-
-  auto dnskey_rrs =
-    main.resolve(main_cfg.origin, aDNS::QType::DNSKEY, aDNS::QClass::IN)
-      .answers;
-  REQUIRE(RFC4034::verify_rrsigs(dnskey_rrs, dnskey_rrs, type2str));
-
-  auto dnskey_sub_rrs =
-    sub.resolve(sub_cfg.origin, aDNS::QType::DNSKEY, aDNS::QClass::IN).answers;
-  REQUIRE(RFC4034::verify_rrsigs(dnskey_sub_rrs, dnskey_sub_rrs, type2str));
-
-  auto r = main.resolve(sub_cfg.origin, aDNS::QType::A, aDNS::QClass::IN);
-
-  REQUIRE(r.answers.size() == 0);
-  REQUIRE(r.authorities.size() == 3); // NS + DS + RRSIG (over DS)
-  REQUIRE(r.additionals.size() == 1); // Glue record
-  // Note: verify_rrsigs would fail here because the delegation record (NS) is
-  // not signed.
-
-  r = main.resolve(sub_cfg.origin, aDNS::QType::NS, aDNS::QClass::IN);
-  REQUIRE(r.answers.size() == 0); // _unsigned_ NS record
-  REQUIRE(r.authorities.size() == 3);
-  REQUIRE(r.additionals.size() == 1);
 }
 
 int main(int argc, char** argv)

@@ -128,10 +128,6 @@ namespace aDNS
 
       std::optional<std::vector<Name>> alternative_names;
 
-      // this field is set when the origin is delegated from a larger attested
-      // zone why an URL?
-      std::optional<std::string> parent_base_url;
-
       std::vector<std::string> contact;
 
       uint32_t default_ttl = 86400;
@@ -256,8 +252,6 @@ namespace aDNS
 
     virtual bool origin_exists(const Name& name) const = 0;
 
-    virtual bool is_delegated(const Name& origin, const Name& name) const = 0;
-
     virtual void sign(const Name& origin);
 
     virtual void add(const Name& origin, const ResourceRecord& rr) = 0;
@@ -291,12 +285,6 @@ namespace aDNS
     virtual bool evaluate_service_registration_policy(
       const std::string& data) const = 0;
 
-    virtual void register_delegation(const DelegationRequest& req);
-
-    virtual std::vector<std::string> delegation_policy() const = 0;
-    virtual void set_delegation_policy(const std::string& new_policy) = 0;
-    virtual bool evaluate_delegation_policy(const std::string& data) const = 0;
-
     virtual Configuration get_configuration() const = 0;
     virtual void set_configuration(const Configuration& cfg) = 0;
 
@@ -304,9 +292,6 @@ namespace aDNS
 
     virtual void save_service_registration_request(
       const Name& name, const RegistrationRequest& rr) = 0;
-
-    virtual void save_delegation_request(
-      const Name& name, const DelegationRequest& rr) = 0;
 
     virtual std::map<std::string, NodeInfo> get_node_information() = 0;
 

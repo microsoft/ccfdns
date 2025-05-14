@@ -167,7 +167,7 @@ namespace aDNS
     service_ca,
     node_addresses);
   DECLARE_JSON_OPTIONAL_FIELDS(
-    Resolver::Configuration, alternative_names, parent_base_url, fixed_zsk);
+    Resolver::Configuration, alternative_names, fixed_zsk);
 
   DECLARE_JSON_TYPE_WITH_OPTIONAL_FIELDS(Resolver::RegistrationInformation);
   DECLARE_JSON_REQUIRED_FIELDS(
