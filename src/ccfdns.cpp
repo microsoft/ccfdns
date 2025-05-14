@@ -10,10 +10,7 @@
 #include "rfc4034.h"
 
 #include <arpa/inet.h>
-#include <ccf/_private/ds/thread_messaging.h>
-#include <ccf/_private/enclave/enclave_time.h>
-#include <ccf/_private/node/acme_client.h>
-#include <ccf/_private/node/identity.h>
+#include <ccf/_private/tcp/msg_types.h>
 #include <ccf/_private/udp/msg_types.h>
 #include <ccf/app_interface.h>
 #include <ccf/base_endpoint_registry.h>
@@ -122,127 +119,6 @@ namespace ccfdns
   DECLARE_JSON_REQUIRED_FIELDS(
     RegisterServiceWithPreviousVersion, request, previous_version);
 
-  class HTTPClient
-  {
-  public:
-    HTTPClient(std::shared_ptr<ccf::ACMESubsystemInterface> acme_ss) :
-      acme_ss(acme_ss)
-    {}
-
-    struct HTTPRetryMsg
-    {
-      HTTPRetryMsg(
-        HTTPClient* client,
-        std::string&& method,
-        std::string&& url,
-        ccf::http::HeaderMap&& headers,
-        std::string&& body,
-        const std::vector<std::string>& ca_certs,
-        const std::function<bool(
-          ccf::http_status, ccf::http::HeaderMap&&, std::vector<uint8_t>&&)>&
-          callback,
-        bool use_node_client_cert) :
-        client(client),
-        method(std::move(method)),
-        url(std::move(url)),
-        headers(std::move(headers)),
-        body(body),
-        ca_certs(ca_certs),
-        callback(callback),
-        use_node_client_cert(use_node_client_cert)
-      {}
-
-      HTTPClient* client;
-      std::string method;
-      std::string url;
-      ccf::http::HeaderMap headers;
-      std::string body;
-      std::vector<std::string> ca_certs;
-      std::function<bool(
-        ccf::http_status, ccf::http::HeaderMap&&, std::vector<uint8_t>&&)>
-        callback;
-      bool use_node_client_cert;
-    };
-
-    static void msg_cb(std::unique_ptr<threading::Tmsg<HTTPRetryMsg>> msg)
-    {
-      auto vbody =
-        std::vector<uint8_t>(msg->data.body.begin(), msg->data.body.end());
-      CCF_APP_TRACE("CCFDNS: HTTP: {} {}", msg->data.method, msg->data.url);
-      CCF_APP_TRACE(
-        "CCFDNS: {} CA certificates configures", msg->data.ca_certs.size());
-      msg->data.client->acme_ss->make_http_request(
-        msg->data.method,
-        msg->data.url,
-        msg->data.headers,
-        vbody,
-        [msgdata = msg->data](
-          const ccf::http_status& status,
-          const ccf::http::HeaderMap& headers,
-          const std::vector<uint8_t>& data) {
-          ccf::http::HeaderMap hdrs = headers;
-          if (
-            status == HTTP_STATUS_SERVICE_UNAVAILABLE ||
-            status == HTTP_STATUS_REQUEST_TIMEOUT)
-          {
-            size_t wait_seconds = 5;
-            auto rait = hdrs.find("retry-after");
-            if (rait != hdrs.end())
-              wait_seconds = std::atoi(rait->second.c_str());
-
-            CCF_APP_DEBUG(
-              "CCFDNS: ACME: Retrying failed HTTP request in {} sec",
-              wait_seconds);
-
-            auto nmsg =
-              std::make_unique<threading::Tmsg<HTTPRetryMsg>>(msg_cb, msgdata);
-
-            threading::ThreadMessaging::instance().add_task_after(
-              std::move(nmsg), std::chrono::seconds(wait_seconds));
-
-            return false;
-          }
-          else
-          {
-            std::vector<uint8_t> cdata = data;
-            return msgdata.callback(status, std::move(hdrs), std::move(cdata));
-          }
-        },
-        msg->data.ca_certs,
-        "HTTP1",
-        true);
-    };
-
-    void request(
-      std::string&& method,
-      std::string&& url,
-      ccf::http::HeaderMap&& headers,
-      std::string&& body,
-      const std::vector<std::string>& ca_certs,
-      const std::function<
-        bool(ccf::http_status, ccf::http::HeaderMap&&, std::vector<uint8_t>&&)>&
-        callback,
-      bool use_node_client_cert = false)
-    {
-      auto msg = std::make_unique<threading::Tmsg<HTTPRetryMsg>>(
-        msg_cb,
-        this,
-        std::move(method),
-        std::move(url),
-        std::move(headers),
-        std::move(body),
-        ca_certs,
-        callback,
-        use_node_client_cert);
-
-      threading::ThreadMessaging::instance().add_task_after(
-        std::move(msg), std::chrono::seconds(0));
-    }
-
-  protected:
-    std::shared_ptr<ccf::ACMESubsystemInterface> acme_ss;
-  };
-
   using namespace ccf::indexing::strategies;
 
   class LastWriteTxIDByKey : public VisitEachEntryInMap
@@ -280,18 +156,15 @@ namespace ccfdns
   public:
     CCFDNS(
       const std::string& node_id,
-      std::shared_ptr<ccf::ACMESubsystemInterface> acme_ss,
       std::shared_ptr<ccf::NetworkIdentitySubsystemInterface> nwid_ss,
       std::shared_ptr<ccf::NodeConfigurationInterface> nci_ss,
       std::shared_ptr<ccf::CustomProtocolSubsystemInterface> cp_ss,
       ccf::indexing::IndexingStrategies& istrats) :
       Resolver(),
       node_id(node_id),
-      acme_ss(acme_ss),
       nwid_ss(nwid_ss),
       nci_ss(nci_ss),
-      cp_ss(cp_ss),
-      http_client(acme_ss)
+      cp_ss(cp_ss)
     {
       registration_index_strategy = std::make_shared<RegistrationRequestsIndex>(
         registration_requests_table_name);
@@ -433,13 +306,6 @@ namespace ccfdns
       }
       return time;
     };
-
-    virtual std::shared_ptr<ccf::crypto::KeyPair> get_tls_key() override
-    {
-      check_context();
-      auto ni = nwid_ss->get().get();
-      return ccf::crypto::make_key_pair(ni->priv_key);
-    }
 
     virtual void add(const Name& origin, const ResourceRecord& rr) override
     {
@@ -1198,11 +1064,9 @@ namespace ccfdns
     bool ctx_writable = false;
     std::mutex reply_mtx;
 
-    std::shared_ptr<ccf::ACMESubsystemInterface> acme_ss;
     std::shared_ptr<ccf::NetworkIdentitySubsystemInterface> nwid_ss;
     std::shared_ptr<ccf::NodeConfigurationInterface> nci_ss;
     std::shared_ptr<ccf::CustomProtocolSubsystemInterface> cp_ss;
-    HTTPClient http_client;
 
     std::string internal_node_address = "https://127.0.0.1";
 
@@ -1672,7 +1536,6 @@ namespace ccfdns
 
       node_id = context.get_node_id();
 
-      auto acme_ss = context.get_subsystem<ccf::ACMESubsystemInterface>();
       auto nwid_ss =
         context.get_subsystem<ccf::NetworkIdentitySubsystemInterface>();
       auto nci_ss = context.get_subsystem<ccf::NodeConfigurationInterface>();
@@ -1680,8 +1543,8 @@ namespace ccfdns
         context.get_subsystem<ccf::CustomProtocolSubsystemInterface>();
       auto& istrats = context.get_indexing_strategies();
 
-      ccfdns = std::make_shared<CCFDNS>(
-        node_id, acme_ss, nwid_ss, nci_ss, cp_ss, istrats);
+      ccfdns =
+        std::make_shared<CCFDNS>(node_id, nwid_ss, nci_ss, cp_ss, istrats);
 
       auto is_tx_committed =
         [this](ccf::View view, ccf::SeqNo seqno, std::string& error_reason) {
