@@ -15,11 +15,6 @@
 #include <ccf/app_interface.h>
 #include <ccf/base_endpoint_registry.h>
 #include <ccf/common_auth_policies.h>
-#include <ccf/crypto/base64.h>
-#include <ccf/crypto/curve.h>
-#include <ccf/crypto/eddsa_key_pair.h>
-#include <ccf/crypto/jwk.h>
-#include <ccf/crypto/key_pair.h>
 #include <ccf/ds/hex.h>
 #include <ccf/ds/json.h>
 #include <ccf/ds/logger.h>
@@ -47,19 +42,11 @@
 #include <llhttp/llhttp.h>
 #include <memory>
 #include <mutex>
-#include <nlohmann/json.hpp>
-#include <openssl/err.h>
-#include <openssl/evp.h>
-#include <openssl/pem.h>
-#include <openssl/x509.h>
-#include <openssl/x509v3.h>
 #include <optional>
 #include <quickjs/quickjs-exports.h>
 #include <quickjs/quickjs.h>
 #include <regex>
 #include <stdexcept>
-
-// Could be merged with CCF's ccf::http::JwtVerifier
 
 using namespace aDNS;
 using namespace RFC1035;
@@ -100,15 +87,6 @@ namespace ccf::kv::serialisers
 
 namespace ccfdns
 {
-  template <typename T>
-  std::vector<uint8_t> to_json_bytes(const T& x)
-  {
-    nlohmann::json jin;
-    to_json(jin, x);
-    std::string s = jin.dump();
-    return std::vector<uint8_t>(s.data(), s.data() + s.size());
-  }
-
   struct RegisterServiceWithPreviousVersion
   {
     RegisterService::In request;
@@ -173,27 +151,8 @@ namespace ccfdns
 
     virtual ~CCFDNS() {}
 
-    void find_internal_interface()
-    {
-      // Find an interface for internal RPC calls and the ACME config name
-      auto ncs = nci_ss->get();
-
-      for (const auto& iface : ncs.node_config.network.rpc_interfaces)
-      {
-        const auto& e = iface.second.endorsement;
-        if (
-          iface.second.app_protocol != "DNSTCP" &&
-          iface.second.app_protocol != "DNSUDP")
-          internal_node_address = "https://" + iface.second.published_address;
-      }
-    }
-
     std::string node_id;
     std::string my_name; // Certifiable FQDN for this node of the DNS service
-
-    // Declaring CCF Table types and names
-
-    // "keys.h" also defines a private table for DNSKEYs.
 
     using TConfigurationTable =
       ccf::ServiceValue<aDNS::Resolver::Configuration>;
@@ -925,140 +884,6 @@ namespace ccfdns
       return *r;
     }
 
-    static std::string b64url_from_string(std::string s)
-    {
-      const std::vector<uint8_t> v(s.begin(), s.end());
-      return ccf::crypto::b64url_from_raw(v, false); // without padding
-    }
-
-    EVP_PKEY* create_private_key()
-    {
-      EVP_PKEY_CTX* key_ctx = EVP_PKEY_CTX_new_id(EVP_PKEY_RSA, nullptr);
-      if (!key_ctx)
-      {
-        return nullptr;
-      }
-
-      if (EVP_PKEY_keygen_init(key_ctx) <= 0)
-      {
-        EVP_PKEY_CTX_free(key_ctx);
-        return nullptr;
-      }
-
-      if (EVP_PKEY_CTX_set_rsa_keygen_bits(key_ctx, 2048) <= 0)
-      {
-        EVP_PKEY_CTX_free(key_ctx);
-        return nullptr;
-      }
-
-      EVP_PKEY* pkey = nullptr;
-      if (EVP_PKEY_keygen(key_ctx, &pkey) <= 0)
-      {
-        EVP_PKEY_CTX_free(key_ctx);
-        return nullptr;
-      }
-
-      EVP_PKEY_CTX_free(key_ctx);
-      return pkey;
-    }
-
-    std::string private_key_to_pem(EVP_PKEY* pkey)
-    {
-      BIO* bio = BIO_new(BIO_s_mem());
-      if (!PEM_write_bio_PrivateKey(
-            bio, pkey, nullptr, nullptr, 0, nullptr, nullptr))
-      {
-        BIO_free(bio);
-        return "";
-      }
-
-      char* pem_data;
-      long pem_length = BIO_get_mem_data(bio, &pem_data);
-      std::string pem_str(pem_data, pem_length);
-      BIO_free(bio);
-      return pem_str;
-    }
-
-    X509* create_root_certificate(EVP_PKEY* pkey)
-    {
-      X509* x509 = X509_new();
-      if (!x509)
-      {
-        return nullptr;
-      }
-
-      // Set the serial number
-      ASN1_INTEGER_set(X509_get_serialNumber(x509), 1);
-
-      // Set the validity period
-      X509_gmtime_adj(X509_get_notBefore(x509), 0);
-      X509_gmtime_adj(X509_get_notAfter(x509), 31536000L); // Valid for 1 year
-
-      // Set the public key for the certificate
-      X509_set_pubkey(x509, pkey);
-
-      // Set the issuer name (self-signed, so same as subject)
-      X509_NAME* name = X509_get_subject_name(x509);
-      X509_NAME_add_entry_by_txt(
-        name, "C", MBSTRING_ASC, (unsigned char*)"UK", -1, -1, 0);
-      X509_NAME_add_entry_by_txt(
-        name,
-        "O",
-        MBSTRING_ASC,
-        (unsigned char*)"aDNS Organization",
-        -1,
-        -1,
-        0);
-      X509_NAME_add_entry_by_txt(
-        name, "CN", MBSTRING_ASC, (unsigned char*)"aDNS root CA", -1, -1, 0);
-      X509_set_issuer_name(x509, name);
-
-      // Add SANs
-      X509_EXTENSION* ext;
-      X509V3_CTX san_ctx;
-      X509V3_set_ctx_nodb(&san_ctx);
-      X509V3_set_ctx(&san_ctx, x509, x509, nullptr, nullptr, 0);
-
-      // Include multiple DNS entries
-      ext = X509V3_EXT_conf_nid(
-        nullptr,
-        &san_ctx,
-        NID_subject_alt_name,
-        "DNS:acidns10.attested.name,DNS:localhost");
-      if (!ext)
-      {
-        X509_free(x509);
-        return nullptr;
-      }
-      X509_add_ext(x509, ext, -1);
-      X509_EXTENSION_free(ext);
-
-      // Sign the certificate with the private key
-      if (!X509_sign(x509, pkey, EVP_sha256()))
-      {
-        X509_free(x509);
-        return nullptr;
-      }
-
-      return x509;
-    }
-
-    std::string certificate_to_pem(X509* x509)
-    {
-      BIO* bio = BIO_new(BIO_s_mem());
-      if (!PEM_write_bio_X509(bio, x509))
-      {
-        BIO_free(bio);
-        return "";
-      }
-
-      char* pem_data;
-      long pem_length = BIO_get_mem_data(bio, &pem_data);
-      std::string pem_str(pem_data, pem_length);
-      BIO_free(bio);
-      return pem_str;
-    }
-
   protected:
     ccf::endpoints::CommandEndpointContext* ctx = nullptr;
     bool ctx_writable = false;
@@ -1067,8 +892,6 @@ namespace ccfdns
     std::shared_ptr<ccf::NetworkIdentitySubsystemInterface> nwid_ss;
     std::shared_ptr<ccf::NodeConfigurationInterface> nci_ss;
     std::shared_ptr<ccf::CustomProtocolSubsystemInterface> cp_ss;
-
-    std::string internal_node_address = "https://127.0.0.1";
 
     std::string names_table_name(const Name& origin) const
     {
@@ -1913,8 +1736,6 @@ namespace ccfdns
     virtual void init_handlers() override
     {
       ccf::UserEndpointRegistry::init_handlers();
-
-      ccfdns->find_internal_interface();
 
       auto cp_ss =
         context.get_subsystem<ccf::CustomProtocolSubsystemInterface>();
