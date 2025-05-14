@@ -174,19 +174,6 @@ namespace aDNS
       std::optional<std::string> configuration_receipt;
     };
 
-    struct DelegationRequest
-    {
-      Name subdomain; // must be a direct subdomain of the parent zone; subzone
-                      // a better name?
-      std::vector<uint8_t> csr; // used to run ACME (?)
-      std::vector<std::string> contact; // isn't it part of the configuration?
-      std::map<std::string, NodeInfo>
-        node_information; // used to create NS and glue records
-      std::vector<aDNS::ResourceRecord>
-        dnskey_records; // used to produce DS records
-      std::optional<std::string> configuration_receipt;
-    };
-
     struct Resolution
     {
       RFC1035::ResponseCode response_code = RFC1035::ResponseCode::NO_ERROR;

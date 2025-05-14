@@ -180,17 +180,6 @@ namespace aDNS
     Resolver::RegistrationRequest, csr, contact, node_information);
   DECLARE_JSON_OPTIONAL_FIELDS(
     Resolver::RegistrationRequest, configuration_receipt);
-
-  DECLARE_JSON_TYPE_WITH_OPTIONAL_FIELDS(Resolver::DelegationRequest);
-  DECLARE_JSON_REQUIRED_FIELDS(
-    Resolver::DelegationRequest,
-    subdomain,
-    csr,
-    contact,
-    dnskey_records,
-    node_information);
-  DECLARE_JSON_OPTIONAL_FIELDS(
-    Resolver::DelegationRequest, configuration_receipt);
 }
 
 namespace ccfdns

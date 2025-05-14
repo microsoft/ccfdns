@@ -905,9 +905,6 @@ namespace ccfdns
           my_name.pop_back();
       }
 
-      // TODO remove this?
-      create_certificate_signing_key("");
-
       return reginfo;
     }
 
@@ -1194,44 +1191,6 @@ namespace ccfdns
       std::string pem_str(pem_data, pem_length);
       BIO_free(bio);
       return pem_str;
-    }
-
-    void create_certificate_signing_key(std::string alg)
-    {
-      try
-      {
-        check_context();
-        uint32_t now = get_fresh_time();
-
-        EVP_PKEY* pkey = create_private_key();
-        std::string pem_str = private_key_to_pem(pkey);
-
-        auto private_key_table = rwtx().template rw<CertificatePrivateKeys>(
-          certificate_private_key_table_name);
-        auto private_keys =
-          private_key_table->get().value_or(std::vector<std::string>());
-        private_keys.push_back(pem_str);
-        private_key_table->put(private_keys);
-
-        X509* x509 = create_root_certificate(pkey);
-        std::string pem_str_cert = certificate_to_pem(x509);
-
-        auto root_certificate_table =
-          rwtx().template rw<RootCertificates>(root_certificate_table_name);
-        auto root_certificates =
-          root_certificate_table->get().value_or(std::vector<std::string>());
-        root_certificates.push_back(pem_str_cert);
-        root_certificate_table->put(root_certificates);
-
-        CCF_APP_INFO("aDNS: Create root certificate\n{}", pem_str_cert);
-
-        return;
-      }
-      catch (std::exception& ex)
-      {
-        CCF_APP_INFO("Certificate signing key gen fails with {}", ex.what());
-        return;
-      }
     }
 
   protected:
