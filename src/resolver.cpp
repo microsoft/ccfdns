@@ -3,17 +3,8 @@
 
 #include "resolver.h"
 
-#include "adns_types.h"
-#include "base32.h"
-#include "compression.h"
-#include "formatting.h"
 #include "rfc1035.h"
-#include "rfc3596.h"
 #include "rfc4034.h"
-#include "rfc5155.h"
-#include "rfc6891.h"
-#include "rfc7671.h"
-#include "small_vector.h"
 
 #include <ccf/crypto/entropy.h>
 #include <ccf/crypto/hash_bytes.h>
@@ -27,28 +18,12 @@
 #include <ccf/ds/logger.h>
 #include <cctype>
 #include <chrono>
-#include <cstddef>
 #include <map>
 #include <memory>
 #include <mutex>
-#include <openssl/bn.h>
-#include <openssl/core_names.h>
-#include <openssl/ec.h>
-#include <openssl/ecdsa.h>
-#include <openssl/engine.h>
-#include <openssl/err.h>
-#include <openssl/evp.h>
-#include <openssl/ossl_typ.h>
-#include <openssl/param_build.h>
-#include <openssl/pem.h>
-#include <openssl/types.h>
 #include <openssl/x509.h>
-#include <openssl/x509v3.h>
 #include <set>
-#include <sstream>
-#include <stdexcept>
 #include <string>
-#include <unordered_set>
 
 using namespace RFC1035;
 
@@ -215,38 +190,66 @@ namespace aDNS
   std::shared_ptr<RDataFormat> mk_rdata_format(
     Type t, const small_vector<uint16_t>& rdata)
   {
-    // clang-format off
     switch (t)
     {
-      case Type::A: return std::make_shared<RFC1035::A>(rdata); break;
-      case Type::NS: return std::make_shared<RFC1035::NS>(rdata); break;
-      case Type::CNAME: return std::make_shared<RFC1035::CNAME>(rdata); break;
-      case Type::SOA: return std::make_shared<RFC1035::SOA>(rdata); break;
-      case Type::MX: return std::make_shared<RFC1035::MX>(rdata); break;
-      case Type::TXT: return std::make_shared<RFC1035::TXT>(rdata); break;
+      case Type::A:
+        return std::make_shared<RFC1035::A>(rdata);
+        break;
+      case Type::NS:
+        return std::make_shared<RFC1035::NS>(rdata);
+        break;
+      case Type::CNAME:
+        return std::make_shared<RFC1035::CNAME>(rdata);
+        break;
+      case Type::SOA:
+        return std::make_shared<RFC1035::SOA>(rdata);
+        break;
+      case Type::MX:
+        return std::make_shared<RFC1035::MX>(rdata);
+        break;
+      case Type::TXT:
+        return std::make_shared<RFC1035::TXT>(rdata);
+        break;
 
-      case Type::AAAA: return std::make_shared<RFC3596::AAAA>(rdata); break;
+      case Type::AAAA:
+        return std::make_shared<RFC3596::AAAA>(rdata);
+        break;
 
-      case Type::DNSKEY: return std::make_shared<RFC4034::DNSKEY>(rdata); break;
-      case Type::DS: return std::make_shared<RFC4034::DS>(rdata); break;
-      case Type::RRSIG: return std::make_shared<RFC4034::RRSIG>(rdata, type2str); break;
-      case Type::NSEC: return std::make_shared<RFC4034::NSEC>(rdata, type2str); break;
+      case Type::DNSKEY:
+        return std::make_shared<RFC4034::DNSKEY>(rdata);
+        break;
+      case Type::DS:
+        return std::make_shared<RFC4034::DS>(rdata);
+        break;
+      case Type::RRSIG:
+        return std::make_shared<RFC4034::RRSIG>(rdata, type2str);
+        break;
+      case Type::NSEC:
+        return std::make_shared<RFC4034::NSEC>(rdata, type2str);
+        break;
 
-      case Type::NSEC3: return std::make_shared<RFC5155::NSEC3>(rdata, type2str); break;
-      case Type::NSEC3PARAM: return std::make_shared<RFC5155::NSEC3PARAM>(rdata); break;
+      case Type::NSEC3:
+        return std::make_shared<RFC5155::NSEC3>(rdata, type2str);
+        break;
+      case Type::NSEC3PARAM:
+        return std::make_shared<RFC5155::NSEC3PARAM>(rdata);
+        break;
 
-      case Type::OPT: return std::make_shared<RFC6891::OPT>(rdata); break;
+      case Type::OPT:
+        return std::make_shared<RFC6891::OPT>(rdata);
+        break;
 
-      case Type::TLSA: return std::make_shared<RFC7671::TLSA>(rdata); break;
+      case Type::TLSA:
+        return std::make_shared<RFC7671::TLSA>(rdata);
+        break;
 
-      case Type::CAA: return std::make_shared<RFC8659::CAA>(rdata); break;
+      case Type::CAA:
+        return std::make_shared<RFC8659::CAA>(rdata);
+        break;
 
-      // case Type::TLSKEY: return std::make_shared<aDNS::Types::TLSKEY>(rdata); break;
-      // case Type::ATTEST: return std::make_shared<aDNS::Types::ATTEST>(rdata); break;
-
-      default: throw std::runtime_error("unsupported rdata format");
+      default:
+        throw std::runtime_error("unsupported rdata format");
     }
-    // clang-format on
   }
 
   std::string string_from_resource_record(const ResourceRecord& rr)
@@ -461,7 +464,6 @@ namespace aDNS
       qclass,
       qtype,
       [this, &origin, &records, &condition](const auto& rr) {
-        // CCF_APP_TRACE("ADNS:  - {}", string_from_resource_record(rr));
         if ((!condition || (*condition)(rr)))
           records.insert(rr);
         return true;

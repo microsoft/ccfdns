@@ -42,7 +42,7 @@ namespace aDNS
     TLSA = static_cast<uint16_t>(RFC7671::Type::TLSA),
     OPT = static_cast<uint16_t>(RFC6891::Type::OPT),
     CAA = static_cast<uint16_t>(RFC8659::Type::CAA),
-    // TLSKEY = static_cast<uint16_t>(aDNS::Types::Type::TLSKEY),
+    TLSKEY = static_cast<uint16_t>(aDNS::Types::Type::TLSKEY),
     ATTEST = static_cast<uint16_t>(aDNS::Types::Type::ATTEST),
   };
 
@@ -64,7 +64,7 @@ namespace aDNS
     TLSA = static_cast<uint16_t>(RFC7671::Type::TLSA),
     OPT = static_cast<uint16_t>(RFC6891::Type::OPT),
     CAA = static_cast<uint16_t>(RFC8659::Type::CAA),
-    // TLSKEY = static_cast<uint16_t>(aDNS::Types::Type::TLSKEY),
+    TLSKEY = static_cast<uint16_t>(aDNS::Types::Type::TLSKEY),
     ATTEST = static_cast<uint16_t>(aDNS::Types::Type::ATTEST),
 
     ASTERISK = static_cast<uint16_t>(RFC1035::QType::ASTERISK),
