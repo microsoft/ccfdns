@@ -22,6 +22,7 @@
 #include <ccf/crypto/openssl/openssl_wrappers.h>
 #include <ccf/crypto/rsa_key_pair.h>
 #include <ccf/crypto/san.h>
+#include <ccf/crypto/sha256.h>
 #include <ccf/crypto/sha256_hash.h>
 #include <ccf/crypto/verifier.h>
 #include <ccf/ds/logger.h>
@@ -1604,6 +1605,17 @@ namespace aDNS
     auto public_key = X509_REQ_get0_pubkey(req);
     ccf::crypto::OpenSSL::CHECK1(X509_REQ_verify(req, public_key));
 
+    // Produce a SubjectPublicKeyInfo DER from the public key
+    ccf::crypto::OpenSSL::Unique_BIO buf{};
+    ccf::crypto::OpenSSL::CHECK1(i2d_PUBKEY_bio(buf, public_key));
+
+    BUF_MEM* bptr{nullptr};
+    BIO_get_mem_ptr(buf, &bptr);
+    small_vector<uint16_t> public_key_sv(bptr->length, (uint8_t*)bptr->data);
+    std::span<const uint8_t> public_key_der{(uint8_t*)bptr->data, bptr->length};
+
+    auto public_key_digest = ccf::crypto::sha256(public_key_der);
+
     auto subject_name = X509_REQ_get_subject_name(req);
     ccf::crypto::OpenSSL::CHECKNULL(subject_name);
     auto common_name = get_common_name(subject_name);
@@ -1664,6 +1676,13 @@ namespace aDNS
           e.what());
         policy_ok = false;
       }
+
+      if (report_data.to_sha256_hash() != public_key_digest)
+      {
+        CCF_APP_FAIL(
+          "ADNS: Attestation report hash does not match public key for {}", id);
+        policy_ok = false;
+      }
       auto parsed_attestation =
         *reinterpret_cast<const ccf::pal::snp::Attestation*>(
           quote_info.quote.data());
@@ -1672,19 +1691,10 @@ namespace aDNS
       // - uvm_endorsements_descriptor
       // - ...
       // and present it to the policy engine
-      // TODO check binding between report_data and the node key, or push that
-      // to the policy as was done in the sgx impl?
     }
 
     if (!policy_ok)
       throw std::runtime_error("service registration policy evaluation failed");
-
-    ccf::crypto::OpenSSL::Unique_BIO buf{};
-    ccf::crypto::OpenSSL::CHECK1(i2d_PUBKEY_bio(buf, public_key));
-
-    BUF_MEM* bptr{nullptr};
-    BIO_get_mem_ptr(buf, &bptr);
-    small_vector<uint16_t> public_key_sv(bptr->length, (uint8_t*)bptr->data);
 
     auto service_protocol =
       rr.node_information.begin()->second.address.protocol;
