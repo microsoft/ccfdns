@@ -424,24 +424,50 @@ TEST_CASE("Basic lookups")
     RFC1035::Message msg = mk_question("wwwv6.example.com.", aDNS::QType::AAAA);
     auto response = s.reply(msg).message;
     REQUIRE(response.answers.size() > 0);
-    /* clang-format off */
     REQUIRE(
       response.answers[0].rdata ==
       small_vector<uint16_t>{
-        0xFE, 0xDC, 0xBA, 0x98, 0x76, 0x54, 0x32, 0x10, 0xFE, 0xDC, 0xBA, 0x98, 0x76, 0x54, 0x32, 0x10});
-    /* clang-format on */
+        0xFE,
+        0xDC,
+        0xBA,
+        0x98,
+        0x76,
+        0x54,
+        0x32,
+        0x10,
+        0xFE,
+        0xDC,
+        0xBA,
+        0x98,
+        0x76,
+        0x54,
+        0x32,
+        0x10});
   }
 
   {
     RFC1035::Message msg = mk_question("www.example.com.", aDNS::QType::AAAA);
     auto response = s.reply(msg).message;
     REQUIRE(response.answers.size() > 0);
-    /* clang-format off */
     REQUIRE(
       response.answers[0].rdata ==
       small_vector<uint16_t>{
-        0xFE, 0xDC, 0xBA, 0x98, 0x76, 0x54, 0x32, 0x10, 0xFE, 0xDC, 0xBA, 0x98, 0x76, 0x54, 0x32, 0x11});
-    /* clang-format on */
+        0xFE,
+        0xDC,
+        0xBA,
+        0x98,
+        0x76,
+        0x54,
+        0x32,
+        0x10,
+        0xFE,
+        0xDC,
+        0xBA,
+        0x98,
+        0x76,
+        0x54,
+        0x32,
+        0x11});
   }
 
   {

@@ -1,6 +1,0 @@
-requests
-azure-mgmt-resource==0.30.0rc5
-keyring
-sev-snp-measure
-acme
-dnspython
