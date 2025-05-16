@@ -305,7 +305,6 @@ def main():
         nsec3_hash_algorithm="SHA1",
         nsec3_hash_iterations=0,
         nsec3_salt_length=8,
-        parent_base_url=None,
         contact=["antdl@microsoft.com"],
         service_ca=service_ca_config,
     )

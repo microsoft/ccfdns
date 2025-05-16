@@ -34,7 +34,6 @@ if [ ! -f "scripts/env/bin/activate" ]
 fi
 
 source scripts/env/bin/activate
-pip install -U pip
 pip install cmake_format==0.6.11 1>/dev/null
 
 unformatted_files=""
