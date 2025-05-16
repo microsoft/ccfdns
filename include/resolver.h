@@ -24,6 +24,16 @@ namespace aDNS
   using ResourceRecord = RFC1035::ResourceRecord;
   using CRRS = RFC4034::CRRS;
 
+  enum class AttestationType
+  {
+    SEV_SNP_CONTAINERPLAT_AMD_UVM = 0
+  };
+
+  DECLARE_JSON_ENUM(
+    AttestationType,
+    {{AttestationType::SEV_SNP_CONTAINERPLAT_AMD_UVM,
+      "SEV-SNP:ContainerPlat-AMD-UVM"}});
+
   enum class Type : uint16_t
   {
     A = static_cast<uint16_t>(RFC1035::Type::A),
@@ -119,6 +129,7 @@ namespace aDNS
     {
       NodeAddress address;
       std::string attestation;
+      aDNS::AttestationType attestation_type;
     };
 
     struct Configuration
