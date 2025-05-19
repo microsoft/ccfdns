@@ -664,8 +664,6 @@ TEST_CASE("Service registration")
   cfg = {
     .origin = Name("example.com."),
     .soa = "ns1.example.com. joe.example.com. 4 604800 86400 2419200 0",
-    .contact = {"joe@example.com"},
-    .service_ca = {.name = "myCA"},
     .node_addresses =
       {{"id",
         Resolver::NodeAddress{

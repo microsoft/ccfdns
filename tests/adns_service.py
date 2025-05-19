@@ -86,9 +86,6 @@ class aDNSConfig(dict):
         nsec3_hash_algorithm,
         nsec3_hash_iterations,
         nsec3_salt_length,
-        contact,
-        service_ca,
-        fixed_zsk=None,
     ):
         dict.__init__(
             self,
@@ -104,9 +101,6 @@ class aDNSConfig(dict):
             nsec3_hash_algorithm=nsec3_hash_algorithm,
             nsec3_hash_iterations=nsec3_hash_iterations,
             nsec3_salt_length=nsec3_salt_length,
-            contact=contact,
-            service_ca=service_ca,
-            fixed_zsk=fixed_zsk,
         )
         self.origin = origin
         self.service_name = service_name
@@ -120,9 +114,6 @@ class aDNSConfig(dict):
         self.nsec3_hash_algorithm = nsec3_hash_algorithm
         self.nsec3_hash_iterations = nsec3_hash_iterations
         self.nsec3_salt_length = nsec3_salt_length
-        self.service_ca = service_ca
-        self.contact = contact
-        self.fixed_zsk = fixed_zsk
 
 
 def add_record(client, origin, name, stype, rdata_obj):

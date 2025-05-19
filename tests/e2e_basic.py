@@ -69,7 +69,7 @@ def submit_service_registration(
             ).decode(),
             # Don't understand why this is in RegistrationRequest
             # This is delegation only for delegated SOA...
-            "contact": ["antdl@microsoft.com"],
+            "contact": ["test@email.com"],
             "node_information": {
                 # Possible to register multiple instances in one call
                 "default": {
@@ -305,8 +305,6 @@ def main():
         nsec3_hash_algorithm="SHA1",
         nsec3_hash_iterations=0,
         nsec3_salt_length=8,
-        contact=["antdl@microsoft.com"],
-        service_ca=service_ca_config,
     )
 
     run(targs)

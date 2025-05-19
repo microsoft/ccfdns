@@ -64,8 +64,6 @@ namespace aDNS
 
     {static_cast<uint16_t>(RFC7671::Type::TLSA), Type::TLSA},
 
-    {static_cast<uint16_t>(RFC8659::Type::CAA), Type::CAA},
-
     {static_cast<uint16_t>(aDNS::Types::Type::ATTEST), Type::ATTEST},
   };
 
@@ -100,7 +98,6 @@ namespace aDNS
     TFSF(RFC6891);
     TFSF(RFC5155);
     TFSF(RFC7671);
-    TFSF(RFC8659);
     TFSF(aDNS::Types);
 
     throw std::runtime_error(
@@ -122,7 +119,6 @@ namespace aDNS
     SFTF(RFC6891);
     SFTF(RFC5155);
     SFTF(RFC7671);
-    SFTF(RFC8659);
     SFTF(aDNS::Types);
 
     // https://datatracker.ietf.org/doc/html/rfc3597#section-5
@@ -241,10 +237,6 @@ namespace aDNS
 
       case Type::TLSA:
         return std::make_shared<RFC7671::TLSA>(rdata);
-        break;
-
-      case Type::CAA:
-        return std::make_shared<RFC8659::CAA>(rdata);
         break;
 
       default:
@@ -1212,34 +1204,6 @@ namespace aDNS
       rdata);
   }
 
-  void Resolver::add_caa_records(
-    const Name& origin,
-    const Name& name,
-    const std::string& ca_name,
-    const std::vector<std::string>& contact)
-  {
-    using namespace RFC8659;
-
-    add(
-      origin,
-      mk_rr(
-        name,
-        aDNS::Type::CAA,
-        Class::IN,
-        3600,
-        CAA(0, "issue", ca_name + "; validationmethods=dns-01")));
-
-    for (const auto& email : contact)
-      add(
-        origin,
-        mk_rr(
-          name,
-          aDNS::Type::CAA,
-          Class::IN,
-          3600,
-          CAA(0, "iodef", "mailto:" + email)));
-  }
-
   small_vector<uint8_t> Resolver::get_nsec3_salt(
     const Name& origin, aDNS::QClass class_)
   {
@@ -1329,9 +1293,6 @@ namespace aDNS
     if (cfg.node_addresses.empty())
       throw std::runtime_error("missing node information");
 
-    if (cfg.contact.empty())
-      throw std::runtime_error("at least one contact is required");
-
     auto tls_key = get_tls_key();
 
     RegistrationInformation out;
@@ -1348,8 +1309,6 @@ namespace aDNS
     remove(cfg.origin, cfg.origin, Class::IN, Type::NS);
     remove(cfg.origin, cfg.origin, Class::IN, Type::A);
     // TODO why would we keep any other records?
-
-    add_caa_records(cfg.origin, cfg.origin, cfg.service_ca.name, cfg.contact);
 
     for (const auto& [id, addr] : cfg.node_addresses)
     {
@@ -1370,9 +1329,6 @@ namespace aDNS
       add(
         cfg.origin,
         mk_rr(cfg.origin, Type::A, Class::IN, cfg.default_ttl, A(addr.ip)));
-
-      remove(cfg.origin, addr.name, Class::IN, Type::CAA);
-      add_caa_records(cfg.origin, addr.name, cfg.service_ca.name, cfg.contact);
     }
 
     add_attestation_records(cfg.origin, cfg.origin, out.node_information);
@@ -1548,7 +1504,6 @@ namespace aDNS
   void Resolver::register_service(const RegistrationRequest& rr)
   {
     using namespace RFC7671;
-    using namespace RFC8659;
 
     CCF_APP_INFO("ADNS: In register service\n");
 
@@ -1657,10 +1612,6 @@ namespace aDNS
 
       remove(origin, tlsa_name, Class::IN, Type::AAAA);
       add_fragmented(origin, tlsa_name, tlsa_rr);
-
-      // CAA RR for node
-      remove(origin, name, Class::IN, Type::CAA);
-      add_caa_records(origin, name, configuration.service_ca.name, rr.contact);
     }
 
     add_attestation_records(origin, service_name, rr.node_information);
@@ -1691,11 +1642,6 @@ namespace aDNS
       remove(origin, service_tlsa_name, Class::IN, Type::AAAA);
       add_fragmented(origin, service_tlsa_name, tlsa_rr);
     }
-
-    // CAA RR for service
-    remove(origin, service_name, Class::IN, Type::CAA);
-    add_caa_records(
-      origin, service_name, configuration.service_ca.name, rr.contact);
 
     sign(origin);
 

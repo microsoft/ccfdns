@@ -155,7 +155,6 @@ namespace aDNS
     Resolver::Configuration,
     origin,
     soa,
-    contact,
     default_ttl,
     signing_algorithm,
     digest_type,
@@ -164,7 +163,6 @@ namespace aDNS
     nsec3_hash_algorithm,
     nsec3_hash_iterations,
     nsec3_salt_length,
-    service_ca,
     node_addresses);
   DECLARE_JSON_OPTIONAL_FIELDS(
     Resolver::Configuration, alternative_names, fixed_zsk);
