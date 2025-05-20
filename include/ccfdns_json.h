@@ -164,8 +164,7 @@ namespace aDNS
     nsec3_hash_iterations,
     nsec3_salt_length,
     node_addresses);
-  DECLARE_JSON_OPTIONAL_FIELDS(
-    Resolver::Configuration, alternative_names, fixed_zsk);
+  DECLARE_JSON_OPTIONAL_FIELDS(Resolver::Configuration, alternative_names);
 
   DECLARE_JSON_TYPE_WITH_OPTIONAL_FIELDS(Resolver::RegistrationInformation);
   DECLARE_JSON_REQUIRED_FIELDS(

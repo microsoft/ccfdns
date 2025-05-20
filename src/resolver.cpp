@@ -724,12 +724,7 @@ namespace aDNS
   {
     const auto& configuration = get_configuration();
 
-    std::shared_ptr<ccf::crypto::KeyPair> new_zsk;
-
-    if (configuration.fixed_zsk)
-      new_zsk = ccf::crypto::make_key_pair(*configuration.fixed_zsk);
-    else
-      new_zsk = ccf::crypto::make_key_pair();
+    auto new_zsk = ccf::crypto::make_key_pair();
 
     small_vector<uint16_t> new_zsk_pk = encode_public_key(new_zsk);
 

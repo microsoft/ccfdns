@@ -136,8 +136,6 @@ namespace aDNS
       uint16_t nsec3_hash_iterations = 3;
       uint8_t nsec3_salt_length = 8;
 
-      std::optional<std::string> fixed_zsk; // TODO: Debug-only?
-
       struct ServiceCA
       {
         std::string name;
