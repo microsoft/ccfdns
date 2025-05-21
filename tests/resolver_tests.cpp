@@ -685,9 +685,7 @@ TEST_CASE("Service registration")
     service_key->create_csr_der("CN=" + url_name, {{"alt." + url_name, false}});
 
   s.register_service(
-    {csr,
-     {"joe@example.com"},
-     {{"id", {{url_name, address, "tcp", 443}, dummy_attestation}}}});
+    {csr, {{"id", {{url_name, address, "tcp", 443}, dummy_attestation}}}});
 
   auto dnskey_rrs =
     s.resolve(cfg.origin, aDNS::QType::DNSKEY, aDNS::QClass::IN).answers;

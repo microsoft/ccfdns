@@ -190,55 +190,34 @@ namespace aDNS
     {
       case Type::A:
         return std::make_shared<RFC1035::A>(rdata);
-        break;
       case Type::NS:
         return std::make_shared<RFC1035::NS>(rdata);
-        break;
       case Type::CNAME:
         return std::make_shared<RFC1035::CNAME>(rdata);
-        break;
       case Type::SOA:
         return std::make_shared<RFC1035::SOA>(rdata);
-        break;
       case Type::MX:
         return std::make_shared<RFC1035::MX>(rdata);
-        break;
       case Type::TXT:
         return std::make_shared<RFC1035::TXT>(rdata);
-        break;
-
       case Type::AAAA:
         return std::make_shared<RFC3596::AAAA>(rdata);
-        break;
-
       case Type::DNSKEY:
         return std::make_shared<RFC4034::DNSKEY>(rdata);
-        break;
       case Type::DS:
         return std::make_shared<RFC4034::DS>(rdata);
-        break;
       case Type::RRSIG:
         return std::make_shared<RFC4034::RRSIG>(rdata, type2str);
-        break;
       case Type::NSEC:
         return std::make_shared<RFC4034::NSEC>(rdata, type2str);
-        break;
-
       case Type::NSEC3:
         return std::make_shared<RFC5155::NSEC3>(rdata, type2str);
-        break;
       case Type::NSEC3PARAM:
         return std::make_shared<RFC5155::NSEC3PARAM>(rdata);
-        break;
-
       case Type::OPT:
         return std::make_shared<RFC6891::OPT>(rdata);
-        break;
-
       case Type::TLSA:
         return std::make_shared<RFC7671::TLSA>(rdata);
-        break;
-
       default:
         throw std::runtime_error("unsupported rdata format");
     }

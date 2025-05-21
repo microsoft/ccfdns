@@ -161,7 +161,6 @@ namespace aDNS
     struct RegistrationRequest
     {
       std::vector<uint8_t> csr;
-      std::vector<std::string> contact;
       std::map<std::string, NodeInfo> node_information;
       std::optional<std::string> configuration_receipt;
     };

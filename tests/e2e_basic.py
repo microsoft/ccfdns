@@ -66,9 +66,6 @@ def submit_service_registration(
             "csr": base64.b64encode(
                 csr.public_bytes(serialization.Encoding.DER)
             ).decode(),
-            # Don't understand why this is in RegistrationRequest
-            # This is delegation only for delegated SOA...
-            "contact": ["test@email.com"],
             "node_information": {
                 # Possible to register multiple instances in one call
                 "default": {

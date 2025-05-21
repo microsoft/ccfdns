@@ -174,7 +174,7 @@ namespace aDNS
 
   DECLARE_JSON_TYPE_WITH_OPTIONAL_FIELDS(Resolver::RegistrationRequest);
   DECLARE_JSON_REQUIRED_FIELDS(
-    Resolver::RegistrationRequest, csr, contact, node_information);
+    Resolver::RegistrationRequest, csr, node_information);
   DECLARE_JSON_OPTIONAL_FIELDS(
     Resolver::RegistrationRequest, configuration_receipt);
 }
