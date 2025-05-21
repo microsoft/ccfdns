@@ -155,7 +155,6 @@ namespace aDNS
     Resolver::Configuration,
     origin,
     soa,
-    contact,
     default_ttl,
     signing_algorithm,
     digest_type,
@@ -164,10 +163,8 @@ namespace aDNS
     nsec3_hash_algorithm,
     nsec3_hash_iterations,
     nsec3_salt_length,
-    service_ca,
     node_addresses);
-  DECLARE_JSON_OPTIONAL_FIELDS(
-    Resolver::Configuration, alternative_names, fixed_zsk);
+  DECLARE_JSON_OPTIONAL_FIELDS(Resolver::Configuration, alternative_names);
 
   DECLARE_JSON_TYPE_WITH_OPTIONAL_FIELDS(Resolver::RegistrationInformation);
   DECLARE_JSON_REQUIRED_FIELDS(
@@ -177,7 +174,7 @@ namespace aDNS
 
   DECLARE_JSON_TYPE_WITH_OPTIONAL_FIELDS(Resolver::RegistrationRequest);
   DECLARE_JSON_REQUIRED_FIELDS(
-    Resolver::RegistrationRequest, csr, contact, node_information);
+    Resolver::RegistrationRequest, csr, node_information);
   DECLARE_JSON_OPTIONAL_FIELDS(
     Resolver::RegistrationRequest, configuration_receipt);
 }

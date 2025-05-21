@@ -28,13 +28,10 @@
 #include <ccf/json_handler.h>
 #include <ccf/kv/version.h>
 #include <ccf/network_identity_interface.h>
-#include <ccf/node/acme_subsystem_interface.h>
 #include <ccf/node/node_configuration_interface.h>
 #include <ccf/pal/attestation.h>
 #include <ccf/research/custom_protocol_subsystem_interface.h>
-#include <ccf/service/acme_client_config.h>
 #include <ccf/service/node_info.h>
-#include <ccf/service/tables/acme_certificates.h>
 #include <ccf/service/tables/nodes.h>
 #include <ccf/tx.h>
 #include <ccf/tx_id.h>

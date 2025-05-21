@@ -424,24 +424,50 @@ TEST_CASE("Basic lookups")
     RFC1035::Message msg = mk_question("wwwv6.example.com.", aDNS::QType::AAAA);
     auto response = s.reply(msg).message;
     REQUIRE(response.answers.size() > 0);
-    /* clang-format off */
     REQUIRE(
       response.answers[0].rdata ==
       small_vector<uint16_t>{
-        0xFE, 0xDC, 0xBA, 0x98, 0x76, 0x54, 0x32, 0x10, 0xFE, 0xDC, 0xBA, 0x98, 0x76, 0x54, 0x32, 0x10});
-    /* clang-format on */
+        0xFE,
+        0xDC,
+        0xBA,
+        0x98,
+        0x76,
+        0x54,
+        0x32,
+        0x10,
+        0xFE,
+        0xDC,
+        0xBA,
+        0x98,
+        0x76,
+        0x54,
+        0x32,
+        0x10});
   }
 
   {
     RFC1035::Message msg = mk_question("www.example.com.", aDNS::QType::AAAA);
     auto response = s.reply(msg).message;
     REQUIRE(response.answers.size() > 0);
-    /* clang-format off */
     REQUIRE(
       response.answers[0].rdata ==
       small_vector<uint16_t>{
-        0xFE, 0xDC, 0xBA, 0x98, 0x76, 0x54, 0x32, 0x10, 0xFE, 0xDC, 0xBA, 0x98, 0x76, 0x54, 0x32, 0x11});
-    /* clang-format on */
+        0xFE,
+        0xDC,
+        0xBA,
+        0x98,
+        0x76,
+        0x54,
+        0x32,
+        0x10,
+        0xFE,
+        0xDC,
+        0xBA,
+        0x98,
+        0x76,
+        0x54,
+        0x32,
+        0x11});
   }
 
   {
@@ -638,8 +664,6 @@ TEST_CASE("Service registration")
   cfg = {
     .origin = Name("example.com."),
     .soa = "ns1.example.com. joe.example.com. 4 604800 86400 2419200 0",
-    .contact = {"joe@example.com"},
-    .service_ca = {.name = "myCA"},
     .node_addresses =
       {{"id",
         Resolver::NodeAddress{
@@ -661,9 +685,7 @@ TEST_CASE("Service registration")
     service_key->create_csr_der("CN=" + url_name, {{"alt." + url_name, false}});
 
   s.register_service(
-    {csr,
-     {"joe@example.com"},
-     {{"id", {{url_name, address, "tcp", 443}, dummy_attestation}}}});
+    {csr, {{"id", {{url_name, address, "tcp", 443}, dummy_attestation}}}});
 
   auto dnskey_rrs =
     s.resolve(cfg.origin, aDNS::QType::DNSKEY, aDNS::QClass::IN).answers;
