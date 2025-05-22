@@ -705,7 +705,6 @@ TEST_CASE("Service registration")
 
 int main(int argc, char** argv)
 {
-  ccf::logger::config::default_init();
   doctest::Context context;
   context.applyCommandLine(argc, argv);
   int res = context.run();

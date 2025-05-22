@@ -22,6 +22,7 @@
 #include <ccf/pal/attestation_sev_snp.h>
 #include <ccf/pal/measurement.h>
 #include <ccf/pal/report_data.h>
+#include <ccf/pal/uvm_endorsements.h>
 #include <cctype>
 #include <chrono>
 #include <map>
@@ -32,19 +33,6 @@
 #include <string>
 
 using namespace RFC1035;
-
-namespace ccf::crypto::OpenSSL
-{
-  // TODO impl this in CCF crypto interface
-  struct Unique_X509_REQ_DER
-    : public Unique_SSL_OBJECT<X509_REQ, X509_REQ_new, X509_REQ_free>
-  {
-    using Unique_SSL_OBJECT::Unique_SSL_OBJECT;
-    Unique_X509_REQ_DER(BIO* mem) :
-      Unique_SSL_OBJECT(d2i_X509_REQ_bio(mem, NULL), X509_REQ_free)
-    {}
-  };
-}
 
 namespace aDNS
 {
@@ -1529,17 +1517,15 @@ namespace aDNS
 
     bool policy_ok = true;
 
-    // TODO attestation check
     for (const auto& [id, info] : rr.node_information)
     {
       // Assume the attestation string is a JSON object
-      // with "evidence", "endorsements" and "uvm_endorsements" base64-encoded
-      // fields
+      // with "evidence", "endorsements" and "uvm_endorsements"
       auto attestation = nlohmann::json::parse(info.attestation);
       auto evidence = attestation["evidence"].get<std::string>();
       auto endorsements = attestation["endorsements"].get<std::string>();
-      // auto uvm_endorsements =
-      // attestation["uvm_endorsements"].get<std::string>();
+      auto uvm_endorsements =
+        attestation["uvm_endorsements"].get<std::string>();
 
       ccf::pal::PlatformAttestationMeasurement measurement = {};
       ccf::pal::PlatformAttestationReportData report_data = {};
@@ -1547,18 +1533,15 @@ namespace aDNS
       quote_info.format = ccf::QuoteFormat::amd_sev_snp_v1;
       quote_info.quote = ccf::crypto::raw_from_b64(evidence);
       quote_info.endorsements = ccf::crypto::raw_from_b64(endorsements);
-      // auto uvm_endorsements_raw =
-      //  ccf::crypto::raw_from_b64(uvm_endorsements);
-      // ccf::UVMEndorsements uvm_endorsements_descriptor = {};
+      auto uvm_endorsements_raw = ccf::crypto::raw_from_b64(uvm_endorsements);
+      ccf::pal::UVMEndorsements uvm_endorsements_descriptor = {};
       try
       {
         ccf::pal::verify_snp_attestation_report(
           quote_info, measurement, report_data);
-        // TODO: this is not exposed by CCF publicly yet
-        // uvm_endorsements_descriptor =
-        // ccf::verify_uvm_endorsements(uvm_endorsements_raw, measurement, {},
-        // false /* Do not authz the descriptor, the policy will take care of
-        // that */);
+        uvm_endorsements_descriptor =
+          ccf::pal::verify_uvm_endorsements_descriptor(
+            uvm_endorsements_raw, measurement);
       }
       catch (const std::exception& e)
       {
@@ -1578,8 +1561,8 @@ namespace aDNS
       auto parsed_attestation =
         *reinterpret_cast<const ccf::pal::snp::Attestation*>(
           quote_info.quote.data());
-      // TODO Create a report with
-      // - parsed_attestation.host_data
+      // TODO Create a JSON report with
+      // - parsed_attestation.*
       // - uvm_endorsements_descriptor
       // - ...
       // and present it to the policy engine
