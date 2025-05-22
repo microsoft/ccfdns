@@ -1550,6 +1550,7 @@ namespace aDNS
           id,
           e.what());
         policy_ok = false;
+        return;
       }
 
       if (report_data.to_sha256_hash() != public_key_digest)
@@ -1557,6 +1558,7 @@ namespace aDNS
         CCF_APP_FAIL(
           "ADNS: Attestation report hash does not match public key for {}", id);
         policy_ok = false;
+        return;
       }
       auto parsed_attestation =
         *reinterpret_cast<const ccf::pal::snp::Attestation*>(
