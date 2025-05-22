@@ -7,6 +7,7 @@
 #include "rfc1035.h"
 #include "rfc4034.h"
 
+#include <ccf/_private/crypto/openssl/hash.h>
 #include <ccf/crypto/ecdsa.h>
 #include <ccf/crypto/openssl/openssl_wrappers.h>
 #include <ccf/ds/logger.h>
@@ -705,6 +706,7 @@ TEST_CASE("Service registration")
 
 int main(int argc, char** argv)
 {
+  ccf::crypto::openssl_sha256_init();
   doctest::Context context;
   context.applyCommandLine(argc, argv);
   int res = context.run();
