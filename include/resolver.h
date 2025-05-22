@@ -9,7 +9,6 @@
 #include "rfc5155.h"
 #include "rfc6891.h"
 #include "rfc7671.h"
-#include "rfc8659.h"
 
 #include <ccf/crypto/key_pair.h>
 #include <ccf/crypto/pem.h>
@@ -51,8 +50,7 @@ namespace aDNS
     NSEC3PARAM = static_cast<uint16_t>(RFC5155::Type::NSEC3PARAM),
     TLSA = static_cast<uint16_t>(RFC7671::Type::TLSA),
     OPT = static_cast<uint16_t>(RFC6891::Type::OPT),
-    CAA = static_cast<uint16_t>(RFC8659::Type::CAA),
-    // TLSKEY = static_cast<uint16_t>(aDNS::Types::Type::TLSKEY),
+    TLSKEY = static_cast<uint16_t>(aDNS::Types::Type::TLSKEY),
     ATTEST = static_cast<uint16_t>(aDNS::Types::Type::ATTEST),
   };
 
@@ -73,10 +71,8 @@ namespace aDNS
     NSEC3PARAM = static_cast<uint16_t>(RFC5155::Type::NSEC3PARAM),
     TLSA = static_cast<uint16_t>(RFC7671::Type::TLSA),
     OPT = static_cast<uint16_t>(RFC6891::Type::OPT),
-    CAA = static_cast<uint16_t>(RFC8659::Type::CAA),
-    // TLSKEY = static_cast<uint16_t>(aDNS::Types::Type::TLSKEY),
+    TLSKEY = static_cast<uint16_t>(aDNS::Types::Type::TLSKEY),
     ATTEST = static_cast<uint16_t>(aDNS::Types::Type::ATTEST),
-
     ASTERISK = static_cast<uint16_t>(RFC1035::QType::ASTERISK),
   };
 
@@ -139,8 +135,6 @@ namespace aDNS
 
       std::optional<std::vector<Name>> alternative_names;
 
-      std::vector<std::string> contact;
-
       uint32_t default_ttl = 86400;
       RFC4034::Algorithm signing_algorithm =
         RFC4034::Algorithm::ECDSAP384SHA384;
@@ -152,8 +146,6 @@ namespace aDNS
         RFC5155::HashAlgorithm::SHA1;
       uint16_t nsec3_hash_iterations = 3;
       uint8_t nsec3_salt_length = 8;
-
-      std::optional<std::string> fixed_zsk; // TODO: Debug-only?
 
       struct ServiceCA
       {
@@ -180,7 +172,6 @@ namespace aDNS
     struct RegistrationRequest
     {
       std::vector<uint8_t> csr;
-      std::vector<std::string> contact;
       std::map<std::string, NodeInfo> node_information;
       std::optional<std::string> configuration_receipt;
     };
@@ -405,12 +396,6 @@ namespace aDNS
       const small_vector<uint16_t>& rdata);
 
     Name find_zone(const Name& name);
-
-    void add_caa_records(
-      const Name& origin,
-      const Name& name,
-      const std::string& ca_name,
-      const std::vector<std::string>& contact);
 
     size_t sign_rrset(
       const Name& origin,

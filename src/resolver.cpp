@@ -3,17 +3,8 @@
 
 #include "resolver.h"
 
-#include "adns_types.h"
-#include "base32.h"
-#include "compression.h"
-#include "formatting.h"
 #include "rfc1035.h"
-#include "rfc3596.h"
 #include "rfc4034.h"
-#include "rfc5155.h"
-#include "rfc6891.h"
-#include "rfc7671.h"
-#include "small_vector.h"
 
 #include <ccf/crypto/entropy.h>
 #include <ccf/crypto/hash_bytes.h>
@@ -33,28 +24,12 @@
 #include <ccf/pal/report_data.h>
 #include <cctype>
 #include <chrono>
-#include <cstddef>
 #include <map>
 #include <memory>
 #include <mutex>
-#include <openssl/bn.h>
-#include <openssl/core_names.h>
-#include <openssl/ec.h>
-#include <openssl/ecdsa.h>
-#include <openssl/engine.h>
-#include <openssl/err.h>
-#include <openssl/evp.h>
-#include <openssl/ossl_typ.h>
-#include <openssl/param_build.h>
-#include <openssl/pem.h>
-#include <openssl/types.h>
 #include <openssl/x509.h>
-#include <openssl/x509v3.h>
 #include <set>
-#include <sstream>
-#include <stdexcept>
 #include <string>
-#include <unordered_set>
 
 using namespace RFC1035;
 
@@ -95,8 +70,6 @@ namespace aDNS
 
     {static_cast<uint16_t>(RFC7671::Type::TLSA), Type::TLSA},
 
-    {static_cast<uint16_t>(RFC8659::Type::CAA), Type::CAA},
-
     {static_cast<uint16_t>(aDNS::Types::Type::ATTEST), Type::ATTEST},
   };
 
@@ -131,7 +104,6 @@ namespace aDNS
     TFSF(RFC6891);
     TFSF(RFC5155);
     TFSF(RFC7671);
-    TFSF(RFC8659);
     TFSF(aDNS::Types);
 
     throw std::runtime_error(
@@ -153,7 +125,6 @@ namespace aDNS
     SFTF(RFC6891);
     SFTF(RFC5155);
     SFTF(RFC7671);
-    SFTF(RFC8659);
     SFTF(aDNS::Types);
 
     // https://datatracker.ietf.org/doc/html/rfc3597#section-5
@@ -221,38 +192,41 @@ namespace aDNS
   std::shared_ptr<RDataFormat> mk_rdata_format(
     Type t, const small_vector<uint16_t>& rdata)
   {
-    // clang-format off
     switch (t)
     {
-      case Type::A: return std::make_shared<RFC1035::A>(rdata); break;
-      case Type::NS: return std::make_shared<RFC1035::NS>(rdata); break;
-      case Type::CNAME: return std::make_shared<RFC1035::CNAME>(rdata); break;
-      case Type::SOA: return std::make_shared<RFC1035::SOA>(rdata); break;
-      case Type::MX: return std::make_shared<RFC1035::MX>(rdata); break;
-      case Type::TXT: return std::make_shared<RFC1035::TXT>(rdata); break;
-
-      case Type::AAAA: return std::make_shared<RFC3596::AAAA>(rdata); break;
-
-      case Type::DNSKEY: return std::make_shared<RFC4034::DNSKEY>(rdata); break;
-      case Type::DS: return std::make_shared<RFC4034::DS>(rdata); break;
-      case Type::RRSIG: return std::make_shared<RFC4034::RRSIG>(rdata, type2str); break;
-      case Type::NSEC: return std::make_shared<RFC4034::NSEC>(rdata, type2str); break;
-
-      case Type::NSEC3: return std::make_shared<RFC5155::NSEC3>(rdata, type2str); break;
-      case Type::NSEC3PARAM: return std::make_shared<RFC5155::NSEC3PARAM>(rdata); break;
-
-      case Type::OPT: return std::make_shared<RFC6891::OPT>(rdata); break;
-
-      case Type::TLSA: return std::make_shared<RFC7671::TLSA>(rdata); break;
-
-      case Type::CAA: return std::make_shared<RFC8659::CAA>(rdata); break;
-
-      // case Type::TLSKEY: return std::make_shared<aDNS::Types::TLSKEY>(rdata); break;
-      // case Type::ATTEST: return std::make_shared<aDNS::Types::ATTEST>(rdata); break;
-
-      default: throw std::runtime_error("unsupported rdata format");
+      case Type::A:
+        return std::make_shared<RFC1035::A>(rdata);
+      case Type::NS:
+        return std::make_shared<RFC1035::NS>(rdata);
+      case Type::CNAME:
+        return std::make_shared<RFC1035::CNAME>(rdata);
+      case Type::SOA:
+        return std::make_shared<RFC1035::SOA>(rdata);
+      case Type::MX:
+        return std::make_shared<RFC1035::MX>(rdata);
+      case Type::TXT:
+        return std::make_shared<RFC1035::TXT>(rdata);
+      case Type::AAAA:
+        return std::make_shared<RFC3596::AAAA>(rdata);
+      case Type::DNSKEY:
+        return std::make_shared<RFC4034::DNSKEY>(rdata);
+      case Type::DS:
+        return std::make_shared<RFC4034::DS>(rdata);
+      case Type::RRSIG:
+        return std::make_shared<RFC4034::RRSIG>(rdata, type2str);
+      case Type::NSEC:
+        return std::make_shared<RFC4034::NSEC>(rdata, type2str);
+      case Type::NSEC3:
+        return std::make_shared<RFC5155::NSEC3>(rdata, type2str);
+      case Type::NSEC3PARAM:
+        return std::make_shared<RFC5155::NSEC3PARAM>(rdata);
+      case Type::OPT:
+        return std::make_shared<RFC6891::OPT>(rdata);
+      case Type::TLSA:
+        return std::make_shared<RFC7671::TLSA>(rdata);
+      default:
+        throw std::runtime_error("unsupported rdata format");
     }
-    // clang-format on
   }
 
   std::string string_from_resource_record(const ResourceRecord& rr)
@@ -467,7 +441,6 @@ namespace aDNS
       qclass,
       qtype,
       [this, &origin, &records, &condition](const auto& rr) {
-        // CCF_APP_TRACE("ADNS:  - {}", string_from_resource_record(rr));
         if ((!condition || (*condition)(rr)))
           records.insert(rr);
         return true;
@@ -736,12 +709,7 @@ namespace aDNS
   {
     const auto& configuration = get_configuration();
 
-    std::shared_ptr<ccf::crypto::KeyPair> new_zsk;
-
-    if (configuration.fixed_zsk)
-      new_zsk = ccf::crypto::make_key_pair(*configuration.fixed_zsk);
-    else
-      new_zsk = ccf::crypto::make_key_pair();
+    auto new_zsk = ccf::crypto::make_key_pair();
 
     small_vector<uint16_t> new_zsk_pk = encode_public_key(new_zsk);
 
@@ -1216,34 +1184,6 @@ namespace aDNS
       rdata);
   }
 
-  void Resolver::add_caa_records(
-    const Name& origin,
-    const Name& name,
-    const std::string& ca_name,
-    const std::vector<std::string>& contact)
-  {
-    using namespace RFC8659;
-
-    add(
-      origin,
-      mk_rr(
-        name,
-        aDNS::Type::CAA,
-        Class::IN,
-        3600,
-        CAA(0, "issue", ca_name + "; validationmethods=dns-01")));
-
-    for (const auto& email : contact)
-      add(
-        origin,
-        mk_rr(
-          name,
-          aDNS::Type::CAA,
-          Class::IN,
-          3600,
-          CAA(0, "iodef", "mailto:" + email)));
-  }
-
   small_vector<uint8_t> Resolver::get_nsec3_salt(
     const Name& origin, aDNS::QClass class_)
   {
@@ -1333,9 +1273,6 @@ namespace aDNS
     if (cfg.node_addresses.empty())
       throw std::runtime_error("missing node information");
 
-    if (cfg.contact.empty())
-      throw std::runtime_error("at least one contact is required");
-
     auto tls_key = get_tls_key();
 
     RegistrationInformation out;
@@ -1352,8 +1289,6 @@ namespace aDNS
     remove(cfg.origin, cfg.origin, Class::IN, Type::NS);
     remove(cfg.origin, cfg.origin, Class::IN, Type::A);
     // TODO why would we keep any other records?
-
-    add_caa_records(cfg.origin, cfg.origin, cfg.service_ca.name, cfg.contact);
 
     for (const auto& [id, addr] : cfg.node_addresses)
     {
@@ -1374,9 +1309,6 @@ namespace aDNS
       add(
         cfg.origin,
         mk_rr(cfg.origin, Type::A, Class::IN, cfg.default_ttl, A(addr.ip)));
-
-      remove(cfg.origin, addr.name, Class::IN, Type::CAA);
-      add_caa_records(cfg.origin, addr.name, cfg.service_ca.name, cfg.contact);
     }
 
     add_attestation_records(cfg.origin, cfg.origin, out.node_information);
@@ -1552,7 +1484,6 @@ namespace aDNS
   void Resolver::register_service(const RegistrationRequest& rr)
   {
     using namespace RFC7671;
-    using namespace RFC8659;
 
     CCF_APP_INFO("ADNS: In register service\n");
 
@@ -1718,10 +1649,6 @@ namespace aDNS
 
       remove(origin, tlsa_name, Class::IN, Type::AAAA);
       add_fragmented(origin, tlsa_name, tlsa_rr);
-
-      // CAA RR for node
-      remove(origin, name, Class::IN, Type::CAA);
-      add_caa_records(origin, name, configuration.service_ca.name, rr.contact);
     }
 
     add_attestation_records(origin, service_name, rr.node_information);
@@ -1752,11 +1679,6 @@ namespace aDNS
       remove(origin, service_tlsa_name, Class::IN, Type::AAAA);
       add_fragmented(origin, service_tlsa_name, tlsa_rr);
     }
-
-    // CAA RR for service
-    remove(origin, service_name, Class::IN, Type::CAA);
-    add_caa_records(
-      origin, service_name, configuration.service_ca.name, rr.contact);
 
     sign(origin);
 
