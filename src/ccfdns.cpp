@@ -680,7 +680,11 @@ namespace ccfdns
 
         // TODO attestation
         auto attestation = "";
-        r[id] = {.address = addr, .attestation = attestation};
+        r[id] = {
+          .address = addr,
+          .attestation = attestation,
+          .attestation_type =
+            aDNS::AttestationType::SEV_SNP_CONTAINERPLAT_AMD_UVM};
       }
 
       return r;

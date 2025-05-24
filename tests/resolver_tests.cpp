@@ -7,9 +7,11 @@
 #include "rfc1035.h"
 #include "rfc4034.h"
 
+#include <ccf/_private/crypto/openssl/hash.h>
 #include <ccf/crypto/ecdsa.h>
 #include <ccf/crypto/openssl/openssl_wrappers.h>
 #include <ccf/ds/logger.h>
+#include <ccf/ds/quote_info.h>
 
 #define DOCTEST_CONFIG_IMPLEMENT
 #include <doctest/doctest.h>
@@ -22,7 +24,7 @@ using namespace ccf::crypto::OpenSSL;
 static uint32_t default_ttl = 86400;
 
 std::string dummy_attestation =
-  R"({"source": "OE", "evidence": "none", "endorsements": "none"})";
+  R"({"evidence": "eyJtZWFzdXJlbWVudCI6Ikluc2VjdXJlIGhhcmQtY29kZWQgdmlydHVhbCBtZWFzdXJlbWVudCB2MSIsInJlcG9ydF9kYXRhIjoiYUVpSXdPdXhmemRDbUxaZTRvQjFKc0JtQ1V4d0c4eCt1K0hCQ1Y5SlQ4RT0ifQ==", "endorsements": "", "uvm_endorsements": ""})";
 
 auto type2str = [](const auto& x) {
   return aDNS::string_from_type(static_cast<aDNS::Type>(x));
@@ -705,7 +707,7 @@ TEST_CASE("Service registration")
 
 int main(int argc, char** argv)
 {
-  ccf::logger::config::default_init();
+  ccf::crypto::openssl_sha256_init();
   doctest::Context context;
   context.applyCommandLine(argc, argv);
   int res = context.run();

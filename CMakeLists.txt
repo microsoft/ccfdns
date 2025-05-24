@@ -112,7 +112,7 @@ endfunction()
 
 add_unit_test(resolver_tests ../tests/resolver_tests.cpp src/resolver.cpp
               src/rfc4034.cpp src/rfc5155.cpp src/base32.cpp)
-target_link_libraries(resolver_tests PRIVATE ZLIB::ZLIB)
+target_link_libraries(resolver_tests PRIVATE ZLIB::ZLIB ccf.virtual)
 target_include_directories(
   resolver_tests
   PRIVATE include
