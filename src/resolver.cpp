@@ -1513,6 +1513,7 @@ namespace aDNS
       "ADNS: Register service {} in {}",
       std::string(service_name),
       std::string(origin));
+
     save_service_registration_request(service_name, rr);
 
     bool policy_ok = true;
@@ -1530,18 +1531,17 @@ namespace aDNS
       ccf::pal::PlatformAttestationMeasurement measurement = {};
       ccf::pal::PlatformAttestationReportData report_data = {};
       ccf::QuoteInfo quote_info = {};
-      quote_info.format = ccf::QuoteFormat::amd_sev_snp_v1;
+      quote_info.format = ccf::QuoteFormat::insecure_virtual;
       quote_info.quote = ccf::crypto::raw_from_b64(evidence);
       quote_info.endorsements = ccf::crypto::raw_from_b64(endorsements);
       auto uvm_endorsements_raw = ccf::crypto::raw_from_b64(uvm_endorsements);
       ccf::pal::UVMEndorsements uvm_endorsements_descriptor = {};
       try
       {
-        ccf::pal::verify_snp_attestation_report(
+        ccf::pal::verify_virtual_attestation_report(
           quote_info, measurement, report_data);
-        uvm_endorsements_descriptor =
-          ccf::pal::verify_uvm_endorsements_descriptor(
-            uvm_endorsements_raw, measurement);
+
+        // TODO save verify_uvm_endorsements_descriptor
       }
       catch (const std::exception& e)
       {
@@ -1560,9 +1560,7 @@ namespace aDNS
         policy_ok = false;
         return;
       }
-      auto parsed_attestation =
-        *reinterpret_cast<const ccf::pal::snp::Attestation*>(
-          quote_info.quote.data());
+
       // TODO Create a JSON report with
       // - parsed_attestation.*
       // - uvm_endorsements_descriptor
