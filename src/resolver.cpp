@@ -1491,7 +1491,6 @@ namespace aDNS
 
     BUF_MEM* bptr{nullptr};
     BIO_get_mem_ptr(buf, &bptr);
-    small_vector<uint16_t> public_key_sv(bptr->length, (uint8_t*)bptr->data);
     std::span<const uint8_t> public_key_der{(uint8_t*)bptr->data, bptr->length};
 
     auto public_key_digest = ccf::crypto::sha256(public_key_der);
