@@ -1550,7 +1550,6 @@ namespace aDNS
           id,
           e.what());
         policy_ok = false;
-        return;
       }
 
       if (report_data.data != public_key_digest)
@@ -1558,7 +1557,6 @@ namespace aDNS
         CCF_APP_FAIL(
           "ADNS: Attestation report hash does not match public key for {}", id);
         policy_ok = false;
-        return;
       }
 
       // TODO Create a JSON report with
