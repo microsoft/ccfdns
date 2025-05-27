@@ -1553,7 +1553,7 @@ namespace aDNS
         return;
       }
 
-      if (report_data.to_sha256_hash() != public_key_digest)
+      if (report_data.data != public_key_digest)
       {
         CCF_APP_FAIL(
           "ADNS: Attestation report hash does not match public key for {}", id);
