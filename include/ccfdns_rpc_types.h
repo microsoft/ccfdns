@@ -51,28 +51,6 @@ namespace ccfdns
     using Out = void;
   };
 
-  struct SetCertificate
-  {
-    struct In
-    {
-      std::string service_dns_name;
-      std::string certificate;
-    };
-    using Out = void;
-  };
-
-  struct GetCertificate
-  {
-    struct In
-    {
-      std::string service_dns_name;
-    };
-    struct Out
-    {
-      std::string certificate;
-    };
-  };
-
   struct Resign
   {
     struct In
