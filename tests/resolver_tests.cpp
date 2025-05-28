@@ -7,9 +7,12 @@
 #include "rfc1035.h"
 #include "rfc4034.h"
 
+#include <ccf/_private/crypto/openssl/hash.h>
 #include <ccf/crypto/ecdsa.h>
 #include <ccf/crypto/openssl/openssl_wrappers.h>
+#include <ccf/crypto/sha256.h>
 #include <ccf/ds/logger.h>
+#include <ccf/ds/quote_info.h>
 
 #define DOCTEST_CONFIG_IMPLEMENT
 #include <doctest/doctest.h>
@@ -20,9 +23,6 @@ using namespace RFC1035;
 using namespace ccf::crypto::OpenSSL;
 
 static uint32_t default_ttl = 86400;
-
-std::string dummy_attestation =
-  R"({"source": "OE", "evidence": "none", "endorsements": "none"})";
 
 auto type2str = [](const auto& x) {
   return aDNS::string_from_type(static_cast<aDNS::Type>(x));
@@ -50,6 +50,8 @@ public:
   std::string service_registration_policy_str;
 
   Resolver::Configuration configuration;
+
+  ccf::crypto::KeyPairPtr service_key{};
 
   virtual Configuration get_configuration() const override
   {
@@ -228,8 +230,42 @@ public:
   {
     std::map<std::string, Resolver::NodeInfo> r;
     for (const auto& [id, addr] : configuration.node_addresses)
-      r[id] = {.address = addr, .attestation = dummy_attestation};
+      r[id] = {.address = addr, .attestation = get_dummy_attestation()};
     return r;
+  }
+
+  std::string get_dummy_attestation()
+  {
+    const std::string measurement_literal =
+      "Insecure hard-coded virtual measurement v1";
+    const std::string measurement = ccf::crypto::b64_from_raw(
+      (uint8_t*)measurement_literal.data(), measurement_literal.size());
+
+    auto key_der = get_service_key()->public_key_der();
+    auto key_digest = ccf::crypto::sha256(key_der);
+    auto report_data = ccf::crypto::b64_from_raw(key_digest);
+
+    nlohmann::json evidence_json;
+    evidence_json["measurement"] = measurement;
+    evidence_json["report_data"] = report_data;
+    auto evidence_str = evidence_json.dump();
+    auto evidence_encoded = ccf::crypto::b64_from_raw(
+      (uint8_t*)evidence_str.data(), evidence_str.size());
+
+    nlohmann::json attestation;
+    attestation["evidence"] = evidence_encoded;
+    attestation["endorsements"] = "";
+    attestation["uvm_endorsements"] = "";
+    return attestation.dump();
+  }
+
+  ccf::crypto::KeyPairPtr get_service_key(bool refresh = false)
+  {
+    if (refresh || !service_key)
+    {
+      service_key = ccf::crypto::make_key_pair(ccf::crypto::CurveID::SECP384R1);
+    }
+    return service_key;
   }
 };
 
@@ -675,17 +711,18 @@ TEST_CASE("Service registration")
   s.configure(cfg);
 
   Name service_name("service42.example.com.");
-  auto service_key =
-    ccf::crypto::make_key_pair(ccf::crypto::CurveID::SECP384R1);
   std::string url_name = service_name.unterminated();
 
   RFC1035::A address("192.168.0.1");
 
-  auto csr =
-    service_key->create_csr_der("CN=" + url_name, {{"alt." + url_name, false}});
+  auto csr = s.get_service_key()->create_csr_der(
+    "CN=" + url_name, {{"alt." + url_name, false}});
+
+  std::cout << "Dummy attest " << s.get_dummy_attestation() << std::endl;
 
   s.register_service(
-    {csr, {{"id", {{url_name, address, "tcp", 443}, dummy_attestation}}}});
+    {csr,
+     {{"id", {{url_name, address, "tcp", 443}, s.get_dummy_attestation()}}}});
 
   auto dnskey_rrs =
     s.resolve(cfg.origin, aDNS::QType::DNSKEY, aDNS::QClass::IN).answers;
@@ -705,7 +742,7 @@ TEST_CASE("Service registration")
 
 int main(int argc, char** argv)
 {
-  ccf::logger::config::default_init();
+  ccf::crypto::openssl_sha256_init();
   doctest::Context context;
   context.applyCommandLine(argc, argv);
   int res = context.run();
