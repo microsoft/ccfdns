@@ -1534,7 +1534,7 @@ namespace aDNS
 
 #if defined(PLATFORM_VIRTUAL)
       quote_info.format = ccf::QuoteFormat::insecure_virtual;
-#elif define(PLATFORM_SNP)
+#elif defined(PLATFORM_SNP)
       quote_info.format = ccf::QuoteFormat::amd_sev_snp_v1;
 #endif
 
