@@ -51,6 +51,8 @@ add_ccf_app(
   src/rfc5155.cpp
   src/base32.cpp
   LINK_LIBS_VIRTUAL
+  ZLIB::ZLIB
+  LINK_LIBS_SNP
   ZLIB::ZLIB)
 
 target_include_directories(
