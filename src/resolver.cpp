@@ -1531,7 +1531,13 @@ namespace aDNS
       ccf::pal::PlatformAttestationMeasurement measurement = {};
       ccf::pal::PlatformAttestationReportData report_data = {};
       ccf::QuoteInfo quote_info = {};
+
+#if defined(PLATFORM_VIRTUAL)
       quote_info.format = ccf::QuoteFormat::insecure_virtual;
+#elif define(PLATFORM_SNP)
+      quote_info.format = ccf::QuoteFormat::amd_sev_snp_v1;
+#endif
+
       quote_info.quote = ccf::crypto::raw_from_b64(evidence);
       quote_info.endorsements = ccf::crypto::raw_from_b64(endorsements);
       auto uvm_endorsements_raw = ccf::crypto::raw_from_b64(uvm_endorsements);
@@ -1541,7 +1547,7 @@ namespace aDNS
         ccf::pal::verify_virtual_attestation_report(
           quote_info, measurement, report_data);
 
-        // TODO save verify_uvm_endorsements_descriptor
+        // TODO save verify_uvm_endorsements_descriptor if SNP
       }
       catch (const std::exception& e)
       {

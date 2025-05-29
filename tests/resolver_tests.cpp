@@ -718,8 +718,6 @@ TEST_CASE("Service registration")
   auto csr = s.get_service_key()->create_csr_der(
     "CN=" + url_name, {{"alt." + url_name, false}});
 
-  std::cout << "Dummy attest " << s.get_dummy_attestation() << std::endl;
-
   s.register_service(
     {csr,
      {{"id", {{url_name, address, "tcp", 443}, s.get_dummy_attestation()}}}});
