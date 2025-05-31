@@ -101,3 +101,75 @@ jobs:
           cd build
           ./tests.sh -LE unit
         shell: bash
+
+  build_and_test_caci:
+    name: "Confidential Container CI"
+    runs-on: [self-hosted, 1ES.Pool=gha-adns-ci]
+    needs: checks
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: "Dump environment"
+        run: |
+          set -ex
+          # Dump environment variables, extract Fabric_NodeIPOrFQDN
+          # and save it to a file for reconfiguration test using THIM.
+          cat /proc/*/environ | tr '\000' '\n' | sort -u | grep Fabric_NodeIPOrFQDN > /Fabric_NodeIPOrFQDN
+          echo "::group::Disk usage"
+          df -kh
+          echo "::endgroup::"
+          echo "::group::CPU Info"
+          cat /proc/cpuinfo
+          echo "::endgroup::"
+        shell: bash
+
+      - name: "Checkout dependencies"
+        shell: bash
+        run: |
+          set -ex
+          gpg --import /etc/pki/rpm-gpg/MICROSOFT-RPM-GPG-KEY
+          tdnf -y update
+          tdnf -y install ca-certificates git
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: robinraju/release-downloader@v1
+        with:
+          repository: "microsoft/CCF"
+          tag: "ccf-6.0.3"
+          fileName: "ccf_virtual_devel_6.0.3_x86_64.rpm"
+
+      - name: "Install CCF with dependencies"
+        shell: bash
+        run: |
+          set -ex
+          tdnf -y install ccf_virtual_devel_6.0.3_x86_64.rpm
+          ./scripts/setup-ci.sh
+
+      - name: "Build Debug"
+        run: |
+          set -ex
+          mkdir build
+          cd build
+          cmake -GNinja -DCOMPILE_TARGET=virtual -DCMAKE_BUILD_TYPE=Debug ..
+          ninja
+        shell: bash
+
+      - name: "Run unit tests"
+        run: |
+          set -ex
+          cd build
+          ./tests.sh -L unit
+        shell: bash
+
+      - name: "Run all other (e2e) tests"
+        run: |
+          set -ex
+          cd build
+          ./tests.sh -LE unit
+        shell: bash
