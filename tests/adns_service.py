@@ -19,6 +19,7 @@ from loguru import logger as LOG
 
 DEFAULT_NODES = ["local://127.0.0.1:8080"]
 
+
 class NoReceiptException(Exception):
     pass
 
