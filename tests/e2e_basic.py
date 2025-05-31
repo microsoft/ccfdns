@@ -185,15 +185,20 @@ def get_snp_quote(client, report_data):
     return quote
 
 
-def get_attestation(client, service_key):
+def get_attestation(client, service_key, enclave_platform):
     public_key = service_key.public_key().public_bytes(
         serialization.Encoding.DER,
         serialization.PublicFormat.SubjectPublicKeyInfo,
     )
     report_data = base64.b64encode(sha256(public_key).digest()).decode()
-    evidence = (
-        get_snp_quote(client, report_data) if True else get_dummy_quote(report_data)
-    )
+
+    evidence = ""
+    if enclave_platform == "snp":
+        evidence = get_snp_quote(client, report_data)
+    elif enclave_platform == "virtual":
+        evidence = get_dummy_quote(report_data)
+    else:
+        raise ValueError(f"Unknown enclave platform: {enclave_platform}")
 
     dummy_attestation = {
         "evidence": evidence,
@@ -203,11 +208,13 @@ def get_attestation(client, service_key):
     return json.dumps(dummy_attestation)
 
 
-def submit_service_registration(client, name, address, port, protocol, service_key):
+def submit_service_registration(
+    client, name, address, port, protocol, service_key, enclave_platform
+):
     """Submit a service registration request"""
 
     csr = gen_csr(name, service_key)
-    attestation = get_attestation(client, service_key)
+    attestation = get_attestation(client, service_key, enclave_platform)
     r = client.post(
         "/app/register-service",
         {
@@ -337,6 +344,7 @@ def test_service_reg(network, args):
             port,
             "tcp",
             service_key,
+            args.enclave_platform,
         )
 
         print("Checking record is installed")
