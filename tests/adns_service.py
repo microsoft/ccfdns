@@ -19,26 +19,6 @@ from loguru import logger as LOG
 
 DEFAULT_NODES = ["local://127.0.0.1:8080"]
 
-nonzero_mrenclave_policy = """
-    let r = true;
-    for (const [name, claims] of Object.entries(data.claims)) {
-        r &= claims.sgx_claims.report_body.mr_enclave.length == 32 &&
-            JSON.stringify(claims.custom_claims.sgx_report_data) != JSON.stringify([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
-    }
-    r == true;
-"""
-aci_policy = """
-    let r = true;
-    for (const [name, claims] of Object.entries(data.claims)) {
-        r &= claims.reported_tcb.boot_loader == 3 && 
-            claims.reported_tcb.microcode > 100 &&
-            claims.reported_tcb.snp == 8 &&
-            claims.reported_tcb.tee == 0 && 
-            claims.guest_svn == 2;
-    }
-    r == true;
-"""
-
 
 class NoReceiptException(Exception):
     pass
@@ -257,13 +237,6 @@ def run(args, tcp_port=None, udp_port=None):
         args.adns.node_addresses = args.adns["node_addresses"] = assign_node_addresses(
             network, args.node_addresses, False
         )
-
-        registration_policy = nonzero_mrenclave_policy
-        if args.service_type == "ACI":
-            registration_policy = aci_policy
-
-        set_policy(network, "set_registration_policy", registration_policy)
-        set_policy(network, "set_delegation_policy", nonzero_mrenclave_policy)
 
         pif0 = nodes[0].rpc_interfaces[PRIMARY_RPC_INTERFACE]
         base_url = "https://" + pif0.host + ":" + str(pif0.port)

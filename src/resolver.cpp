@@ -1531,17 +1531,22 @@ namespace aDNS
       ccf::pal::PlatformAttestationMeasurement measurement = {};
       ccf::pal::PlatformAttestationReportData report_data = {};
       ccf::QuoteInfo quote_info = {};
+
+#if defined(PLATFORM_VIRTUAL)
       quote_info.format = ccf::QuoteFormat::insecure_virtual;
+#elif defined(PLATFORM_SNP)
+      quote_info.format = ccf::QuoteFormat::amd_sev_snp_v1;
+#endif
+
       quote_info.quote = ccf::crypto::raw_from_b64(evidence);
       quote_info.endorsements = ccf::crypto::raw_from_b64(endorsements);
       auto uvm_endorsements_raw = ccf::crypto::raw_from_b64(uvm_endorsements);
       ccf::pal::UVMEndorsements uvm_endorsements_descriptor = {};
       try
       {
-        ccf::pal::verify_virtual_attestation_report(
-          quote_info, measurement, report_data);
+        ccf::pal::verify_quote(quote_info, measurement, report_data);
 
-        // TODO save verify_uvm_endorsements_descriptor
+        // TODO save verify_uvm_endorsements_descriptor if SNP
       }
       catch (const std::exception& e)
       {
@@ -1552,7 +1557,12 @@ namespace aDNS
         policy_ok = false;
       }
 
-      if (report_data.data != public_key_digest)
+      // TODO report data is 64 bytes, key hash is 32, simply ignore the rest?..
+      assert(report_data.data.size() >= public_key_digest.size());
+      std::vector<uint8_t> reported_key(
+        report_data.data.begin(),
+        report_data.data.begin() + public_key_digest.size());
+      if (reported_key != public_key_digest)
       {
         CCF_APP_FAIL(
           "ADNS: Attestation report hash does not match public key for {}", id);
