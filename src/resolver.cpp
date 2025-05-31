@@ -1544,8 +1544,7 @@ namespace aDNS
       ccf::pal::UVMEndorsements uvm_endorsements_descriptor = {};
       try
       {
-        ccf::pal::verify_quote(
-          quote_info, measurement, report_data);
+        ccf::pal::verify_quote(quote_info, measurement, report_data);
 
         // TODO save verify_uvm_endorsements_descriptor if SNP
       }
@@ -1561,7 +1560,8 @@ namespace aDNS
       // TODO report data is 64 bytes, key hash is 32, simply ignore the rest?..
       assert(report_data.data.size() == 64);
       std::vector<uint8_t> reported_key(
-        report_data.data.begin(), report_data.data.begin() + public_key_digest.size());
+        report_data.data.begin(),
+        report_data.data.begin() + public_key_digest.size());
       if (reported_key != public_key_digest)
       {
         CCF_APP_FAIL(

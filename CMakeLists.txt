@@ -72,8 +72,10 @@ enable_testing()
 
 set(TEST_PLATFORM_ARGS -t "${COMPILE_TARGET}")
 
-add_test(NAME e2e_basic COMMAND python ../tests/e2e_basic.py -b
-                                "${CCF_PKG_DIR}/../bin" ${TEST_PLATFORM_ARGS})
+add_test(
+  NAME e2e_basic
+  COMMAND python ../tests/e2e_basic.py -b "${CCF_PKG_DIR}/../bin" --library-dir
+          "${CMAKE_CURRENT_BINARY_DIR}" ${TEST_PLATFORM_ARGS})
 
 function(add_unit_test name)
   add_executable(${name} ${ARGN})
