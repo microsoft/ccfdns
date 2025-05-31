@@ -255,7 +255,7 @@ def main():
         )
     ]
     targs.constitution = glob.glob("../tests/constitution/*")
-    targs.package = "libccfdns.virtual.so"
+    targs.package = "libccfdns"
     targs.acme_config_name = "custom"
 
     targs.http2 = False
