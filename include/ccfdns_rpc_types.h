@@ -59,4 +59,16 @@ namespace ccfdns
     };
     using Out = void;
   };
+
+  struct GetAttestastion
+  {
+    struct In
+    {
+      std::vector<uint8_t> report_data;
+    };
+    struct Out
+    {
+      std::string quote;
+    };
+  };
 }
