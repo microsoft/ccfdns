@@ -1558,7 +1558,7 @@ namespace aDNS
       }
 
       // TODO report data is 64 bytes, key hash is 32, simply ignore the rest?..
-      assert(report_data.data.size() == 64);
+      assert(report_data.data.size() >= public_key_digest.size());
       std::vector<uint8_t> reported_key(
         report_data.data.begin(),
         report_data.data.begin() + public_key_digest.size());
