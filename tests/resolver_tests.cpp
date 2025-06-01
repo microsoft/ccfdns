@@ -273,7 +273,10 @@ public:
     nlohmann::json attestation;
     attestation["evidence"] =
       ccf::crypto::b64_from_raw(snp_attestation->get_raw());
-    // Is there an API to get brend new endorsements from CCF?
+
+    // Probably better to use node API to get fetched endorsement, but seems
+    // like needs tweaks to be called in a unit test, so slapped a hardcoded
+    // chain for the timebeing.
     attestation["endorsements"] =
       "LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUZRekNDQXZlZ0F3SUJBZ0lCQURCQkJn"
       "a3Foa2lHOXcwQkFRb3dOS0FQTUEwR0NXQ0dTQUZsQXdRQ0FnVUEKb1J3d0dnWUpLb1pJaHZj"
