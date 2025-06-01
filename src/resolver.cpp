@@ -1557,7 +1557,7 @@ namespace aDNS
         policy_ok = false;
       }
 
-      // TODO report data is 64 bytes, key hash is 32, simply ignore the rest?..
+      // SNP report data is 64 bytes, key hash is 32, simply ignore the rest?..
       assert(report_data.data.size() >= public_key_digest.size());
       std::vector<uint8_t> reported_key(
         report_data.data.begin(),
