@@ -1761,6 +1761,7 @@ namespace ccfdns
         }
       };
 
+      // Temporary endpoint to get a custom quote in the e2e test.
       make_endpoint(
         "/internal/attestation",
         HTTP_POST,
