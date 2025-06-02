@@ -77,6 +77,14 @@ add_test(
   COMMAND python ../tests/e2e_basic.py -b "${CCF_PKG_DIR}/../bin" --library-dir
           "${CMAKE_CURRENT_BINARY_DIR}" ${TEST_PLATFORM_ARGS})
 
+if(COMPILE_TARGET STREQUAL "snp")
+  execute_process(
+    COMMAND find / -type d -name "*security-context*"
+    OUTPUT_VARIABLE SECURITY_CONTEXT_DIR
+    OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+  message(STATUS "UVM security context directory: ${SECURITY_CONTEXT_DIR}")
+endif()
+
 function(add_unit_test name)
   add_executable(${name} ${ARGN})
   target_include_directories(
@@ -90,6 +98,12 @@ function(add_unit_test name)
     TEST ${name}
     APPEND
     PROPERTY LABELS unit_test)
+  if(COMPILE_TARGET STREQUAL "snp")
+    set_property(
+      TEST ${name}
+      APPEND
+      PROPERTY ENVIRONMENT "UVM_SECURITY_CONTEXT_DIR=${SECURITY_CONTEXT_DIR}")
+  endif()
   if(TRACE_LOGGING)
     target_compile_definitions(${name} PRIVATE -DTRACE_LOGGING
                                                -DVERBOSE_LOGGING)
