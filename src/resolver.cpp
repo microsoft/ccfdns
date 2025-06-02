@@ -1579,15 +1579,35 @@ namespace aDNS
         policy_ok = false;
       }
 
-      // SNP report data is 64 bytes, key hash is 32, simply ignore the rest?..
-      assert(report_data.data.size() >= public_key_digest.size());
-      std::vector<uint8_t> reported_key(
-        report_data.data.begin(),
-        report_data.data.begin() + public_key_digest.size());
-      if (reported_key != public_key_digest)
+      // SNP report data is 64 bytes, key hash is 32, the rest has to be zeroed.
+      // Virtual report data is set to 32 bytes in CCF.
+      assert(
+        report_data.data.size() == ccf::pal::snp_attestation_report_data_size ||
+        report_data.data.size() ==
+          ccf::pal::virtual_attestation_report_data_size);
+
+      assert(public_key_digest.size() == 32);
+
+      if (!std::equal(
+            public_key_digest.begin(),
+            public_key_digest.end(),
+            report_data.data.begin()))
       {
         CCF_APP_FAIL(
           "ADNS: Attestation report hash does not match public key for {}", id);
+        policy_ok = false;
+      }
+
+      if (
+        report_data.data.size() == ccf::pal::snp_attestation_report_data_size &&
+        !std::all_of(
+          report_data.data.begin() + public_key_digest.size(),
+          report_data.data.end(),
+          [](uint8_t b) { return b == 0; }))
+      {
+        CCF_APP_FAIL(
+          "ADNS: Attestation report data for {} is not zeroed after key hash",
+          id);
         policy_ok = false;
       }
 
