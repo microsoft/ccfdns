@@ -56,19 +56,19 @@ def gen_csr(domain, key):
     return csr
 
 
-def get_dummy_quote(report_data):
+def get_dummy_attestation(report_data):
     measurement = base64.b64encode(
         b"Insecure hard-coded virtual measurement v1"
     ).decode()
-    quote = {"measurement": measurement, "report_data": report_data}
-    return base64.b64encode(json.dumps(quote).encode()).decode()
+    attestation = {"measurement": measurement, "report_data": report_data}
+    return base64.b64encode(json.dumps(attestation).encode()).decode()
 
 
-def get_snp_quote(client, report_data):
+def get_snp_attestation(client, report_data):
     response = client.post("/internal/attestation", {"report_data": report_data})
     print(f"report_data here is: {report_data}")
-    quote = response.body.json()["quote"]
-    return quote
+    attestation = response.body.json()["quote"]
+    return attestation
 
 
 def get_attestation(client, service_key, enclave_platform):
@@ -79,10 +79,10 @@ def get_attestation(client, service_key, enclave_platform):
     report_data = base64.b64encode(sha256(public_key).digest()).decode()
 
     if enclave_platform == "snp":
-        evidence = get_snp_quote(client, report_data)
+        evidence = get_snp_attestation(client, report_data)
         endorsements = get_container_group_snp_endorsements_base64()
     elif enclave_platform == "virtual":
-        evidence = get_dummy_quote(report_data)
+        evidence = get_dummy_attestation(report_data)
         endorsements = ""
     else:
         raise ValueError(f"Unknown enclave platform: {enclave_platform}")
