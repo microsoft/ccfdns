@@ -298,7 +298,8 @@ public:
     const std::string endorsements_path =
       std::getenv("UVM_SECURITY_CONTEXT_DIR");
     assert(!endorsements_path.empty());
-    auto endorsements = slurp_file_string(endorsements_path + "/host-amd-cert-base64");
+    auto endorsements =
+      slurp_file_string(endorsements_path + "/host-amd-cert-base64");
 
     nlohmann::json attestation;
     attestation["evidence"] =
