@@ -277,6 +277,7 @@ public:
       (uint8_t*)evidence_str.data(), evidence_str.size());
 
     nlohmann::json attestation;
+    attestation["format"] = "Insecure_Virtual";
     attestation["evidence"] = evidence_encoded;
     attestation["endorsements"] = "";
     attestation["uvm_endorsements"] = "";
@@ -302,7 +303,8 @@ public:
       slurp_file_string(endorsements_path + "/host-amd-cert-base64");
 
     nlohmann::json attestation;
-    attestation["evidence"] =
+    attestation["format"] = "AMD_SEV_SNP_v1";
+    attestation["quote"] =
       ccf::crypto::b64_from_raw(snp_attestation->get_raw());
     attestation["endorsements"] = endorsements;
     attestation["uvm_endorsements"] = "";
