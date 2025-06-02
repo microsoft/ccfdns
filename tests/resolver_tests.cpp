@@ -278,7 +278,7 @@ public:
 
     nlohmann::json attestation;
     attestation["format"] = "Insecure_Virtual";
-    attestation["evidence"] = evidence_encoded;
+    attestation["quote"] = evidence_encoded;
     attestation["endorsements"] = "";
     attestation["uvm_endorsements"] = "";
     return attestation.dump();
