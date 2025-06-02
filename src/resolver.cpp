@@ -1520,43 +1520,87 @@ namespace aDNS
 
     for (const auto& [id, info] : rr.node_information)
     {
-      // Assume the attestation string is a JSON object
-      // with "evidence", "endorsements" and "uvm_endorsements"
-      auto attestation = nlohmann::json::parse(info.attestation);
-      auto evidence = attestation["evidence"].get<std::string>();
-      auto endorsements = attestation["endorsements"].get<std::string>();
-      auto uvm_endorsements =
-        attestation["uvm_endorsements"].get<std::string>();
+      ccf::QuoteInfo attestation{};
+      try
+      {
+        attestation =
+          nlohmann::json::parse(info.attestation).get<ccf::QuoteInfo>();
+      }
+      catch (const nlohmann::json::parse_error& e)
+      {
+        CCF_APP_FAIL(
+          "ADNS: Failed to parse attestation report for {} : {}",
+          id,
+          info.attestation);
+        policy_ok = false;
+        continue;
+      }
+
+      // Maybe, endorsements are represented in THIM format, as defined in
+      // ccf::pal::snp::ACIReportEndorsements.
+      try
+      {
+        const auto aci_endorsements =
+          nlohmann::json::parse(attestation.endorsements)
+            .get<ccf::pal::snp::ACIReportEndorsements>();
+
+        attestation.endorsements = std::vector<uint8_t>(
+          aci_endorsements.vcek_cert.begin(), aci_endorsements.vcek_cert.end());
+        attestation.endorsements.insert(
+          attestation.endorsements.end(),
+          aci_endorsements.certificate_chain.begin(),
+          aci_endorsements.certificate_chain.end());
+      }
+      catch (const nlohmann::json::parse_error& e)
+      {
+        // If not, fallback to attempt as byte-encoded chain.
+      }
 
       ccf::pal::PlatformAttestationMeasurement measurement = {};
       ccf::pal::PlatformAttestationReportData report_data = {};
-      ccf::QuoteInfo quote_info = {};
-      quote_info.format = ccf::QuoteFormat::insecure_virtual;
-      quote_info.quote = ccf::crypto::raw_from_b64(evidence);
-      quote_info.endorsements = ccf::crypto::raw_from_b64(endorsements);
-      auto uvm_endorsements_raw = ccf::crypto::raw_from_b64(uvm_endorsements);
-      ccf::pal::UVMEndorsements uvm_endorsements_descriptor = {};
       try
       {
-        ccf::pal::verify_virtual_attestation_report(
-          quote_info, measurement, report_data);
+        ccf::pal::verify_quote(attestation, measurement, report_data);
 
-        // TODO save verify_uvm_endorsements_descriptor
+        // TODO save verify_uvm_endorsements_descriptor if SNP
       }
       catch (const std::exception& e)
       {
-        CCF_APP_FAIL(
+        throw std::runtime_error(fmt::format(
           "ADNS: Failed to verify attestation report for {} : {}",
           id,
-          e.what());
-        policy_ok = false;
+          e.what()));
       }
 
-      if (report_data.data != public_key_digest)
+      // SNP report data is 64 bytes, key hash is 32, the rest has to be zeroed.
+      // Virtual report data is set to 32 bytes in CCF.
+      assert(
+        report_data.data.size() == ccf::pal::snp_attestation_report_data_size ||
+        report_data.data.size() ==
+          ccf::pal::virtual_attestation_report_data_size);
+
+      assert(public_key_digest.size() == 32);
+
+      if (!std::equal(
+            public_key_digest.begin(),
+            public_key_digest.end(),
+            report_data.data.begin()))
       {
-        CCF_APP_FAIL(
-          "ADNS: Attestation report hash does not match public key for {}", id);
-        policy_ok = false;
+        throw std::runtime_error(fmt::format(
+          "ADNS: Attestation report hash does not match public key for {}",
+          id));
+      }
+
+      if (
+        report_data.data.size() == ccf::pal::snp_attestation_report_data_size &&
+        !std::all_of(
+          report_data.data.begin() + public_key_digest.size(),
+          report_data.data.end(),
+          [](uint8_t b) { return b == 0; }))
+      {
+        throw std::runtime_error(fmt::format(
+          "ADNS: Attestation report data for {} is not zeroed after key hash",
+          id));
       }
 
       // TODO Create a JSON report with
@@ -1565,9 +1609,6 @@ namespace aDNS
       // - ...
       // and present it to the policy engine
     }
-
-    if (!policy_ok)
-      throw std::runtime_error("service registration policy evaluation failed");
 
     auto service_protocol =
       rr.node_information.begin()->second.address.protocol;

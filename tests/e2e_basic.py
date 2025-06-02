@@ -6,27 +6,36 @@ import http
 import base64
 import socket
 import requests
-
+import json
+import infra.e2e_args
+import os
+import adns_service
+import dns
+import dns.message
+import dns.query
+import dns.dnssec
+import dns.rdtypes.ANY.SOA as SOA
 from cryptography import x509
 from cryptography.x509.oid import NameOID
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization, hashes
 from cryptography.hazmat.primitives.asymmetric import ec
 from hashlib import sha256
-import json
-
-import infra.e2e_args
-import adns_service
 from adns_service import aDNSConfig
-
-import dns
-import dns.message
-import dns.query
-import dns.dnssec
-import dns.rdtypes.ANY.SOA as SOA
 
 rdc = dns.rdataclass
 rdt = dns.rdatatype
+
+
+def get_container_group_snp_endorsements_base64():
+    security_context_dir = infra.snp.get_security_context_dir()
+    return open(
+        os.path.join(
+            security_context_dir, infra.snp.ACI_SEV_SNP_FILENAME_REPORT_ENDORSEMENTS
+        ),
+        "r",
+        encoding="utf-8",
+    ).read()
 
 
 def gen_csr(domain, key):
@@ -47,30 +56,56 @@ def gen_csr(domain, key):
     return csr
 
 
-def get_virtual_attestation(service_key):
+def get_dummy_attestation(report_data):
+    measurement = base64.b64encode(
+        b"Insecure hard-coded virtual measurement v1"
+    ).decode()
+    attestation = {"measurement": measurement, "report_data": report_data}
+    return base64.b64encode(json.dumps(attestation).encode()).decode()
+
+
+def get_snp_attestation(client, report_data):
+    response = client.post("/internal/attestation", {"report_data": report_data})
+    print(f"report_data here is: {report_data}")
+    attestation = response.body.json()["quote"]
+    return attestation
+
+
+def get_attestation(client, service_key, enclave_platform):
     public_key = service_key.public_key().public_bytes(
         serialization.Encoding.DER,
         serialization.PublicFormat.SubjectPublicKeyInfo,
     )
     report_data = base64.b64encode(sha256(public_key).digest()).decode()
-    measurement = base64.b64encode(
-        b"Insecure hard-coded virtual measurement v1"
-    ).decode()
 
-    evidence = {"measurement": measurement, "report_data": report_data}
+    if enclave_platform == "snp":
+        attestation = get_snp_attestation(client, report_data)
+        endorsements = get_container_group_snp_endorsements_base64()
+    elif enclave_platform == "virtual":
+        attestation = get_dummy_attestation(report_data)
+        endorsements = ""
+    else:
+        raise ValueError(f"Unknown enclave platform: {enclave_platform}")
+
+    attestation_format = (
+        "Insecure_Virtual" if enclave_platform == "virtual" else "AMD_SEV_SNP_v1"
+    )
     dummy_attestation = {
-        "evidence": base64.b64encode(json.dumps(evidence).encode()).decode(),
-        "endorsements": "",
+        "format": attestation_format,
+        "quote": attestation,
+        "endorsements": endorsements,
         "uvm_endorsements": "",
     }
     return json.dumps(dummy_attestation)
 
 
-def submit_service_registration(client, name, address, port, protocol, service_key):
+def submit_service_registration(
+    client, name, address, port, protocol, service_key, enclave_platform
+):
     """Submit a service registration request"""
 
     csr = gen_csr(name, service_key)
-    dummy_attestation = get_virtual_attestation(service_key)
+    attestation = get_attestation(client, service_key, enclave_platform)
     r = client.post(
         "/app/register-service",
         {
@@ -86,7 +121,7 @@ def submit_service_registration(client, name, address, port, protocol, service_k
                         "protocol": protocol,
                         "port": port,
                     },
-                    "attestation": dummy_attestation,
+                    "attestation": attestation,
                 }
             },
         },
@@ -165,7 +200,6 @@ def get_keys(host, port, ca, origin):
     try:
         key_rrs = r.find_rrset(r.answer, origin, rdc.IN, rdt.DNSKEY)
     except KeyError:
-        breakpoint()
         print("No DNSKEY records found")
     keys = {origin: key_rrs}
     validate_rrsigs(r, rdt.DNSKEY, keys)
@@ -201,6 +235,7 @@ def test_service_reg(network, args):
             port,
             "tcp",
             service_key,
+            args.enclave_platform,
         )
 
         print("Checking record is installed")
@@ -258,7 +293,7 @@ def main():
         )
     ]
     targs.constitution = glob.glob("../tests/constitution/*")
-    targs.package = "libccfdns.virtual.so"
+    targs.package = "libccfdns"
     targs.acme_config_name = "custom"
 
     targs.http2 = False

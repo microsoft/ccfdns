@@ -13,6 +13,7 @@
 #include <ccf/crypto/sha256.h>
 #include <ccf/ds/logger.h>
 #include <ccf/ds/quote_info.h>
+#include <ccf/pal/snp_ioctl.h>
 
 #define DOCTEST_CONFIG_IMPLEMENT
 #include <doctest/doctest.h>
@@ -27,6 +28,29 @@ static uint32_t default_ttl = 86400;
 auto type2str = [](const auto& x) {
   return aDNS::string_from_type(static_cast<aDNS::Type>(x));
 };
+
+static std::vector<uint8_t> slurp_file(const std::string& file)
+{
+  std::ifstream f(file, std::ios::binary | std::ios::ate);
+  assert(f);
+
+  auto size = f.tellg();
+  f.seekg(0, std::ios::beg);
+
+  std::vector<uint8_t> data(size);
+  f.read((char*)data.data(), size);
+
+  std::cout << "Read " << size << " bytes from file: " << file << std::endl;
+
+  assert(f);
+  return data;
+}
+
+static std::string slurp_file_string(const std::string& file)
+{
+  auto v = slurp_file(file);
+  return {v.begin(), v.end()};
+}
 
 class TestResolver : public Resolver
 {
@@ -230,7 +254,7 @@ public:
   {
     std::map<std::string, Resolver::NodeInfo> r;
     for (const auto& [id, addr] : configuration.node_addresses)
-      r[id] = {.address = addr, .attestation = get_dummy_attestation()};
+      r[id] = {.address = addr, .attestation = get_attestation()};
     return r;
   }
 
@@ -253,10 +277,49 @@ public:
       (uint8_t*)evidence_str.data(), evidence_str.size());
 
     nlohmann::json attestation;
-    attestation["evidence"] = evidence_encoded;
+    attestation["format"] = "Insecure_Virtual";
+    attestation["quote"] = evidence_encoded;
     attestation["endorsements"] = "";
     attestation["uvm_endorsements"] = "";
     return attestation.dump();
+  }
+
+  std::string get_snp_attestation()
+  {
+    auto key_der = get_service_key()->public_key_der();
+    auto key_digest = ccf::crypto::sha256(key_der);
+    assert(key_digest.size() == ccf::crypto::Sha256Hash::SIZE);
+    const std::span<const uint8_t, ccf::crypto::Sha256Hash::SIZE> as_span(
+      key_digest.data(), key_digest.data() + key_digest.size());
+    auto snp_attestation = ccf::pal::snp::get_attestation(
+      ccf::crypto::Sha256Hash::from_span(as_span));
+
+    // UVM_SECURITY_CONTEXT_DIR is set in cmake, so must be run via ctest (or
+    // ./tests.sh), or set it manually.
+    const std::string endorsements_path =
+      std::getenv("UVM_SECURITY_CONTEXT_DIR");
+    assert(!endorsements_path.empty());
+    auto endorsements =
+      slurp_file_string(endorsements_path + "/host-amd-cert-base64");
+
+    nlohmann::json attestation;
+    attestation["format"] = "AMD_SEV_SNP_v1";
+    attestation["quote"] =
+      ccf::crypto::b64_from_raw(snp_attestation->get_raw());
+    attestation["endorsements"] = endorsements;
+    attestation["uvm_endorsements"] = "";
+    return attestation.dump();
+  }
+
+  std::string get_attestation()
+  {
+#if defined(PLATFORM_VIRTUAL)
+    return get_dummy_attestation();
+#elif defined(PLATFORM_SNP)
+    return get_snp_attestation();
+#else
+    throw std::exception("Bad platform");
+#endif
   }
 
   ccf::crypto::KeyPairPtr get_service_key(bool refresh = false)
@@ -718,11 +781,8 @@ TEST_CASE("Service registration")
   auto csr = s.get_service_key()->create_csr_der(
     "CN=" + url_name, {{"alt." + url_name, false}});
 
-  std::cout << "Dummy attest " << s.get_dummy_attestation() << std::endl;
-
   s.register_service(
-    {csr,
-     {{"id", {{url_name, address, "tcp", 443}, s.get_dummy_attestation()}}}});
+    {csr, {{"id", {{url_name, address, "tcp", 443}, s.get_attestation()}}}});
 
   auto dnskey_rrs =
     s.resolve(cfg.origin, aDNS::QType::DNSKEY, aDNS::QClass::IN).answers;
