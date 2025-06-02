@@ -1539,7 +1539,29 @@ namespace aDNS
 #endif
 
       quote_info.quote = ccf::crypto::raw_from_b64(evidence);
-      quote_info.endorsements = ccf::crypto::raw_from_b64(endorsements);
+
+      try
+      {
+        const auto j =
+          nlohmann::json::parse(ccf::crypto::raw_from_b64(endorsements));
+        const auto aci_endorsements =
+          j.get<ccf::pal::snp::ACIReportEndorsements>();
+
+        quote_info.endorsements.insert(
+          quote_info.endorsements.end(),
+          aci_endorsements.vcek_cert.begin(),
+          aci_endorsements.vcek_cert.end());
+        quote_info.endorsements.insert(
+          quote_info.endorsements.end(),
+          aci_endorsements.certificate_chain.begin(),
+          aci_endorsements.certificate_chain.end());
+      }
+      catch (const nlohmann::json::parse_error& e)
+      {
+        // Fallback to attempt as byte-encoded chain.
+        quote_info.endorsements = ccf::crypto::raw_from_b64(endorsements);
+      }
+
       auto uvm_endorsements_raw = ccf::crypto::raw_from_b64(uvm_endorsements);
       ccf::pal::UVMEndorsements uvm_endorsements_descriptor = {};
       try
