@@ -97,7 +97,7 @@ set_property(
 
 if(COMPILE_TARGET STREQUAL "snp")
   execute_process(
-    COMMAND find / -type d -name "*security-context*"
+    COMMAND find / -maxdepth 1 -type d -name "security-context*"
     OUTPUT_VARIABLE SECURITY_CONTEXT_DIR
     OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
   message(STATUS "UVM security context directory: ${SECURITY_CONTEXT_DIR}")
