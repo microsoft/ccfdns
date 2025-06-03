@@ -87,6 +87,13 @@ add_test(
   NAME e2e_basic
   COMMAND python ../tests/e2e_basic.py -b "${CCF_PKG_DIR}/../bin" --library-dir
           "${CMAKE_CURRENT_BINARY_DIR}" ${TEST_PLATFORM_ARGS})
+set_property(
+  TEST e2e_basic
+  APPEND
+  PROPERTY
+    ENVIRONMENT
+    "SNP_REPORT_BINARY=${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/get-snp-report/bin/get-snp-report"
+)
 
 if(COMPILE_TARGET STREQUAL "snp")
   execute_process(

@@ -9,6 +9,7 @@ import requests
 import json
 import infra.e2e_args
 import os
+import subprocess
 import adns_service
 import dns
 import dns.message
@@ -60,26 +61,34 @@ def get_dummy_attestation(report_data):
     measurement = base64.b64encode(
         b"Insecure hard-coded virtual measurement v1"
     ).decode()
-    attestation = {"measurement": measurement, "report_data": report_data}
+    attestation = {
+        "measurement": measurement,
+        "report_data": base64.b64encode(report_data).decode(),
+    }
     return base64.b64encode(json.dumps(attestation).encode()).decode()
 
 
-def get_snp_attestation(client, report_data):
-    response = client.post("/internal/attestation", {"report_data": report_data})
-    print(f"report_data here is: {report_data}")
-    attestation = response.body.json()["quote"]
-    return attestation
+def get_snp_attestation(report_data):
+    result = subprocess.run(
+        [os.environ.get("SNP_REPORT_BINARY"), report_data.hex()],
+        check=True,
+        capture_output=True,
+    )
+
+    # hex(str) -> raw(b) -> b64(b) -> b64(str)
+    return base64.b64encode(bytes.fromhex(result.stdout.decode())).decode()
 
 
-def get_attestation(client, service_key, enclave_platform):
+def get_attestation(service_key, enclave_platform):
     public_key = service_key.public_key().public_bytes(
         serialization.Encoding.DER,
         serialization.PublicFormat.SubjectPublicKeyInfo,
     )
-    report_data = base64.b64encode(sha256(public_key).digest()).decode()
+
+    report_data = sha256(public_key).digest()
 
     if enclave_platform == "snp":
-        attestation = get_snp_attestation(client, report_data)
+        attestation = get_snp_attestation(report_data)
         endorsements = get_container_group_snp_endorsements_base64()
     elif enclave_platform == "virtual":
         attestation = get_dummy_attestation(report_data)
@@ -105,7 +114,7 @@ def submit_service_registration(
     """Submit a service registration request"""
 
     csr = gen_csr(name, service_key)
-    attestation = get_attestation(client, service_key, enclave_platform)
+    attestation = get_attestation(service_key, enclave_platform)
     r = client.post(
         "/app/register-service",
         {

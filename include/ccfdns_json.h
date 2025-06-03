@@ -196,10 +196,4 @@ namespace ccfdns
 
   DECLARE_JSON_TYPE(Resign::In);
   DECLARE_JSON_REQUIRED_FIELDS(Resign::In, origin);
-
-  DECLARE_JSON_TYPE(GetAttestastion::In);
-  DECLARE_JSON_REQUIRED_FIELDS(GetAttestastion::In, report_data);
-
-  DECLARE_JSON_TYPE(GetAttestastion::Out);
-  DECLARE_JSON_REQUIRED_FIELDS(GetAttestastion::Out, quote);
 }
