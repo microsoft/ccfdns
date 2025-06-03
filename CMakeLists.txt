@@ -72,6 +72,17 @@ enable_testing()
 
 set(TEST_PLATFORM_ARGS -t "${COMPILE_TARGET}")
 
+# For the e2e test to mock the attestation of the service being registered.
+if(COMPILE_TARGET STREQUAL "snp")
+  execute_process(
+    COMMAND "make"
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/get-snp-report"
+    RESULT_VARIABLE RETURN_CODE)
+  if(NOT RETURN_CODE STREQUAL "0")
+    message(FATAL_ERROR "Error calling cat /etc/os-release")
+  endif()
+endif()
+
 add_test(
   NAME e2e_basic
   COMMAND python ../tests/e2e_basic.py -b "${CCF_PKG_DIR}/../bin" --library-dir
