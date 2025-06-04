@@ -301,13 +301,15 @@ public:
     assert(!endorsements_path.empty());
     auto endorsements =
       slurp_file_string(endorsements_path + "/host-amd-cert-base64");
+    auto uvm_endorsements =
+      slurp_file_string(endorsements_path + "/reference-info-base64");
 
     nlohmann::json attestation;
     attestation["format"] = "AMD_SEV_SNP_v1";
     attestation["quote"] =
       ccf::crypto::b64_from_raw(snp_attestation->get_raw());
     attestation["endorsements"] = endorsements;
-    attestation["uvm_endorsements"] = "";
+    attestation["uvm_endorsements"] = uvm_endorsements;
     return attestation.dump();
   }
 

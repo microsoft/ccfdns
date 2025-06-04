@@ -1553,16 +1553,22 @@ namespace aDNS
       }
       catch (const nlohmann::json::parse_error& e)
       {
-        // If not, fallback to attempt as byte-encoded chain.
+        // If not, fallback to attempt as byte-encoded chain as is.
       }
 
       ccf::pal::PlatformAttestationMeasurement measurement = {};
       ccf::pal::PlatformAttestationReportData report_data = {};
+      ccf::pal::UVMEndorsements uvm_endorsements_descriptor = {};
       try
       {
         ccf::pal::verify_quote(attestation, measurement, report_data);
 
-        // TODO save verify_uvm_endorsements_descriptor if SNP
+        if (attestation.format != ccf::QuoteFormat::insecure_virtual)
+        {
+          uvm_endorsements_descriptor =
+            ccf::pal::verify_uvm_endorsements_descriptor(
+              attestation.uvm_endorsements.value(), measurement);
+        }
       }
       catch (const std::exception& e)
       {
