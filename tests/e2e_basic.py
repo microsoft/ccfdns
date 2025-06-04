@@ -81,9 +81,11 @@ def get_attestation(client, service_key, enclave_platform):
     if enclave_platform == "snp":
         attestation = get_snp_attestation(client, report_data)
         endorsements = get_container_group_snp_endorsements_base64()
+        uvm_endorsements = infra.snp.get_container_group_uvm_endorsements_base64()
     elif enclave_platform == "virtual":
         attestation = get_dummy_attestation(report_data)
         endorsements = ""
+        uvm_endorsements = ""
     else:
         raise ValueError(f"Unknown enclave platform: {enclave_platform}")
 
@@ -94,7 +96,7 @@ def get_attestation(client, service_key, enclave_platform):
         "format": attestation_format,
         "quote": attestation,
         "endorsements": endorsements,
-        "uvm_endorsements": "",
+        "uvm_endorsements": uvm_endorsements,
     }
     return json.dumps(dummy_attestation)
 
