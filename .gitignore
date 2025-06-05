@@ -43,3 +43,4 @@ logs
 node_modules
 env/
 scripts/env
+3rdparty/get-snp-report/bin/

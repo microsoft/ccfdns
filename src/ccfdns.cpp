@@ -1732,44 +1732,6 @@ namespace ccfdns
         "/endorsements", HTTP_GET, get_endorsements, ccf::no_auth_required)
         .set_forwarding_required(ccf::endpoints::ForwardingRequired::Never)
         .install();
-
-      auto get_attestation = [this](auto& ctx, nlohmann::json&& params) {
-        try
-        {
-          ContextContext cc(ccfdns, ctx);
-          ctx.rpc_ctx->set_response_header(
-            ccf::http::headers::CONTENT_TYPE,
-            ccf::http::headervalues::contenttype::TEXT);
-
-          const auto in = params.get<GetAttestastion::In>();
-          auto key_digest = in.report_data;
-          assert(key_digest.size() == ccf::crypto::Sha256Hash::SIZE);
-          const std::span<const uint8_t, ccf::crypto::Sha256Hash::SIZE> as_span(
-            key_digest.data(), key_digest.data() + key_digest.size());
-
-          auto snp_attestation = ccf::pal::snp::get_attestation(
-            ccf::crypto::Sha256Hash::from_span(as_span));
-          return ccf::make_success(GetAttestastion::Out{
-            .quote = ccf::crypto::b64_from_raw(snp_attestation->get_raw())});
-        }
-        catch (std::exception& ex)
-        {
-          return ccf::make_error(
-            HTTP_STATUS_INTERNAL_SERVER_ERROR,
-            ccf::errors::InternalError,
-            ex.what());
-        }
-      };
-
-      // Temporary endpoint to get a custom quote in the e2e test.
-      make_endpoint(
-        "/internal/attestation",
-        HTTP_POST,
-        ccf::json_adapter(get_attestation),
-        ccf::no_auth_required)
-        .set_auto_schema<GetAttestastion::In, GetAttestastion::Out>()
-        .set_forwarding_required(ccf::endpoints::ForwardingRequired::Never)
-        .install();
     }
 
     virtual void init_handlers() override

@@ -72,14 +72,32 @@ enable_testing()
 
 set(TEST_PLATFORM_ARGS -t "${COMPILE_TARGET}")
 
+# For the e2e test to mock the attestation of the service being registered.
+if(COMPILE_TARGET STREQUAL "snp")
+  execute_process(
+    COMMAND "make"
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/get-snp-report"
+    RESULT_VARIABLE RETURN_CODE)
+  if(NOT RETURN_CODE STREQUAL "0")
+    message(FATAL_ERROR "Error calling cat /etc/os-release")
+  endif()
+endif()
+
 add_test(
   NAME e2e_basic
   COMMAND python ../tests/e2e_basic.py -b "${CCF_PKG_DIR}/../bin" --library-dir
           "${CMAKE_CURRENT_BINARY_DIR}" ${TEST_PLATFORM_ARGS})
+set_property(
+  TEST e2e_basic
+  APPEND
+  PROPERTY
+    ENVIRONMENT
+    "SNP_REPORT_BINARY=${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/get-snp-report/bin/get-snp-report"
+)
 
 if(COMPILE_TARGET STREQUAL "snp")
   execute_process(
-    COMMAND find / -type d -name "*security-context*"
+    COMMAND find / -maxdepth 1 -type d -name "security-context*"
     OUTPUT_VARIABLE SECURITY_CONTEXT_DIR
     OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
   message(STATUS "UVM security context directory: ${SECURITY_CONTEXT_DIR}")
