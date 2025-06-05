@@ -3,6 +3,8 @@
 
 cmake_minimum_required(VERSION 3.16)
 
+include(FetchContent)
+
 # Pick up clang, where available, as the default compiler
 if((NOT CMAKE_C_COMPILER)
    AND (NOT CMAKE_CXX_COMPILER)
@@ -24,7 +26,24 @@ if((NOT CMAKE_C_COMPILER)
   endif()
 endif()
 
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wfatal-errors")
+# Conflicts with CCF snmalloc harcoding
+set(TRIESTE_USE_SNMALLOC OFF)
+
+FetchContent_Declare(
+  regocpp
+  GIT_REPOSITORY https://github.com/microsoft/rego-cpp
+  GIT_TAG 5a6b47653fa212de6cafe1f871c6a6511e59f7b5)
+set(CMAKE_POLICY_DEFAULT_CMP0077 NEW)
+FetchContent_MakeAvailable(regocpp)
+
+set_property(TARGET rego PROPERTY POSITION_INDEPENDENT_CODE ON)
+set_property(TARGET yaml PROPERTY POSITION_INDEPENDENT_CODE ON)
+set_property(TARGET json PROPERTY POSITION_INDEPENDENT_CODE ON)
+set_property(TARGET re2 PROPERTY POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CXX_FLAGS
+    "${CMAKE_CXX_FLAGS} -Wall -Wextra -Werror -Wundef -Wpedantic -Wno-unused -Wno-unused-parameter -Wshadow"
+)
 
 project(ccfdns LANGUAGES C CXX)
 
