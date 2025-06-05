@@ -188,9 +188,9 @@ public:
     const small_vector<uint16_t>& public_key,
     bool key_signing) override
   {
-    auto configuration = get_configuration();
+    auto conf = get_configuration();
 
-    if (configuration.use_key_signing_key && key_signing)
+    if (conf.use_key_signing_key && key_signing)
       return key_signing_keys[origin];
     else
       return zone_signing_keys[origin];
@@ -202,9 +202,9 @@ public:
     const ccf::crypto::Pem& pem,
     bool key_signing) override
   {
-    auto configuration = get_configuration();
+    auto conf = get_configuration();
 
-    if (configuration.use_key_signing_key && key_signing)
+    if (conf.use_key_signing_key && key_signing)
       key_signing_keys[origin] = pem;
     else
       zone_signing_keys[origin] = pem;
@@ -254,7 +254,11 @@ public:
   {
     std::map<std::string, Resolver::NodeInfo> r;
     for (const auto& [id, addr] : configuration.node_addresses)
-      r[id] = {.address = addr, .attestation = get_attestation()};
+      r[id] = {
+        .address = addr,
+        .attestation = get_attestation(),
+        .attestation_type =
+          aDNS::AttestationType::SEV_SNP_CONTAINERPLAT_AMD_UVM};
     return r;
   }
 
@@ -762,17 +766,15 @@ TEST_CASE("Service registration")
   TestResolver s;
 
   Resolver::Configuration cfg;
-  cfg = {
-    .origin = Name("example.com."),
-    .soa = "ns1.example.com. joe.example.com. 4 604800 86400 2419200 0",
-    .node_addresses =
-      {{"id",
-        Resolver::NodeAddress{
-          .name = Name("ns1.example.com."),
-          .ip = "127.0.0.1",
-          .protocol = "tcp",
-          .port = 53}}},
-  };
+  cfg.origin = Name("example.com.");
+  cfg.soa = "ns1.example.com. joe.example.com. 4 604800 86400 2419200 0";
+  cfg.node_addresses = {
+    {"id",
+     Resolver::NodeAddress{
+       .name = Name("ns1.example.com."),
+       .ip = "127.0.0.1",
+       .protocol = "tcp",
+       .port = 53}}};
   s.configure(cfg);
 
   Name service_name("service42.example.com.");
@@ -784,7 +786,12 @@ TEST_CASE("Service registration")
     "CN=" + url_name, {{"alt." + url_name, false}});
 
   s.register_service(
-    {csr, {{"id", {{url_name, address, "tcp", 443}, s.get_attestation()}}}});
+    {csr,
+     {{"id",
+       {{url_name, address, "tcp", 443},
+        s.get_attestation(),
+        aDNS::AttestationType::SEV_SNP_CONTAINERPLAT_AMD_UVM}}},
+     std::nullopt});
 
   auto dnskey_rrs =
     s.resolve(cfg.origin, aDNS::QType::DNSKEY, aDNS::QClass::IN).answers;
