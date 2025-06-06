@@ -159,3 +159,16 @@ jobs:
           cd build
           ./tests.sh -LE unit
         shell: bash
+
+      - name: "Upload logs"
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-azurelinux-snp
+          path: |
+            build/workspace/*/*.config.json
+            build/workspace/*/out
+            build/workspace/*/err
+            build/workspace/*/*.ledger/*
+            build/*.json
+          if-no-files-found: ignore
+        if: success() || failure()

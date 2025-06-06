@@ -117,6 +117,8 @@ def submit_service_registration(
 
     csr = gen_csr(name, service_key)
     attestation = get_attestation(service_key, enclave_platform)
+    with open(f"{enclave_platform}_attestation.json", "w") as f:
+        f.write(attestation)
     r = client.post(
         "/app/register-service",
         {
