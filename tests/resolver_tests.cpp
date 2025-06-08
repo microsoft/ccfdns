@@ -71,7 +71,10 @@ public:
   std::map<Name, ccf::crypto::Pem, RFC4034::CanonicalNameOrdering>
     zone_signing_keys;
 
-  std::string service_registration_policy_str;
+  std::string service_registration_policy_str = R"(
+package policy
+default allow := true
+)";
 
   Resolver::Configuration configuration;
 
@@ -232,12 +235,6 @@ public:
     const std::string& new_policy) override
   {
     service_registration_policy_str = new_policy;
-  }
-
-  virtual bool evaluate_service_registration_policy(
-    const std::string& data) const override
-  {
-    return true;
   }
 
   uint32_t get_fresh_time() override

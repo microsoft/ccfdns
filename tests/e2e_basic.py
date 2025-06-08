@@ -22,10 +22,26 @@ from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization, hashes
 from cryptography.hazmat.primitives.asymmetric import ec
 from hashlib import sha256
-from adns_service import aDNSConfig
+from adns_service import aDNSConfig, set_policy
 
 rdc = dns.rdataclass
 rdt = dns.rdatatype
+
+
+WRONG_SVN_POLICY = """
+package policy
+
+default allow := false
+
+allow_svn if {
+    input.svn >= 100500
+    input.svn != null
+}
+
+allow if {
+    allow_svn
+}
+"""
 
 
 def get_container_group_snp_endorsements_base64():
@@ -137,7 +153,8 @@ def submit_service_registration(
             },
         },
     )
-    assert r.status_code == http.HTTPStatus.NO_CONTENT
+    if r.status_code != http.HTTPStatus.NO_CONTENT:
+        raise Exception(f"Failed to register service {name}: {r.status_code} {r.body}")
     return r
 
 
@@ -253,6 +270,25 @@ def test_service_reg(network, args):
         check_record(host, port, ca, service_name, "A", ARecord("127.0.0.1"))
         r = get_records(host, port, ca, service_name, "A", keys)
         print(r)
+
+        try:
+            set_policy(
+                network,
+                "set_registration_policy",
+                WRONG_SVN_POLICY,
+            )
+
+            submit_service_registration(
+                client,
+                service_name,
+                "127.0.0.1",
+                port,
+                "tcp",
+                service_key,
+                args.enclave_platform,
+            )
+        except Exception as e:
+            assert "Failed to verify UVM endorsements" in str(e)
 
 
 def run(args):

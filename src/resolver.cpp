@@ -29,10 +29,49 @@
 #include <memory>
 #include <mutex>
 #include <openssl/x509.h>
+#include <rego/rego.hh>
 #include <set>
 #include <string>
 
 using namespace RFC1035;
+
+namespace
+{
+  void verify_uvm_policies(
+    const ccf::pal::UVMEndorsements& uvm_endorsements,
+    const std::string& policy)
+  {
+    nlohmann::json rego_input;
+    rego_input["svn"] = std::stoi(uvm_endorsements.svn);
+
+    rego::Interpreter interpreter(true /* v1 compatible */);
+    auto rv = interpreter.add_module("policy", policy);
+
+    auto tv = interpreter.set_input_term(rego_input.dump());
+    if (tv != nullptr)
+    {
+      throw std::runtime_error(
+        fmt::format("Invalid policy input: {}", rego_input.dump()));
+    }
+
+    auto qv = interpreter.query("data.policy.allow");
+
+    if (qv == "{\"expressions\":[true]}")
+    {
+      return;
+    }
+    else if (qv == "{\"expressions\":[false]}")
+    {
+      throw std::runtime_error(
+        fmt::format("UVM policies not satisfied: {}", rego_input.dump()));
+    }
+    else
+    {
+      throw std::runtime_error(
+        fmt::format("Error while applying policy: {}", qv));
+    }
+  }
+}
 
 namespace aDNS
 {
@@ -1506,9 +1545,6 @@ namespace aDNS
 
     auto origin = find_zone(service_name);
 
-    // TODO origin == configuration.origin, or even service_name ==
-    // {label}.configuration.origin
-
     CCF_APP_INFO(
       "ADNS: Register service {} in {}",
       std::string(service_name),
@@ -1609,11 +1645,25 @@ namespace aDNS
           id));
       }
 
-      // TODO Create a JSON report with
-      // - parsed_attestation.*
-      // - uvm_endorsements_descriptor
-      // - ...
-      // and present it to the policy engine
+      if (attestation.format != ccf::QuoteFormat::insecure_virtual)
+      {
+        try
+        {
+          verify_uvm_policies(
+            uvm_endorsements_descriptor, service_registration_policy());
+        }
+        catch (const std::exception& e)
+        {
+          CCF_APP_FAIL(
+            "ADNS: Failed to verify UVM endorsements for {} : {}",
+            id,
+            e.what());
+          throw std::runtime_error(fmt::format(
+            "ADNS: Failed to verify UVM endorsements for {} : {}",
+            id,
+            e.what()));
+        }
+      }
     }
 
     auto service_protocol =
