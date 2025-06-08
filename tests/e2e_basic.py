@@ -273,24 +273,27 @@ def test_service_reg(network, args):
         r = get_records(host, port, ca, service_name, "A", keys)
         print(r)
 
-        try:
-            set_policy(
-                network,
-                "set_registration_policy",
-                WRONG_SVN_POLICY,
-            )
+        if args.enclave_platform == "snp":
+            try:
+                set_policy(
+                    network,
+                    "set_registration_policy",
+                    WRONG_SVN_POLICY,
+                )
 
-            submit_service_registration(
-                client,
-                service_name,
-                "127.0.0.1",
-                port,
-                "tcp",
-                service_key,
-                args.enclave_platform,
-            )
-        except Exception as e:
-            assert "Failed to verify UVM endorsements" in str(e)
+                submit_service_registration(
+                    client,
+                    service_name,
+                    "127.0.0.1",
+                    port,
+                    "tcp",
+                    service_key,
+                    args.enclave_platform,
+                )
+            except Exception as e:
+                assert "Failed to verify UVM endorsements" in str(e)
+            else:
+                assert False, "Expected to fail"
 
 
 def run(args):
