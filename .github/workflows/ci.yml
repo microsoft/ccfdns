@@ -102,6 +102,19 @@ jobs:
           ./tests.sh -LE unit
         shell: bash
 
+      - name: "Upload logs"
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-azurelinux-virtual
+          path: |
+            build/workspace/*/*.config.json
+            build/workspace/*/out
+            build/workspace/*/err
+            build/workspace/*/*.ledger/*
+            build/*.json
+          if-no-files-found: ignore
+        if: success() || failure()
+
   build_and_test_caci:
     name: "Confidential Container CI"
     runs-on: [self-hosted, 1ES.Pool=gha-adns-ci]
@@ -128,13 +141,13 @@ jobs:
         with:
           repository: "microsoft/CCF"
           tag: "ccf-6.0.3"
-          fileName: "ccf_virtual_devel_6.0.3_x86_64.rpm"
+          fileName: "ccf_snp_devel_6.0.3_x86_64.rpm"
 
       - name: "Install CCF with dependencies"
         shell: bash
         run: |
           set -ex
-          tdnf -y install ccf_virtual_devel_6.0.3_x86_64.rpm
+          tdnf -y install ccf_snp_devel_6.0.3_x86_64.rpm
           ./scripts/setup-ci.sh
 
       - name: "Build Debug"
@@ -142,7 +155,7 @@ jobs:
           set -ex
           mkdir build
           cd build
-          cmake -GNinja -DCOMPILE_TARGET=virtual -DCMAKE_BUILD_TYPE=Debug ..
+          cmake -GNinja -DCOMPILE_TARGET=snp -DCMAKE_BUILD_TYPE=Debug ..
           ninja
         shell: bash
 
@@ -159,3 +172,16 @@ jobs:
           cd build
           ./tests.sh -LE unit
         shell: bash
+
+      - name: "Upload logs"
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-azurelinux-snp
+          path: |
+            build/workspace/*/*.config.json
+            build/workspace/*/out
+            build/workspace/*/err
+            build/workspace/*/*.ledger/*
+            build/*.json
+          if-no-files-found: ignore
+        if: success() || failure()
