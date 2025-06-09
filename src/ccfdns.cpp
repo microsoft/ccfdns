@@ -652,14 +652,6 @@ namespace ccfdns
       JSContext* ctx = nullptr;
     };
 
-    virtual bool evaluate_service_registration_policy(
-      const std::string& data) const override
-    {
-      RPJSRuntime rt;
-      std::string program = data + "\n\n" + service_registration_policy();
-      return rt.eval(program);
-    }
-
     using Resolver::register_service;
 
     virtual std::map<std::string, NodeInfo> get_node_information() override

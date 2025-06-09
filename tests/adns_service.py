@@ -100,6 +100,22 @@ class aDNSConfig(dict):
         self.nsec3_salt_length = nsec3_salt_length
 
 
+DEFAULT_C_ACI_POLICY = """
+package policy
+
+default allow := false
+
+allow_svn if {
+    input.svn >= 101
+    input.svn != null
+}
+
+allow if {
+    allow_svn
+}
+"""
+
+
 def configure(base_url, cabundle, config, client_cert=None, num_retries=1):
     """Configure an aDNS service"""
 
@@ -233,6 +249,8 @@ def run(args, tcp_port=None, udp_port=None):
             library_dir=args.library_dir,
         )
         network.start_and_open(args)
+
+        set_policy(network, "set_registration_policy", DEFAULT_C_ACI_POLICY)
 
         args.adns.node_addresses = args.adns["node_addresses"] = assign_node_addresses(
             network, args.node_addresses, False

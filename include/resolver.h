@@ -271,9 +271,6 @@ namespace aDNS
     virtual void set_service_registration_policy(
       const std::string& new_policy) = 0;
 
-    virtual bool evaluate_service_registration_policy(
-      const std::string& data) const = 0;
-
     virtual Configuration get_configuration() const = 0;
     virtual void set_configuration(const Configuration& cfg) = 0;
 

@@ -61,6 +61,11 @@ set(ENCLAVE_TARGET ccfdns.${COMPILE_TARGET})
 
 find_package(ZLIB)
 
+# Remove all INTERFACE_COMPILE_OPTIONS from regocpp::rego before linking. The
+# reason is that trieste has compilation flags we don't want exposed as
+# INTERFACE option (probably for no reason).
+set_target_properties(trieste PROPERTIES INTERFACE_COMPILE_OPTIONS "")
+
 add_ccf_app(
   ccfdns
   SRCS
@@ -73,6 +78,8 @@ add_ccf_app(
   ZLIB::ZLIB
   LINK_LIBS_SNP
   ZLIB::ZLIB)
+
+target_link_libraries(${ENCLAVE_TARGET} PRIVATE regocpp::rego)
 
 target_include_directories(
   ${ENCLAVE_TARGET}
@@ -155,7 +162,8 @@ endfunction()
 
 add_unit_test(resolver_tests ../tests/resolver_tests.cpp src/resolver.cpp
               src/rfc4034.cpp src/rfc5155.cpp src/base32.cpp)
-target_link_libraries(resolver_tests PRIVATE ZLIB::ZLIB ccf.${COMPILE_TARGET})
+target_link_libraries(resolver_tests PRIVATE ZLIB::ZLIB ccf.${COMPILE_TARGET}
+                                             regocpp::rego)
 target_include_directories(
   resolver_tests
   PRIVATE include
