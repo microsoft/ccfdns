@@ -76,6 +76,11 @@ package policy
 default allow := true
 )";
 
+  std::string service_relying_party_policy_str = R"(
+package policy
+default allow := true
+)";
+
   Resolver::Configuration configuration;
 
   ccf::crypto::KeyPairPtr service_key{};
@@ -236,6 +241,18 @@ default allow := true
   {
     service_registration_policy_str = new_policy;
   }
+
+  virtual std::string service_relying_party_policy() const override
+  {
+    return service_relying_party_policy_str;
+  }
+
+  virtual void set_service_relying_party_policy(
+    const std::string& new_policy) override
+  {
+    service_relying_party_policy_str = new_policy;
+  }
+
 
   uint32_t get_fresh_time() override
   {

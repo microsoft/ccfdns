@@ -172,6 +172,10 @@ namespace ccfdns
     const std::string service_registration_policy_table_name =
       "public:ccf.gov.ccfdns.service_registration_policy";
 
+    using ServiceRelyingPartyPolicy = ccf::ServiceValue<std::string>;
+    const std::string service_relying_party_policy_table_name =
+      "public:ccf.gov.ccfdns.service_relying_party_policy";
+
     using RegistrationRequests =
       ccf::ServiceMap<Name, RegisterServiceWithPreviousVersion>;
     const std::string registration_requests_table_name =
@@ -565,6 +569,33 @@ namespace ccfdns
       if (!policy)
         throw std::runtime_error(
           "error accessing service registration policy table");
+
+      policy->put(new_policy);
+    }
+
+    virtual std::string service_relying_party_policy() const override
+    {
+      check_context();
+
+      auto policy_table = rotx().ro<ServiceRelyingPartyPolicy>(
+        service_relying_party_policy_table_name);
+      const std::optional<std::string> policy = policy_table->get();
+      if (!policy)
+        throw std::runtime_error("no service relying party policy");
+      return *policy;
+    }
+
+    virtual void set_service_relying_party_policy(
+      const std::string& new_policy) override
+    {
+      check_context();
+
+      auto policy = rwtx().rw<ServiceRelyingPartyPolicy>(
+        service_relying_party_policy_table_name);
+
+      if (!policy)
+        throw std::runtime_error(
+          "error accessing service relying party policy table");
 
       policy->put(new_policy);
     }
@@ -1722,6 +1753,40 @@ namespace ccfdns
 
       make_endpoint(
         "/endorsements", HTTP_GET, get_endorsements, ccf::no_auth_required)
+        .set_forwarding_required(ccf::endpoints::ForwardingRequired::Never)
+        .install();
+
+      auto set_service_relying_party_policy = [this](auto& ctx, nlohmann::json&& params) {
+        try
+        {
+          ContextContext cc(ccfdns, ctx);
+          ctx.rpc_ctx->set_response_header(
+            ccf::http::headers::CONTENT_TYPE,
+            ccf::http::headervalues::contenttype::TEXT);
+
+          const auto in = params.get<SetServiceRelyingPartyPolicy::In>();
+
+          // TODO authorise against service registration policy
+          ccfdns->set_service_relying_party_policy(in.policy);
+
+          return ccf::make_success();
+        }
+        catch (std::exception& ex)
+        {
+          return ccf::make_error(
+            HTTP_STATUS_INTERNAL_SERVER_ERROR,
+            ccf::errors::InternalError,
+            ex.what());
+        }
+      };
+
+      // Temporary endpoint to get a custom quote in the e2e test.
+      make_endpoint(
+        "/set-service-relying-party-policy",
+        HTTP_POST,
+        ccf::json_adapter(set_service_relying_party_policy),
+        ccf::no_auth_required)
+        .set_auto_schema<SetServiceRelyingPartyPolicy::In, SetServiceRelyingPartyPolicy::Out>()
         .set_forwarding_required(ccf::endpoints::ForwardingRequired::Never)
         .install();
     }

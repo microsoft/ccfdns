@@ -35,14 +35,16 @@
 
 using namespace RFC1035;
 
+using HostData = ccf::crypto::Sha256Hash;
+
 namespace
 {
-  void verify_uvm_policies(
-    const ccf::pal::UVMEndorsements& uvm_endorsements,
+  void verify_service_relying_party_policy(
+    const std::string& host_data,
     const std::string& policy)
   {
     nlohmann::json rego_input;
-    rego_input["svn"] = std::stoi(uvm_endorsements.svn);
+    rego_input["host_data"] = host_data;
 
     rego::Interpreter interpreter(true /* v1 compatible */);
     auto rv = interpreter.add_module("policy", policy);
@@ -63,7 +65,7 @@ namespace
     else if (qv == "{\"expressions\":[false]}")
     {
       throw std::runtime_error(
-        fmt::format("UVM policies not satisfied: {}", rego_input.dump()));
+        fmt::format("Policy not satisfied: {}", rego_input.dump()));
     }
     else
     {
@@ -71,6 +73,17 @@ namespace
         fmt::format("Error while applying policy: {}", qv));
     }
   }
+
+  HostData retrieve_host_data(const ccf::QuoteInfo& attestation) {
+    HostData::Representation rep{};
+    auto typed_attestation = *reinterpret_cast<const ccf::pal::snp::Attestation*>(
+        attestation.quote.data());
+    std::copy(
+      std::begin(typed_attestation.host_data),
+      std::end(typed_attestation.host_data),
+      rep.begin());
+    return HostData::from_representation(rep);
+  } 
 }
 
 namespace aDNS
@@ -1595,12 +1608,15 @@ namespace aDNS
       ccf::pal::PlatformAttestationMeasurement measurement = {};
       ccf::pal::PlatformAttestationReportData report_data = {};
       ccf::pal::UVMEndorsements uvm_endorsements_descriptor = {};
+      HostData host_data = {};
       try
       {
         ccf::pal::verify_quote(attestation, measurement, report_data);
 
         if (attestation.format != ccf::QuoteFormat::insecure_virtual)
         {
+          host_data = retrieve_host_data(attestation);
+
           uvm_endorsements_descriptor =
             ccf::pal::verify_uvm_endorsements_descriptor(
               attestation.uvm_endorsements.value(), measurement);
@@ -1649,8 +1665,9 @@ namespace aDNS
       {
         try
         {
-          verify_uvm_policies(
-            uvm_endorsements_descriptor, service_registration_policy());
+          verify_service_relying_party_policy(
+             ccf::crypto::b64_from_raw(host_data.h.data(), host_data.h.size()),
+             service_relying_party_policy());
         }
         catch (const std::exception& e)
         {

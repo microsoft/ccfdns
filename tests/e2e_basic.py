@@ -27,22 +27,10 @@ from adns_service import aDNSConfig, set_policy
 rdc = dns.rdataclass
 rdt = dns.rdatatype
 
-
-WRONG_SVN_POLICY = """
+SERVICE_REGISTRATION_ALLOW_ALL = """
 package policy
-
-default allow := false
-
-allow_svn if {
-    input.svn >= 100500
-    input.svn != null
-}
-
-allow if {
-    allow_svn
-}
+default allow := true
 """
-
 
 def get_container_group_snp_endorsements_base64():
     security_context_dir = infra.snp.get_security_context_dir()
@@ -82,6 +70,11 @@ def get_dummy_attestation(report_data):
         "report_data": base64.b64encode(report_data).decode(),
     }
     return base64.b64encode(json.dumps(attestation).encode()).decode()
+
+
+def get_host_data_base64():
+    security_policy = infra.snp.get_container_group_security_policy()
+    return base64.b64encode(sha256(security_policy.encode()).digest()).decode()
 
 
 def get_snp_attestation(report_data):
@@ -126,15 +119,43 @@ def get_attestation(service_key, enclave_platform):
     return json.dumps(dummy_attestation)
 
 
-def submit_service_registration(
-    client, name, address, port, protocol, service_key, enclave_platform
-):
-    """Submit a service registration request"""
+def get_security_policy(enclave):
+    """Get the security policy for the enclave"""
+    if enclave == "snp":
+        return get_host_data_base64()
+    elif enclave == "virtual":
+        return "Insecure hard-coded virtual security policy v1"
+    else:
+        raise ValueError(f"Unknown enclave platform: {enclave}")
 
+
+def corrupted(some_str):
+    return "0000" + some_str[4:]
+
+
+def get_service_relying_party_policy(enclave, good):
+    policy = get_security_policy(enclave) if good else corrupted(get_security_policy(enclave))
+    return f"""
+package policy
+
+default allow := false
+
+allowed_security_policy if {{
+    input.host_data == "{policy}"
+}}
+
+allow if {{
+    allowed_security_policy
+}}
+"""
+
+
+def submit_service_registration(client, name, address, port, protocol, service_key, enclave_platform, attestation):
+    """Submit a service registration request"""
     csr = gen_csr(name, service_key)
-    attestation = get_attestation(service_key, enclave_platform)
     with open(f"{enclave_platform}_attestation.json", "w") as f:
         f.write(attestation)
+
     r = client.post(
         "/app/register-service",
         {
@@ -241,12 +262,8 @@ def ARecord(s):
     return dns.rdata.from_text(rdc.IN, rdt.A, s)
 
 
-def test_service_reg(network, args):
-    """Service registration tests"""
-    primary, _ = network.find_primary()
-
+def register_and_ensure(primary, enclave, with_key, with_attestation=None):
     with primary.client(identity="member0") as client:
-
         host = primary.get_public_rpc_host()
         port = primary.get_public_rpc_port()
         ca = primary.session_ca()["ca"]
@@ -256,16 +273,16 @@ def test_service_reg(network, args):
         keys = get_keys(host, port, ca, origin)
 
         service_name = "test.acidns10.attested.name"
-        service_key = ec.generate_private_key(ec.SECP384R1(), default_backend())
-
+        
         submit_service_registration(
             client,
             service_name,
             "127.0.0.1",
             port,
             "tcp",
-            service_key,
-            args.enclave_platform,
+            with_key,
+            enclave,
+            attestation=with_attestation or get_attestation(with_key, enclave),
         )
 
         print("Checking record is installed")
@@ -273,27 +290,56 @@ def test_service_reg(network, args):
         r = get_records(host, port, ca, service_name, "A", keys)
         print(r)
 
-        if args.enclave_platform == "snp":
-            try:
-                set_policy(
-                    network,
-                    "set_registration_policy",
-                    WRONG_SVN_POLICY,
-                )
 
-                submit_service_registration(
-                    client,
-                    service_name,
-                    "127.0.0.1",
-                    port,
-                    "tcp",
-                    service_key,
-                    args.enclave_platform,
-                )
-            except Exception as e:
-                assert "Failed to verify UVM endorsements" in str(e)
-            else:
-                assert False, "Expected to fail"
+def register_successfully(*args, **kwargs):
+    """Expect a function to succeed"""
+    try:
+        register_and_ensure(*args, **kwargs)
+    except Exception as e:
+        raise AssertionError(f"FAIL: {e}")
+
+def register_failed(with_error, *args, **kwargs):
+    try:
+        register_and_ensure(*args, **kwargs)
+    except Exception as e:
+        if with_error not in str(e):
+            raise AssertionError(f"Expected error '{with_error}' but got: {e}")
+    else:
+        raise AssertionError(f"Expected failure with error '{with_error}' but succeeded")
+    
+
+def set_service_registration_policy(network, policy):
+    set_policy(network, "set_registration_policy", policy)
+
+def set_service_relying_party_policy(network, enclave, good=True):
+    policy = get_service_relying_party_policy(enclave=enclave, good=good)
+    print("PATTERN Applying RP policy:\n", policy)
+    primary, _ = network.find_primary()
+    with primary.client(identity="member0") as client:
+        r = client.post(
+            "/app/set-service-relying-party-policy",
+            {
+                "policy": policy,
+            },
+        )
+        assert r.status_code == http.HTTPStatus.NO_CONTENT, r
+
+def test_service_reg(network, args):
+    """Service registration tests"""
+    primary, _ = network.find_primary()
+
+    enclave = args.enclave_platform
+    service_key = ec.generate_private_key(ec.SECP384R1(), default_backend())
+
+    set_service_registration_policy(network, SERVICE_REGISTRATION_ALLOW_ALL)
+    set_service_relying_party_policy(network, enclave, good=True)
+    register_successfully(primary, enclave=enclave, with_key=service_key)
+
+    if enclave == "virtual":
+        return  # Can't easily manipulate the attestation in a virtual enclave
+    
+    set_service_relying_party_policy(network, enclave, good=False)
+    register_failed("Policy not satisfied", primary, enclave=enclave, with_key=service_key)
 
 
 def run(args):
