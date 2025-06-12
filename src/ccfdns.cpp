@@ -668,7 +668,7 @@ namespace ccfdns
       check_context();
 
       auto policy_table = rotx().ro<PlatformRelyingPartyRegistrationPolicy>(
-        service_relying_party_registration_policy_table_name);
+        platform_relying_party_registration_policy_table_name);
       const std::optional<std::string> policy = policy_table->get();
       if (!policy)
         throw std::runtime_error(

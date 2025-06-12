@@ -65,6 +65,13 @@ namespace
         fmt::format("Error while applying policy: {}", qv));
     }
   }
+
+  void verify_platform_relying_party_policy(
+    const std::string& host_data, const std::string& policy)
+  {
+    // Currently reuse service relying party logic, because input is the same.
+    verify_service_relying_party_policy(host_data, policy);
+  }
 }
 
 namespace aDNS
@@ -1611,6 +1618,10 @@ namespace aDNS
           verify_service_relying_party_policy(
             ccf::crypto::b64_from_raw(host_data.h.data(), host_data.h.size()),
             service_relying_party_policy(service_name));
+
+          verify_platform_relying_party_policy(
+            ccf::crypto::b64_from_raw(host_data.h.data(), host_data.h.size()),
+            platform_relying_party_policy(service_name));
         }
         catch (const std::exception& e)
         {

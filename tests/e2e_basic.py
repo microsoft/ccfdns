@@ -32,6 +32,11 @@ package policy
 default allow := true
 """
 
+PLATFORM_REGISTRATION_ALLOW_ALL = """
+package policy
+default allow := true
+"""
+
 
 def get_container_group_snp_endorsements_base64():
     security_context_dir = infra.snp.get_security_context_dir()
@@ -128,6 +133,27 @@ def corrupted(some_str):
 
 
 def get_service_relying_party_policy(enclave, good):
+    policy = (
+        get_security_policy(enclave)
+        if good
+        else corrupted(get_security_policy(enclave))
+    )
+    return f"""
+package policy
+
+default allow := false
+
+allowed_security_policy if {{
+    input.host_data == "{policy}"
+}}
+
+allow if {{
+    allowed_security_policy
+}}
+"""
+
+
+def get_platform_relying_party_policy(enclave, good):
     policy = (
         get_security_policy(enclave)
         if good
@@ -368,8 +394,43 @@ allow if {{
 """
 
 
+def create_platform_registration_policy(network, good=True):
+    did, feed, svn = get_uvm_endorsements(network)
+    if not good:
+        svn = int(svn) + 1
+
+    return f"""
+package policy
+
+default allow := false
+
+allow_iss if {{
+    input.iss == "{did}"
+}}
+
+allow_sub if {{
+    input.sub == "{feed}"
+}}
+
+allow_svn if {{
+    input.svn
+    input.svn >= {svn}
+}}
+
+allow if {{
+    allow_iss
+    allow_sub
+    allow_svn
+}}
+"""
+
+
 def set_service_relying_party_registration_policy(network, policy):
     set_policy(network, "set_service_relying_party_registration_policy", policy)
+
+
+def set_platform_relying_party_registration_policy(network, policy):
+    set_policy(network, "set_platform_relying_party_registration_policy", policy)
 
 
 def set_service_relying_party_policy(network, enclave, service_name, good=True):
@@ -393,13 +454,50 @@ def set_service_relying_party_policy(network, enclave, service_name, good=True):
         assert r.status_code == http.HTTPStatus.NO_CONTENT, r
 
 
-def set_relying_party_policy_successfully(*args, **kwargs):
+def set_platform_relying_party_policy(network, enclave, service_name, good=True):
+    policy = get_platform_relying_party_policy(enclave=enclave, good=good)
+    primary, _ = network.find_primary()
+
+    # Let's hash policy as report data for now.
+    report_data = sha256(policy.encode()).digest()
+
+    with primary.client(identity="member0") as client:
+        r = client.post(
+            "/app/set-platform-relying-party-policy",
+            {
+                "service_name": service_name,
+                "policy": policy,
+                "attestation": get_attestation(
+                    report_data=report_data, enclave=enclave
+                ),
+            },
+        )
+        assert r.status_code == http.HTTPStatus.NO_CONTENT, r
+
+
+def set_service_relying_party_policy_successfully(*args, **kwargs):
     set_service_relying_party_policy(*args, **kwargs)
 
 
-def set_relying_party_policy_failed(with_error, *args, **kwargs):
+def set_service_relying_party_policy_failed(with_error, *args, **kwargs):
     try:
         set_service_relying_party_policy(*args, **kwargs)
+    except Exception as e:
+        if with_error not in str(e):
+            raise AssertionError(f"Expected error '{with_error}' but got: {e}")
+    else:
+        raise AssertionError(
+            f"Expected failure with error '{with_error}' but succeeded"
+        )
+
+
+def set_platform_relying_party_policy_successfully(*args, **kwargs):
+    set_platform_relying_party_policy(*args, **kwargs)
+
+
+def set_platform_relying_party_policy_failed(with_error, *args, **kwargs):
+    try:
+        set_platform_relying_party_policy(*args, **kwargs)
     except Exception as e:
         if with_error not in str(e):
             raise AssertionError(f"Expected error '{with_error}' but got: {e}")
@@ -419,9 +517,17 @@ def test_service_registration(network, args):
     set_service_relying_party_registration_policy(
         network, SERVICE_REGISTRATION_ALLOW_ALL
     )
-    set_relying_party_policy_successfully(
+    set_platform_relying_party_registration_policy(
+        network, PLATFORM_REGISTRATION_ALLOW_ALL
+    )
+
+    set_service_relying_party_policy_successfully(
         network, enclave, service_name="test.acidns10.attested.name.", good=True
     )
+    set_platform_relying_party_policy_successfully(
+        network, enclave, service_name="test.acidns10.attested.name.", good=True
+    )
+
     register_successfully(
         primary,
         enclave=enclave,
@@ -442,7 +548,25 @@ def test_service_registration(network, args):
     )
 
     # Register under wrong service registration policy (modified host data, aka security policy).
-    set_relying_party_policy_successfully(
+    set_service_relying_party_policy_successfully(
+        network, enclave, service_name="test.acidns10.attested.name.", good=False
+    )
+    set_platform_relying_party_policy_successfully(
+        network, enclave, service_name="test.acidns10.attested.name.", good=True
+    )
+    register_failed(
+        "Policy not satisfied",
+        primary,
+        enclave=enclave,
+        service_name="test.acidns10.attested.name.",
+        with_key=service_key,
+    )
+
+    # Register under wrong platform registration policy (modified host data, aka security policy).
+    set_service_relying_party_policy_successfully(
+        network, enclave, service_name="test.acidns10.attested.name.", good=True
+    )
+    set_platform_relying_party_policy_successfully(
         network, enclave, service_name="test.acidns10.attested.name.", good=False
     )
     register_failed(
@@ -459,7 +583,7 @@ def test_policy_registration(network, args):
     set_service_relying_party_registration_policy(
         network, create_service_registration_policy(network, good=True)
     )
-    set_relying_party_policy_successfully(
+    set_service_relying_party_policy_successfully(
         network,
         enclave=args.enclave_platform,
         service_name="test.acidns10.attested.name.",
@@ -469,7 +593,28 @@ def test_policy_registration(network, args):
     set_service_relying_party_registration_policy(
         network, create_service_registration_policy(network, good=False)
     )
-    set_relying_party_policy_failed(
+    set_service_relying_party_policy_failed(
+        "Policy not satisfied",
+        network,
+        enclave=args.enclave_platform,
+        service_name="test.acidns10.attested.name.",
+    )
+
+    # Same for platform relying party policy.
+    set_platform_relying_party_registration_policy(
+        network, create_platform_registration_policy(network, good=True)
+    )
+
+    set_platform_relying_party_policy_successfully(
+        network,
+        enclave=args.enclave_platform,
+        service_name="test.acidns10.attested.name.",
+    )
+
+    set_platform_relying_party_registration_policy(
+        network, create_platform_registration_policy(network, good=False)
+    )
+    set_platform_relying_party_policy_failed(
         "Policy not satisfied",
         network,
         enclave=args.enclave_platform,
