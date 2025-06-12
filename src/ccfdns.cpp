@@ -121,6 +121,13 @@ namespace
         fmt::format("Error while applying policy: {}", qv));
     }
   }
+
+  void verify_against_platform_registration_policy(
+    std::string_view policy, ccf::pal::UVMEndorsements& uvm_descriptor)
+  {
+    // Currently reuse service relying party logic, because input is the same.
+    verify_against_service_registration_policy(policy, uvm_descriptor);
+  }
 }
 
 namespace ccfdns
@@ -1914,6 +1921,54 @@ namespace ccfdns
         .set_auto_schema<
           SetServiceRelyingPartyPolicy::In,
           SetServiceRelyingPartyPolicy::Out>()
+        .set_forwarding_required(ccf::endpoints::ForwardingRequired::Never)
+        .install();
+
+      auto set_platform_relying_party_policy = [this](
+                                                 auto& ctx,
+                                                 nlohmann::json&& params) {
+        try
+        {
+          ContextContext cc(ccfdns, ctx);
+          ctx.rpc_ctx->set_response_header(
+            ccf::http::headers::CONTENT_TYPE,
+            ccf::http::headervalues::contenttype::TEXT);
+
+          const auto in = params.get<SetPlatformRelyingPartyPolicy::In>();
+
+          ccf::pal::PlatformAttestationReportData report_data = {};
+          ccf::pal::UVMEndorsements uvm_descriptor = {};
+          auto attestation = parse_and_verify_attestation(
+            in.attestation, report_data, uvm_descriptor);
+
+          if (attestation.format != ccf::QuoteFormat::insecure_virtual)
+          {
+            verify_against_platform_registration_policy(
+              ccfdns->service_relying_party_registration_policy(),
+              uvm_descriptor);
+          }
+
+          ccfdns->set_platform_relying_party_policy(in.service_name, in.policy);
+
+          return ccf::make_success();
+        }
+        catch (std::exception& ex)
+        {
+          return ccf::make_error(
+            HTTP_STATUS_INTERNAL_SERVER_ERROR,
+            ccf::errors::InternalError,
+            ex.what());
+        }
+      };
+
+      make_endpoint(
+        "/set-platform-relying-party-policy",
+        HTTP_POST,
+        ccf::json_adapter(set_platform_relying_party_policy),
+        ccf::no_auth_required)
+        .set_auto_schema<
+          SetPlatformRelyingPartyPolicy::In,
+          SetPlatformRelyingPartyPolicy::Out>()
         .set_forwarding_required(ccf::endpoints::ForwardingRequired::Never)
         .install();
     }
