@@ -25,6 +25,11 @@ using namespace ccf::crypto::OpenSSL;
 
 static uint32_t default_ttl = 86400;
 
+static std::string DEFAULT_PERMISSIVE_RELYING_PARTY_POLICY = R"(
+package policy
+default allow := true
+)";
+
 auto type2str = [](const auto& x) {
   return aDNS::string_from_type(static_cast<aDNS::Type>(x));
 };
@@ -75,6 +80,8 @@ public:
 package policy
 default allow := true
 )";
+
+  std::map<std::string, std::string> service_relying_party_policy_str;
 
   Resolver::Configuration configuration;
 
@@ -235,6 +242,23 @@ default allow := true
     const std::string& new_policy) override
   {
     service_registration_policy_str = new_policy;
+  }
+
+  virtual std::string service_relying_party_policy(
+    const std::string& service_name) const override
+  {
+    auto it = service_relying_party_policy_str.find(service_name);
+    if (it != service_relying_party_policy_str.end())
+    {
+      return it->second;
+    }
+    return DEFAULT_PERMISSIVE_RELYING_PARTY_POLICY;
+  }
+
+  virtual void set_service_relying_party_policy(
+    const std::string& service_name, const std::string& new_policy) override
+  {
+    service_relying_party_policy_str[service_name] = new_policy;
   }
 
   uint32_t get_fresh_time() override
