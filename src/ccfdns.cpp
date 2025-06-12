@@ -1944,7 +1944,7 @@ namespace ccfdns
           if (attestation.format != ccf::QuoteFormat::insecure_virtual)
           {
             verify_against_platform_registration_policy(
-              ccfdns->service_relying_party_registration_policy(),
+              ccfdns->platform_relying_party_registration_policy(),
               uvm_descriptor);
           }
 
