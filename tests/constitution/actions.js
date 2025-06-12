@@ -338,10 +338,9 @@ function setServiceRelyingPartyRegistrationPolicy(new_policy) {
 }
 
 function setPlatformRelyingPartyRegistrationPolicy(new_policy) {
-  ccf.kv["public:ccf.gov.ccfdns.platform_relying_party_registration_policy"].set(
-    getSingletonKvKey(),
-    ccf.jsonCompatibleToBuf(new_policy),
-  );
+  ccf.kv[
+    "public:ccf.gov.ccfdns.platform_relying_party_registration_policy"
+  ].set(getSingletonKvKey(), ccf.jsonCompatibleToBuf(new_policy));
 }
 
 const actions = new Map([

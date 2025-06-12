@@ -416,7 +416,9 @@ def test_service_registration(network, args):
     enclave = args.enclave_platform
     service_key = ec.generate_private_key(ec.SECP384R1(), default_backend())
 
-    set_service_relying_party_registration_policy(network, SERVICE_REGISTRATION_ALLOW_ALL)
+    set_service_relying_party_registration_policy(
+        network, SERVICE_REGISTRATION_ALLOW_ALL
+    )
     set_relying_party_policy_successfully(
         network, enclave, service_name="test.acidns10.attested.name.", good=True
     )
