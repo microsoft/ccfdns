@@ -120,7 +120,7 @@ def get_security_policy(enclave):
     elif enclave == "virtual":
         return "Insecure hard-coded virtual security policy v1"
     else:
-        raise ValueError(f"Unknown enclave platform: {enclave}")
+        raise ValueError(f"Unexpected enclave platform: {enclave}")
 
 
 def corrupted(some_str):
