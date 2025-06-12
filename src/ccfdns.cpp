@@ -94,9 +94,6 @@ namespace
     rego_input["sub"] = uvm_descriptor.feed;
     rego_input["svn"] = std::stoi(uvm_descriptor.svn);
 
-    std::cout << "PATTENR check Service registration policy " << policy
-              << ", rego input: " << rego_input.dump() << std::endl;
-
     rego::Interpreter interpreter(true /* v1 compatible */);
     auto rv = interpreter.add_module("policy", std::string(policy));
 

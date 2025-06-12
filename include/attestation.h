@@ -42,10 +42,18 @@ namespace aDNS
     }
 
     ccf::pal::PlatformAttestationMeasurement measurement = {};
+    std::cout << "PATTERN before kaboom " << (int)attestation.format
+              << std::endl;
     ccf::pal::verify_quote(attestation, measurement, report_data);
+    std::cout << "PATTERN after kaboom " << (int)attestation.format
+              << std::endl;
 
-    uvm_endorsements_descriptor = ccf::pal::verify_uvm_endorsements_descriptor(
-      attestation.uvm_endorsements.value(), measurement);
+    if (attestation.format != ccf::QuoteFormat::insecure_virtual)
+    {
+      uvm_endorsements_descriptor =
+        ccf::pal::verify_uvm_endorsements_descriptor(
+          attestation.uvm_endorsements.value(), measurement);
+    }
 
     return attestation;
   }

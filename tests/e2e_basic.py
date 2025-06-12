@@ -375,12 +375,18 @@ def set_service_registration_policy(network, policy):
 def set_service_relying_party_policy(network, enclave, good=True):
     policy = get_service_relying_party_policy(enclave=enclave, good=good)
     primary, _ = network.find_primary()
+
+    # Let's hash policy as report data for now.
+    report_data = sha256(policy.encode()).digest()
+
     with primary.client(identity="member0") as client:
         r = client.post(
             "/app/set-service-relying-party-policy",
             {
                 "policy": policy,
-                "attestation": get_attestation(report_data=b"", enclave=enclave),
+                "attestation": get_attestation(
+                    report_data=report_data, enclave=enclave
+                ),
             },
         )
         assert r.status_code == http.HTTPStatus.NO_CONTENT, r
