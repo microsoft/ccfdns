@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the Apache 2.0 License.
 
+#include "attestation.h"
 #include "ccfdns_json.h"
 #include "ccfdns_rpc_types.h"
 #include "formatting.h"
@@ -43,6 +44,7 @@
 #include <quickjs/quickjs-exports.h>
 #include <quickjs/quickjs.h>
 #include <regex>
+#include <rego/rego.hh>
 #include <stdexcept>
 
 using namespace aDNS;
@@ -80,6 +82,48 @@ namespace ccf::kv::serialisers
       return ResourceRecord(std::span<const uint8_t>(data), pos);
     }
   };
+}
+
+namespace
+{
+  void verify_against_service_registration_policy(
+    std::string_view policy, ccf::pal::UVMEndorsements& uvm_descriptor)
+  {
+    nlohmann::json rego_input;
+    rego_input["iss"] = uvm_descriptor.did;
+    rego_input["sub"] = uvm_descriptor.feed;
+    rego_input["svn"] = std::stoi(uvm_descriptor.svn);
+
+    std::cout << "PATTENR check Service registration policy " << policy
+              << ", rego input: " << rego_input.dump() << std::endl;
+
+    rego::Interpreter interpreter(true /* v1 compatible */);
+    auto rv = interpreter.add_module("policy", std::string(policy));
+
+    auto tv = interpreter.set_input_term(rego_input.dump());
+    if (tv != nullptr)
+    {
+      throw std::runtime_error(
+        fmt::format("Invalid policy input: {}", rego_input.dump()));
+    }
+
+    auto qv = interpreter.query("data.policy.allow");
+
+    if (qv == "{\"expressions\":[true]}")
+    {
+      return;
+    }
+    else if (qv == "{\"expressions\":[false]}")
+    {
+      throw std::runtime_error(
+        fmt::format("Policy not satisfied: {}", rego_input.dump()));
+    }
+    else
+    {
+      throw std::runtime_error(
+        fmt::format("Error while applying policy: {}", qv));
+    }
+  }
 }
 
 namespace ccfdns
@@ -1756,29 +1800,40 @@ namespace ccfdns
         .set_forwarding_required(ccf::endpoints::ForwardingRequired::Never)
         .install();
 
-      auto set_service_relying_party_policy = [this](auto& ctx, nlohmann::json&& params) {
-        try
-        {
-          ContextContext cc(ccfdns, ctx);
-          ctx.rpc_ctx->set_response_header(
-            ccf::http::headers::CONTENT_TYPE,
-            ccf::http::headervalues::contenttype::TEXT);
+      auto set_service_relying_party_policy =
+        [this](auto& ctx, nlohmann::json&& params) {
+          try
+          {
+            ContextContext cc(ccfdns, ctx);
+            ctx.rpc_ctx->set_response_header(
+              ccf::http::headers::CONTENT_TYPE,
+              ccf::http::headervalues::contenttype::TEXT);
 
-          const auto in = params.get<SetServiceRelyingPartyPolicy::In>();
+            const auto in = params.get<SetServiceRelyingPartyPolicy::In>();
 
-          // TODO authorise against service registration policy
-          ccfdns->set_service_relying_party_policy(in.policy);
+            ccf::pal::PlatformAttestationReportData report_data = {};
+            ccf::pal::UVMEndorsements uvm_descriptor = {};
+            auto attestation = parse_and_verify_attestation(
+              in.attestation, report_data, uvm_descriptor);
 
-          return ccf::make_success();
-        }
-        catch (std::exception& ex)
-        {
-          return ccf::make_error(
-            HTTP_STATUS_INTERNAL_SERVER_ERROR,
-            ccf::errors::InternalError,
-            ex.what());
-        }
-      };
+            if (attestation.format != ccf::QuoteFormat::insecure_virtual)
+            {
+              verify_against_service_registration_policy(
+                ccfdns->service_registration_policy(), uvm_descriptor);
+            }
+
+            ccfdns->set_service_relying_party_policy(in.policy);
+
+            return ccf::make_success();
+          }
+          catch (std::exception& ex)
+          {
+            return ccf::make_error(
+              HTTP_STATUS_INTERNAL_SERVER_ERROR,
+              ccf::errors::InternalError,
+              ex.what());
+          }
+        };
 
       // Temporary endpoint to get a custom quote in the e2e test.
       make_endpoint(
@@ -1786,7 +1841,9 @@ namespace ccfdns
         HTTP_POST,
         ccf::json_adapter(set_service_relying_party_policy),
         ccf::no_auth_required)
-        .set_auto_schema<SetServiceRelyingPartyPolicy::In, SetServiceRelyingPartyPolicy::Out>()
+        .set_auto_schema<
+          SetServiceRelyingPartyPolicy::In,
+          SetServiceRelyingPartyPolicy::Out>()
         .set_forwarding_required(ccf::endpoints::ForwardingRequired::Never)
         .install();
     }

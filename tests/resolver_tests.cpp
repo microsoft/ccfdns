@@ -253,7 +253,6 @@ default allow := true
     service_relying_party_policy_str = new_policy;
   }
 
-
   uint32_t get_fresh_time() override
   {
     return 0;

@@ -64,6 +64,7 @@ namespace ccfdns
   {
     struct In
     {
+      std::string attestation;
       std::string policy;
     };
     using Out = void;
