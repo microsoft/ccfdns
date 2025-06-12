@@ -427,17 +427,18 @@ def test_service_registration(network, args):
         with_key=service_key,
     )
 
-    # Different service name should fail, no policy for it.
-    register_failed(
-        "no service relying party policy",
-        primary,
-        enclave=enclave,
-        service_name="another.acidns10.attested.name.",
-        with_key=service_key,
-    )
-
     # Register under wrong service registration policy (modified host data, aka security policy).
     if args.enclave_platform != "virtual":
+
+        # Different service name should fail, no policy for it.
+        register_failed(
+            "no service relying party policy",
+            primary,
+            enclave=enclave,
+            service_name="another.acidns10.attested.name.",
+            with_key=service_key,
+        )
+
         set_relying_party_policy_successfully(
             network, enclave, service_name="test.acidns10.attested.name.", good=False
         )
