@@ -213,7 +213,7 @@ namespace ccfdns
     const std::string service_registration_policy_table_name =
       "public:ccf.gov.ccfdns.service_registration_policy";
 
-    using ServiceRelyingPartyPolicy = ccf::ServiceValue<std::string>;
+    using ServiceRelyingPartyPolicy = ccf::ServiceMap<std::string, std::string>;
     const std::string service_relying_party_policy_table_name =
       "public:ccf.gov.ccfdns.service_relying_party_policy";
 
@@ -614,20 +614,21 @@ namespace ccfdns
       policy->put(new_policy);
     }
 
-    virtual std::string service_relying_party_policy() const override
+    virtual std::string service_relying_party_policy(
+      const std::string& service_name) const override
     {
       check_context();
 
       auto policy_table = rotx().ro<ServiceRelyingPartyPolicy>(
         service_relying_party_policy_table_name);
-      const std::optional<std::string> policy = policy_table->get();
+      const std::optional<std::string> policy = policy_table->get(service_name);
       if (!policy)
         throw std::runtime_error("no service relying party policy");
       return *policy;
     }
 
     virtual void set_service_relying_party_policy(
-      const std::string& new_policy) override
+      const std::string& service_name, const std::string& new_policy) override
     {
       check_context();
 
@@ -638,7 +639,7 @@ namespace ccfdns
         throw std::runtime_error(
           "error accessing service relying party policy table");
 
-      policy->put(new_policy);
+      policy->put(service_name, new_policy);
     }
 
     static constexpr const size_t default_stack_size = 1024 * 1024;
@@ -1797,40 +1798,41 @@ namespace ccfdns
         .set_forwarding_required(ccf::endpoints::ForwardingRequired::Never)
         .install();
 
-      auto set_service_relying_party_policy =
-        [this](auto& ctx, nlohmann::json&& params) {
-          try
+      auto set_service_relying_party_policy = [this](
+                                                auto& ctx,
+                                                nlohmann::json&& params) {
+        try
+        {
+          ContextContext cc(ccfdns, ctx);
+          ctx.rpc_ctx->set_response_header(
+            ccf::http::headers::CONTENT_TYPE,
+            ccf::http::headervalues::contenttype::TEXT);
+
+          const auto in = params.get<SetServiceRelyingPartyPolicy::In>();
+
+          ccf::pal::PlatformAttestationReportData report_data = {};
+          ccf::pal::UVMEndorsements uvm_descriptor = {};
+          auto attestation = parse_and_verify_attestation(
+            in.attestation, report_data, uvm_descriptor);
+
+          if (attestation.format != ccf::QuoteFormat::insecure_virtual)
           {
-            ContextContext cc(ccfdns, ctx);
-            ctx.rpc_ctx->set_response_header(
-              ccf::http::headers::CONTENT_TYPE,
-              ccf::http::headervalues::contenttype::TEXT);
-
-            const auto in = params.get<SetServiceRelyingPartyPolicy::In>();
-
-            ccf::pal::PlatformAttestationReportData report_data = {};
-            ccf::pal::UVMEndorsements uvm_descriptor = {};
-            auto attestation = parse_and_verify_attestation(
-              in.attestation, report_data, uvm_descriptor);
-
-            if (attestation.format != ccf::QuoteFormat::insecure_virtual)
-            {
-              verify_against_service_registration_policy(
-                ccfdns->service_registration_policy(), uvm_descriptor);
-            }
-
-            ccfdns->set_service_relying_party_policy(in.policy);
-
-            return ccf::make_success();
+            verify_against_service_registration_policy(
+              ccfdns->service_registration_policy(), uvm_descriptor);
           }
-          catch (std::exception& ex)
-          {
-            return ccf::make_error(
-              HTTP_STATUS_INTERNAL_SERVER_ERROR,
-              ccf::errors::InternalError,
-              ex.what());
-          }
-        };
+
+          ccfdns->set_service_relying_party_policy(in.service_name, in.policy);
+
+          return ccf::make_success();
+        }
+        catch (std::exception& ex)
+        {
+          return ccf::make_error(
+            HTTP_STATUS_INTERNAL_SERVER_ERROR,
+            ccf::errors::InternalError,
+            ex.what());
+        }
+      };
 
       // Temporary endpoint to get a custom quote in the e2e test.
       make_endpoint(

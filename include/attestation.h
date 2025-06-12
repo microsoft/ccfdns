@@ -42,11 +42,7 @@ namespace aDNS
     }
 
     ccf::pal::PlatformAttestationMeasurement measurement = {};
-    std::cout << "PATTERN before kaboom " << (int)attestation.format
-              << std::endl;
     ccf::pal::verify_quote(attestation, measurement, report_data);
-    std::cout << "PATTERN after kaboom " << (int)attestation.format
-              << std::endl;
 
     if (attestation.format != ccf::QuoteFormat::insecure_virtual)
     {

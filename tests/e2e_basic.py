@@ -282,7 +282,9 @@ def get_uvm_endorsements(network):
         return did, feed, svn
 
 
-def register_and_ensure(primary, enclave, with_key, with_attestation=None):
+def register_and_ensure(
+    primary, enclave, service_name, with_key, with_attestation=None
+):
     with primary.client(identity="member0") as client:
         host = primary.get_public_rpc_host()
         port = primary.get_public_rpc_port()
@@ -291,8 +293,6 @@ def register_and_ensure(primary, enclave, with_key, with_attestation=None):
         origin = dns.name.from_text("acidns10.attested.name.")
         print("Getting DNSSEC key")
         keys = get_keys(host, port, ca, origin)
-
-        service_name = "test.acidns10.attested.name"
 
         public_key = with_key.public_key().public_bytes(
             serialization.Encoding.DER,
@@ -372,7 +372,7 @@ def set_service_registration_policy(network, policy):
     set_policy(network, "set_registration_policy", policy)
 
 
-def set_service_relying_party_policy(network, enclave, good=True):
+def set_service_relying_party_policy(network, enclave, service_name, good=True):
     policy = get_service_relying_party_policy(enclave=enclave, good=good)
     primary, _ = network.find_primary()
 
@@ -383,6 +383,7 @@ def set_service_relying_party_policy(network, enclave, good=True):
         r = client.post(
             "/app/set-service-relying-party-policy",
             {
+                "service_name": service_name,
                 "policy": policy,
                 "attestation": get_attestation(
                     report_data=report_data, enclave=enclave
@@ -416,14 +417,36 @@ def test_service_registration(network, args):
     service_key = ec.generate_private_key(ec.SECP384R1(), default_backend())
 
     set_service_registration_policy(network, SERVICE_REGISTRATION_ALLOW_ALL)
-    set_relying_party_policy_successfully(network, enclave, good=True)
-    register_successfully(primary, enclave=enclave, with_key=service_key)
+    set_relying_party_policy_successfully(
+        network, enclave, service_name="test.acidns10.attested.name.", good=True
+    )
+    register_successfully(
+        primary,
+        enclave=enclave,
+        service_name="test.acidns10.attested.name.",
+        with_key=service_key,
+    )
+
+    # Different service name should fail, no policy for it.
+    register_failed(
+        "no service relying party policy",
+        primary,
+        enclave=enclave,
+        service_name="another.acidns10.attested.name.",
+        with_key=service_key,
+    )
 
     # Register under wrong service registration policy (modified host data, aka security policy).
     if args.enclave_platform != "virtual":
-        set_relying_party_policy_successfully(network, enclave, good=False)
+        set_relying_party_policy_successfully(
+            network, enclave, service_name="test.acidns10.attested.name.", good=False
+        )
         register_failed(
-            "Policy not satisfied", primary, enclave=enclave, with_key=service_key
+            "Policy not satisfied",
+            primary,
+            enclave=enclave,
+            service_name="test.acidns10.attested.name.",
+            with_key=service_key,
         )
 
 
@@ -432,14 +455,21 @@ def test_policy_registration(network, args):
     set_service_registration_policy(
         network, create_service_registration_policy(network, good=True)
     )
-    set_relying_party_policy_successfully(network, enclave=args.enclave_platform)
+    set_relying_party_policy_successfully(
+        network,
+        enclave=args.enclave_platform,
+        service_name="test.acidns10.attested.name.",
+    )
 
     # Test with incremented SVN to ensure current UVM endorsements are not accepted when setting new relying party policy.
     set_service_registration_policy(
         network, create_service_registration_policy(network, good=False)
     )
     set_relying_party_policy_failed(
-        "Policy not satisfied", network, enclave=args.enclave_platform
+        "Policy not satisfied",
+        network,
+        enclave=args.enclave_platform,
+        service_name="test.acidns10.attested.name.",
     )
 
 

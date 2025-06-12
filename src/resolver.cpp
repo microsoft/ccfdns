@@ -1608,9 +1608,11 @@ namespace aDNS
       {
         try
         {
+          std::cout << "PATTERN let's look for " << std::string(service_name)
+                    << " policy" << std::endl;
           verify_service_relying_party_policy(
             ccf::crypto::b64_from_raw(host_data.h.data(), host_data.h.size()),
-            service_relying_party_policy());
+            service_relying_party_policy(service_name));
         }
         catch (const std::exception& e)
         {
