@@ -368,8 +368,8 @@ allow if {{
 """
 
 
-def set_service_registration_policy(network, policy):
-    set_policy(network, "set_registration_policy", policy)
+def set_service_relying_party_registration_policy(network, policy):
+    set_policy(network, "set_service_relying_party_registration_policy", policy)
 
 
 def set_service_relying_party_policy(network, enclave, service_name, good=True):
@@ -416,7 +416,7 @@ def test_service_registration(network, args):
     enclave = args.enclave_platform
     service_key = ec.generate_private_key(ec.SECP384R1(), default_backend())
 
-    set_service_registration_policy(network, SERVICE_REGISTRATION_ALLOW_ALL)
+    set_service_relying_party_registration_policy(network, SERVICE_REGISTRATION_ALLOW_ALL)
     set_relying_party_policy_successfully(
         network, enclave, service_name="test.acidns10.attested.name.", good=True
     )
@@ -454,7 +454,7 @@ def test_service_registration(network, args):
 
 def test_policy_registration(network, args):
     # Test with a proper service registration policy which checks UVM endorsements.
-    set_service_registration_policy(
+    set_service_relying_party_registration_policy(
         network, create_service_registration_policy(network, good=True)
     )
     set_relying_party_policy_successfully(
@@ -464,7 +464,7 @@ def test_policy_registration(network, args):
     )
 
     # Test with incremented SVN to ensure current UVM endorsements are not accepted when setting new relying party policy.
-    set_service_registration_policy(
+    set_service_relying_party_registration_policy(
         network, create_service_registration_policy(network, good=False)
     )
     set_relying_party_policy_failed(

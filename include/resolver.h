@@ -266,15 +266,26 @@ namespace aDNS
 
     virtual void register_service(const RegistrationRequest& req);
 
-    virtual std::string service_registration_policy() const = 0;
+    virtual std::string service_relying_party_registration_policy() const = 0;
 
-    virtual void set_service_registration_policy(
+    virtual void set_service_relying_party_registration_policy(
+      const std::string& new_policy) = 0;
+
+    virtual std::string platform_relying_party_registration_policy() const = 0;
+
+    virtual void set_platform_relying_party_registration_policy(
       const std::string& new_policy) = 0;
 
     virtual std::string service_relying_party_policy(
       const std::string& service_name) const = 0;
 
     virtual void set_service_relying_party_policy(
+      const std::string& service_name, const std::string& new_policy) = 0;
+
+    virtual std::string platform_relying_party_policy(
+      const std::string& service_name) const = 0;
+
+    virtual void set_platform_relying_party_policy(
       const std::string& service_name, const std::string& new_policy) = 0;
 
     virtual Configuration get_configuration() const = 0;

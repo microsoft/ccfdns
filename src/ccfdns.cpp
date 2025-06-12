@@ -209,13 +209,24 @@ namespace ccfdns
     const std::string service_certificates_table_name =
       "public:service_certificates";
 
-    using ServiceRegistrationPolicy = ccf::ServiceValue<std::string>;
-    const std::string service_registration_policy_table_name =
-      "public:ccf.gov.ccfdns.service_registration_policy";
+    using ServiceRelyingPartyRegistrationPolicy =
+      ccf::ServiceValue<std::string>;
+    const std::string service_relying_party_registration_policy_table_name =
+      "public:ccf.gov.ccfdns.service_relying_party_registration_policy";
 
     using ServiceRelyingPartyPolicy = ccf::ServiceMap<std::string, std::string>;
     const std::string service_relying_party_policy_table_name =
       "public:ccf.gov.ccfdns.service_relying_party_policy";
+
+    using PlatformRelyingPartyRegistrationPolicy =
+      ccf::ServiceValue<std::string>;
+    const std::string platform_relying_party_registration_policy_table_name =
+      "public:ccf.gov.ccfdns.platform_relying_party_registration_policy";
+
+    using PlatformRelyingPartyPolicy =
+      ccf::ServiceMap<std::string, std::string>;
+    const std::string platform_relying_party_policy_table_name =
+      "public:ccf.gov.ccfdns.platform_relying_party_policy";
 
     using RegistrationRequests =
       ccf::ServiceMap<Name, RegisterServiceWithPreviousVersion>;
@@ -587,29 +598,31 @@ namespace ccfdns
       table->put(origin_lowered, *value);
     }
 
-    virtual std::string service_registration_policy() const override
+    virtual std::string service_relying_party_registration_policy()
+      const override
     {
       check_context();
 
-      auto policy_table = rotx().ro<ServiceRegistrationPolicy>(
-        service_registration_policy_table_name);
+      auto policy_table = rotx().ro<ServiceRelyingPartyRegistrationPolicy>(
+        service_relying_party_registration_policy_table_name);
       const std::optional<std::string> policy = policy_table->get();
       if (!policy)
-        throw std::runtime_error("no service registration policy");
+        throw std::runtime_error(
+          "no service relying party registration policy");
       return *policy;
     }
 
-    virtual void set_service_registration_policy(
+    virtual void set_service_relying_party_registration_policy(
       const std::string& new_policy) override
     {
       check_context();
 
-      auto policy = rwtx().rw<ServiceRegistrationPolicy>(
-        service_registration_policy_table_name);
+      auto policy = rwtx().rw<ServiceRelyingPartyRegistrationPolicy>(
+        service_relying_party_registration_policy_table_name);
 
       if (!policy)
         throw std::runtime_error(
-          "error accessing service registration policy table");
+          "error accessing service relying party registration policy table");
 
       policy->put(new_policy);
     }
@@ -638,6 +651,63 @@ namespace ccfdns
       if (!policy)
         throw std::runtime_error(
           "error accessing service relying party policy table");
+
+      policy->put(service_name, new_policy);
+    }
+
+    virtual std::string platform_relying_party_registration_policy()
+      const override
+    {
+      check_context();
+
+      auto policy_table = rotx().ro<PlatformRelyingPartyRegistrationPolicy>(
+        service_relying_party_registration_policy_table_name);
+      const std::optional<std::string> policy = policy_table->get();
+      if (!policy)
+        throw std::runtime_error(
+          "no platform relying party registration policy");
+      return *policy;
+    }
+
+    virtual void set_platform_relying_party_registration_policy(
+      const std::string& new_policy) override
+    {
+      check_context();
+
+      auto policy = rwtx().rw<PlatformRelyingPartyRegistrationPolicy>(
+        platform_relying_party_registration_policy_table_name);
+
+      if (!policy)
+        throw std::runtime_error(
+          "error accessing platform relying party registration policy table");
+
+      policy->put(new_policy);
+    }
+
+    virtual std::string platform_relying_party_policy(
+      const std::string& service_name) const override
+    {
+      check_context();
+
+      auto policy_table = rotx().ro<PlatformRelyingPartyPolicy>(
+        platform_relying_party_policy_table_name);
+      const std::optional<std::string> policy = policy_table->get(service_name);
+      if (!policy)
+        throw std::runtime_error("no platform relying party policy");
+      return *policy;
+    }
+
+    virtual void set_platform_relying_party_policy(
+      const std::string& service_name, const std::string& new_policy) override
+    {
+      check_context();
+
+      auto policy = rwtx().rw<PlatformRelyingPartyPolicy>(
+        platform_relying_party_policy_table_name);
+
+      if (!policy)
+        throw std::runtime_error(
+          "error accessing platform relying party policy table");
 
       policy->put(service_name, new_policy);
     }
@@ -1754,7 +1824,8 @@ namespace ccfdns
           ctx.rpc_ctx->set_response_header(
             ccf::http::headers::CONTENT_TYPE,
             ccf::http::headervalues::contenttype::TEXT);
-          ctx.rpc_ctx->set_response_body(ccfdns->service_registration_policy());
+          ctx.rpc_ctx->set_response_body(
+            ccfdns->service_relying_party_registration_policy());
           ctx.rpc_ctx->set_response_status(HTTP_STATUS_OK);
         }
         catch (std::exception& ex)
@@ -1818,7 +1889,8 @@ namespace ccfdns
           if (attestation.format != ccf::QuoteFormat::insecure_virtual)
           {
             verify_against_service_registration_policy(
-              ccfdns->service_registration_policy(), uvm_descriptor);
+              ccfdns->service_relying_party_registration_policy(),
+              uvm_descriptor);
           }
 
           ccfdns->set_service_relying_party_policy(in.service_name, in.policy);
