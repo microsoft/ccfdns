@@ -200,4 +200,8 @@ namespace ccfdns
   DECLARE_JSON_TYPE(SetServiceRelyingPartyPolicy::In);
   DECLARE_JSON_REQUIRED_FIELDS(
     SetServiceRelyingPartyPolicy::In, service_name, policy, attestation);
+
+  DECLARE_JSON_TYPE(SetPlatformRelyingPartyPolicy::In);
+  DECLARE_JSON_REQUIRED_FIELDS(
+    SetPlatformRelyingPartyPolicy::In, platform, policy, attestation);
 }

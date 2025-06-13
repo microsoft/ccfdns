@@ -70,4 +70,15 @@ namespace ccfdns
     };
     using Out = void;
   };
+
+  struct SetPlatformRelyingPartyPolicy
+  {
+    struct In
+    {
+      aDNS::AttestationType platform;
+      std::string policy;
+      std::string attestation;
+    };
+    using Out = void;
+  };
 }
