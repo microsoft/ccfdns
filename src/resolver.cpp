@@ -32,7 +32,7 @@ using namespace RFC1035;
 
 namespace
 {
-  void verify_service_relying_party_policy(
+  void verify_service_definition(
     const std::string& host_data, const std::string& policy)
   {
     nlohmann::json rego_input;
@@ -66,11 +66,11 @@ namespace
     }
   }
 
-  void verify_platform_relying_party_policy(
+  void verify_platform_definition(
     const std::string& host_data, const std::string& policy)
   {
     // Currently reuse service relying party logic, because input is the same.
-    verify_service_relying_party_policy(host_data, policy);
+    verify_service_definition(host_data, policy);
   }
 }
 
@@ -1616,13 +1616,13 @@ namespace aDNS
         try
         {
           auto platform = nlohmann::json(info.attestation_type).dump();
-          verify_platform_relying_party_policy(
+          verify_platform_definition(
             ccf::crypto::b64_from_raw(host_data.h.data(), host_data.h.size()),
-            platform_relying_party_policy(platform));
+            platform_definition(platform));
 
-          verify_service_relying_party_policy(
+          verify_service_definition(
             ccf::crypto::b64_from_raw(host_data.h.data(), host_data.h.size()),
-            service_relying_party_policy(service_name));
+            service_definition(service_name));
         }
         catch (const std::exception& e)
         {

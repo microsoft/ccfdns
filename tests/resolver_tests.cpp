@@ -76,19 +76,19 @@ public:
   std::map<Name, ccf::crypto::Pem, RFC4034::CanonicalNameOrdering>
     zone_signing_keys;
 
-  std::string service_relying_party_registration_policy_str = R"(
+  std::string service_definition_auth_str = R"(
 package policy
 default allow := true
 )";
 
-  std::string platform_relying_party_registration_policy_str = R"(
+  std::string platform_definition_auth_str = R"(
 package policy
 default allow := true
 )";
 
-  std::map<std::string, std::string> service_relying_party_policy_str;
+  std::map<std::string, std::string> service_definition_str;
 
-  std::map<std::string, std::string> platform_relying_party_policy_str;
+  std::map<std::string, std::string> platform_definition_str;
 
   Resolver::Configuration configuration;
 
@@ -240,61 +240,60 @@ default allow := true
       CCF_APP_DEBUG("<empty>");
   }
 
-  virtual std::string service_relying_party_registration_policy() const override
+  virtual std::string service_definition_auth() const override
   {
-    return service_relying_party_registration_policy_str;
+    return service_definition_auth_str;
   }
 
-  virtual void set_service_relying_party_registration_policy(
+  virtual void set_service_definition_auth(
     const std::string& new_policy) override
   {
-    service_relying_party_registration_policy_str = new_policy;
+    service_definition_auth_str = new_policy;
   }
 
-  virtual std::string platform_relying_party_registration_policy()
-    const override
+  virtual std::string platform_definition_auth() const override
   {
-    return platform_relying_party_registration_policy_str;
+    return platform_definition_auth_str;
   }
 
-  virtual void set_platform_relying_party_registration_policy(
+  virtual void set_platform_definition_auth(
     const std::string& new_policy) override
   {
-    platform_relying_party_registration_policy_str = new_policy;
+    platform_definition_auth_str = new_policy;
   }
 
-  virtual std::string service_relying_party_policy(
+  virtual std::string service_definition(
     const std::string& service_name) const override
   {
-    auto it = service_relying_party_policy_str.find(service_name);
-    if (it != service_relying_party_policy_str.end())
+    auto it = service_definition_str.find(service_name);
+    if (it != service_definition_str.end())
     {
       return it->second;
     }
     return DEFAULT_PERMISSIVE_RELYING_PARTY_POLICY;
   }
 
-  virtual void set_service_relying_party_policy(
+  virtual void set_service_definition(
     const std::string& service_name, const std::string& new_policy) override
   {
-    service_relying_party_policy_str[service_name] = new_policy;
+    service_definition_str[service_name] = new_policy;
   }
 
-  virtual std::string platform_relying_party_policy(
+  virtual std::string platform_definition(
     const std::string& platform) const override
   {
-    auto it = platform_relying_party_policy_str.find(platform);
-    if (it != platform_relying_party_policy_str.end())
+    auto it = platform_definition_str.find(platform);
+    if (it != platform_definition_str.end())
     {
       return it->second;
     }
     return DEFAULT_PERMISSIVE_RELYING_PARTY_POLICY;
   }
 
-  virtual void set_platform_relying_party_policy(
+  virtual void set_platform_definition(
     const std::string& platform, const std::string& new_policy) override
   {
-    platform_relying_party_policy_str[platform] = new_policy;
+    platform_definition_str[platform] = new_policy;
   }
 
   uint32_t get_fresh_time() override
