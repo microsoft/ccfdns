@@ -283,10 +283,10 @@ namespace aDNS
       const std::string& service_name, const std::string& new_policy) = 0;
 
     virtual std::string platform_relying_party_policy(
-      const std::string& service_name) const = 0;
+      const std::string& platform) const = 0;
 
     virtual void set_platform_relying_party_policy(
-      const std::string& service_name, const std::string& new_policy) = 0;
+      const std::string& platform, const std::string& new_policy) = 0;
 
     virtual Configuration get_configuration() const = 0;
     virtual void set_configuration(const Configuration& cfg) = 0;

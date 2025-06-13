@@ -692,20 +692,20 @@ namespace ccfdns
     }
 
     virtual std::string platform_relying_party_policy(
-      const std::string& service_name) const override
+      const std::string& platform) const override
     {
       check_context();
 
       auto policy_table = rotx().ro<PlatformRelyingPartyPolicy>(
         platform_relying_party_policy_table_name);
-      const std::optional<std::string> policy = policy_table->get(service_name);
+      const std::optional<std::string> policy = policy_table->get(platform);
       if (!policy)
         throw std::runtime_error("no platform relying party policy");
       return *policy;
     }
 
     virtual void set_platform_relying_party_policy(
-      const std::string& service_name, const std::string& new_policy) override
+      const std::string& platform, const std::string& new_policy) override
     {
       check_context();
 
@@ -716,7 +716,7 @@ namespace ccfdns
         throw std::runtime_error(
           "error accessing platform relying party policy table");
 
-      policy->put(service_name, new_policy);
+      policy->put(platform, new_policy);
     }
 
     static constexpr const size_t default_stack_size = 1024 * 1024;
@@ -1924,42 +1924,42 @@ namespace ccfdns
         .set_forwarding_required(ccf::endpoints::ForwardingRequired::Never)
         .install();
 
-      auto set_platform_relying_party_policy = [this](
-                                                 auto& ctx,
-                                                 nlohmann::json&& params) {
-        try
-        {
-          ContextContext cc(ccfdns, ctx);
-          ctx.rpc_ctx->set_response_header(
-            ccf::http::headers::CONTENT_TYPE,
-            ccf::http::headervalues::contenttype::TEXT);
-
-          const auto in = params.get<SetPlatformRelyingPartyPolicy::In>();
-
-          ccf::pal::PlatformAttestationReportData report_data = {};
-          ccf::pal::UVMEndorsements uvm_descriptor = {};
-          auto attestation = parse_and_verify_attestation(
-            in.attestation, report_data, uvm_descriptor);
-
-          if (attestation.format != ccf::QuoteFormat::insecure_virtual)
+      auto set_platform_relying_party_policy =
+        [this](auto& ctx, nlohmann::json&& params) {
+          try
           {
-            verify_against_platform_registration_policy(
-              ccfdns->platform_relying_party_registration_policy(),
-              uvm_descriptor);
+            ContextContext cc(ccfdns, ctx);
+            ctx.rpc_ctx->set_response_header(
+              ccf::http::headers::CONTENT_TYPE,
+              ccf::http::headervalues::contenttype::TEXT);
+
+            const auto in = params.get<SetPlatformRelyingPartyPolicy::In>();
+
+            ccf::pal::PlatformAttestationReportData report_data = {};
+            ccf::pal::UVMEndorsements uvm_descriptor = {};
+            auto attestation = parse_and_verify_attestation(
+              in.attestation, report_data, uvm_descriptor);
+
+            if (attestation.format != ccf::QuoteFormat::insecure_virtual)
+            {
+              verify_against_platform_registration_policy(
+                ccfdns->platform_relying_party_registration_policy(),
+                uvm_descriptor);
+            }
+
+            auto platform = nlohmann::json(in.platform).dump();
+            ccfdns->set_platform_relying_party_policy(platform, in.policy);
+
+            return ccf::make_success();
           }
-
-          ccfdns->set_platform_relying_party_policy(in.service_name, in.policy);
-
-          return ccf::make_success();
-        }
-        catch (std::exception& ex)
-        {
-          return ccf::make_error(
-            HTTP_STATUS_INTERNAL_SERVER_ERROR,
-            ccf::errors::InternalError,
-            ex.what());
-        }
-      };
+          catch (std::exception& ex)
+          {
+            return ccf::make_error(
+              HTTP_STATUS_INTERNAL_SERVER_ERROR,
+              ccf::errors::InternalError,
+              ex.what());
+          }
+        };
 
       make_endpoint(
         "/set-platform-relying-party-policy",

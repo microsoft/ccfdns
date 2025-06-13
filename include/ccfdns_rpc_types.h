@@ -75,7 +75,7 @@ namespace ccfdns
   {
     struct In
     {
-      std::string service_name;
+      aDNS::AttestationType platform;
       std::string policy;
       std::string attestation;
     };

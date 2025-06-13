@@ -1615,13 +1615,14 @@ namespace aDNS
       {
         try
         {
+          auto platform = nlohmann::json(info.attestation_type).dump();
+          verify_platform_relying_party_policy(
+            ccf::crypto::b64_from_raw(host_data.h.data(), host_data.h.size()),
+            platform_relying_party_policy(platform));
+
           verify_service_relying_party_policy(
             ccf::crypto::b64_from_raw(host_data.h.data(), host_data.h.size()),
             service_relying_party_policy(service_name));
-
-          verify_platform_relying_party_policy(
-            ccf::crypto::b64_from_raw(host_data.h.data(), host_data.h.size()),
-            platform_relying_party_policy(service_name));
         }
         catch (const std::exception& e)
         {

@@ -37,6 +37,8 @@ package policy
 default allow := true
 """
 
+SEV_SNP_CONTAINERPLAT_AMD_UVM = "SEV-SNP:ContainerPlat-AMD-UVM"
+
 
 def get_container_group_snp_endorsements_base64():
     security_context_dir = infra.snp.get_security_context_dir()
@@ -454,7 +456,7 @@ def set_service_relying_party_policy(network, enclave, service_name, good=True):
         assert r.status_code == http.HTTPStatus.NO_CONTENT, r
 
 
-def set_platform_relying_party_policy(network, enclave, service_name, good=True):
+def set_platform_relying_party_policy(network, enclave, platform, good=True):
     policy = get_platform_relying_party_policy(enclave=enclave, good=good)
     primary, _ = network.find_primary()
 
@@ -465,7 +467,7 @@ def set_platform_relying_party_policy(network, enclave, service_name, good=True)
         r = client.post(
             "/app/set-platform-relying-party-policy",
             {
-                "service_name": service_name,
+                "platform": platform,
                 "policy": policy,
                 "attestation": get_attestation(
                     report_data=report_data, enclave=enclave
@@ -525,7 +527,7 @@ def test_service_registration(network, args):
         network, enclave, service_name="test.acidns10.attested.name.", good=True
     )
     set_platform_relying_party_policy_successfully(
-        network, enclave, service_name="test.acidns10.attested.name.", good=True
+        network, enclave, platform=SEV_SNP_CONTAINERPLAT_AMD_UVM, good=True
     )
 
     register_successfully(
@@ -552,7 +554,7 @@ def test_service_registration(network, args):
         network, enclave, service_name="test.acidns10.attested.name.", good=False
     )
     set_platform_relying_party_policy_successfully(
-        network, enclave, service_name="test.acidns10.attested.name.", good=True
+        network, enclave, platform=SEV_SNP_CONTAINERPLAT_AMD_UVM, good=True
     )
     register_failed(
         "Policy not satisfied",
@@ -567,7 +569,7 @@ def test_service_registration(network, args):
         network, enclave, service_name="test.acidns10.attested.name.", good=True
     )
     set_platform_relying_party_policy_successfully(
-        network, enclave, service_name="test.acidns10.attested.name.", good=False
+        network, enclave, platform=SEV_SNP_CONTAINERPLAT_AMD_UVM, good=False
     )
     register_failed(
         "Policy not satisfied",
@@ -608,7 +610,7 @@ def test_policy_registration(network, args):
     set_platform_relying_party_policy_successfully(
         network,
         enclave=args.enclave_platform,
-        service_name="test.acidns10.attested.name.",
+        platform=SEV_SNP_CONTAINERPLAT_AMD_UVM,
     )
 
     set_platform_relying_party_registration_policy(
@@ -618,7 +620,7 @@ def test_policy_registration(network, args):
         "Policy not satisfied",
         network,
         enclave=args.enclave_platform,
-        service_name="test.acidns10.attested.name.",
+        platform=SEV_SNP_CONTAINERPLAT_AMD_UVM,
     )
 
 

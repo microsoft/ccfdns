@@ -281,9 +281,9 @@ default allow := true
   }
 
   virtual std::string platform_relying_party_policy(
-    const std::string& service_name) const override
+    const std::string& platform) const override
   {
-    auto it = platform_relying_party_policy_str.find(service_name);
+    auto it = platform_relying_party_policy_str.find(platform);
     if (it != platform_relying_party_policy_str.end())
     {
       return it->second;
@@ -292,9 +292,9 @@ default allow := true
   }
 
   virtual void set_platform_relying_party_policy(
-    const std::string& service_name, const std::string& new_policy) override
+    const std::string& platform, const std::string& new_policy) override
   {
-    platform_relying_party_policy_str[service_name] = new_policy;
+    platform_relying_party_policy_str[platform] = new_policy;
   }
 
   uint32_t get_fresh_time() override
