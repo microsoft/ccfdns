@@ -59,4 +59,15 @@ namespace ccfdns
     };
     using Out = void;
   };
+
+  struct SetServiceRelyingPartyPolicy
+  {
+    struct In
+    {
+      std::string service_name;
+      std::string policy;
+      std::string attestation;
+    };
+    using Out = void;
+  };
 }

@@ -3,6 +3,7 @@
 
 #include "resolver.h"
 
+#include "attestation.h"
 #include "rfc1035.h"
 #include "rfc4034.h"
 
@@ -17,12 +18,6 @@
 #include <ccf/crypto/sha256_hash.h>
 #include <ccf/crypto/verifier.h>
 #include <ccf/ds/logger.h>
-#include <ccf/ds/quote_info.h>
-#include <ccf/pal/attestation.h>
-#include <ccf/pal/attestation_sev_snp.h>
-#include <ccf/pal/measurement.h>
-#include <ccf/pal/report_data.h>
-#include <ccf/pal/uvm_endorsements.h>
 #include <cctype>
 #include <chrono>
 #include <map>
@@ -37,12 +32,11 @@ using namespace RFC1035;
 
 namespace
 {
-  void verify_uvm_policies(
-    const ccf::pal::UVMEndorsements& uvm_endorsements,
-    const std::string& policy)
+  void verify_service_relying_party_policy(
+    const std::string& host_data, const std::string& policy)
   {
     nlohmann::json rego_input;
-    rego_input["svn"] = std::stoi(uvm_endorsements.svn);
+    rego_input["host_data"] = host_data;
 
     rego::Interpreter interpreter(true /* v1 compatible */);
     auto rv = interpreter.add_module("policy", policy);
@@ -63,7 +57,7 @@ namespace
     else if (qv == "{\"expressions\":[false]}")
     {
       throw std::runtime_error(
-        fmt::format("UVM policies not satisfied: {}", rego_input.dump()));
+        fmt::format("Policy not satisfied: {}", rego_input.dump()));
     }
     else
     {
@@ -1556,54 +1550,19 @@ namespace aDNS
 
     for (const auto& [id, info] : rr.node_information)
     {
-      ccf::QuoteInfo attestation{};
-      try
-      {
-        attestation =
-          nlohmann::json::parse(info.attestation).get<ccf::QuoteInfo>();
-      }
-      catch (const nlohmann::json::parse_error& e)
-      {
-        CCF_APP_FAIL(
-          "ADNS: Failed to parse attestation report for {} : {}",
-          id,
-          info.attestation);
-        policy_ok = false;
-        continue;
-      }
-
-      // Maybe, endorsements are represented in THIM format, as defined in
-      // ccf::pal::snp::ACIReportEndorsements.
-      try
-      {
-        const auto aci_endorsements =
-          nlohmann::json::parse(attestation.endorsements)
-            .get<ccf::pal::snp::ACIReportEndorsements>();
-
-        attestation.endorsements = std::vector<uint8_t>(
-          aci_endorsements.vcek_cert.begin(), aci_endorsements.vcek_cert.end());
-        attestation.endorsements.insert(
-          attestation.endorsements.end(),
-          aci_endorsements.certificate_chain.begin(),
-          aci_endorsements.certificate_chain.end());
-      }
-      catch (const nlohmann::json::parse_error& e)
-      {
-        // If not, fallback to attempt as byte-encoded chain as is.
-      }
-
-      ccf::pal::PlatformAttestationMeasurement measurement = {};
+      ccf::QuoteInfo attestation;
       ccf::pal::PlatformAttestationReportData report_data = {};
       ccf::pal::UVMEndorsements uvm_endorsements_descriptor = {};
+      HostData host_data = {};
+
       try
       {
-        ccf::pal::verify_quote(attestation, measurement, report_data);
+        attestation = parse_and_verify_attestation(
+          info.attestation, report_data, uvm_endorsements_descriptor);
 
         if (attestation.format != ccf::QuoteFormat::insecure_virtual)
         {
-          uvm_endorsements_descriptor =
-            ccf::pal::verify_uvm_endorsements_descriptor(
-              attestation.uvm_endorsements.value(), measurement);
+          host_data = retrieve_host_data(attestation);
         }
       }
       catch (const std::exception& e)
@@ -1649,19 +1608,14 @@ namespace aDNS
       {
         try
         {
-          verify_uvm_policies(
-            uvm_endorsements_descriptor, service_registration_policy());
+          verify_service_relying_party_policy(
+            ccf::crypto::b64_from_raw(host_data.h.data(), host_data.h.size()),
+            service_relying_party_policy(service_name));
         }
         catch (const std::exception& e)
         {
-          CCF_APP_FAIL(
-            "ADNS: Failed to verify UVM endorsements for {} : {}",
-            id,
-            e.what());
           throw std::runtime_error(fmt::format(
-            "ADNS: Failed to verify UVM endorsements for {} : {}",
-            id,
-            e.what()));
+            "ADNS: Failed to register {} with error {}", id, e.what()));
         }
       }
     }
