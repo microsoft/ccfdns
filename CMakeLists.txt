@@ -32,7 +32,7 @@ set(TRIESTE_USE_SNMALLOC OFF)
 FetchContent_Declare(
   regocpp
   GIT_REPOSITORY https://github.com/microsoft/rego-cpp
-  GIT_TAG 5a6b47653fa212de6cafe1f871c6a6511e59f7b5)
+  GIT_TAG 29610b65064d88924e30cfbff3f2fa35696f968d)
 set(CMAKE_POLICY_DEFAULT_CMP0077 NEW)
 FetchContent_MakeAvailable(regocpp)
 
@@ -60,11 +60,6 @@ set(CCF_PKG_INC ${CCF_PKG_DIR}/../include)
 set(ENCLAVE_TARGET ccfdns.${COMPILE_TARGET})
 
 find_package(ZLIB)
-
-# Remove all INTERFACE_COMPILE_OPTIONS from regocpp::rego before linking. The
-# reason is that trieste has compilation flags we don't want exposed as
-# INTERFACE option (probably for no reason).
-set_target_properties(trieste PROPERTIES INTERFACE_COMPILE_OPTIONS "")
 
 add_ccf_app(
   ccfdns
