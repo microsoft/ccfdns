@@ -444,7 +444,7 @@ def set_service_definition(network, enclave, service_name, good=True):
 
     with primary.client(identity="member0") as client:
         r = client.post(
-            "/app/set-service-relying-party-policy",
+            "/app/set-service-definition",
             {
                 "service_name": service_name,
                 "policy": policy,
@@ -465,7 +465,7 @@ def set_platform_definition(network, enclave, platform, good=True):
 
     with primary.client(identity="member0") as client:
         r = client.post(
-            "/app/set-platform-relying-party-policy",
+            "/app/set-platform-definition",
             {
                 "platform": platform,
                 "policy": policy,
