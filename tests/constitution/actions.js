@@ -330,14 +330,14 @@ function updateServiceConfig(new_config) {
   }
 }
 
-function setServiceRelyingPartyRegistrationPolicy(new_policy) {
+function setServiceDefinitionAuth(new_policy) {
   ccf.kv["public:ccf.gov.ccfdns.service_definition_auth"].set(
     getSingletonKvKey(),
     ccf.jsonCompatibleToBuf(new_policy),
   );
 }
 
-function setPlatformRelyingPartyRegistrationPolicy(new_policy) {
+function setPlatformDefinitionAuth(new_policy) {
   ccf.kv["public:ccf.gov.ccfdns.platform_definition_auth"].set(
     getSingletonKvKey(),
     ccf.jsonCompatibleToBuf(new_policy),
@@ -1389,7 +1389,7 @@ const actions = new Map([
         checkType(args.new_policy, "string", "new_policy");
       },
       function (args) {
-        setServiceRelyingPartyRegistrationPolicy(args.new_policy);
+        setServiceDefinitionAuth(args.new_policy);
       },
     ),
   ],
@@ -1400,7 +1400,7 @@ const actions = new Map([
         checkType(args.new_policy, "string", "new_policy");
       },
       function (args) {
-        setPlatformRelyingPartyRegistrationPolicy(args.new_policy);
+        setPlatformDefinitionAuth(args.new_policy);
       },
     ),
   ],
