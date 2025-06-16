@@ -1881,7 +1881,7 @@ namespace ccfdns
             ccf::http::headers::CONTENT_TYPE,
             ccf::http::headervalues::contenttype::TEXT);
 
-          const auto in = params.get<SetServiceRelyingPartyPolicy::In>();
+          const auto in = params.get<SetServiceDefinition::In>();
 
           ccf::pal::PlatformAttestationReportData report_data = {};
           ccf::pal::UVMEndorsements uvm_descriptor = {};
@@ -1908,13 +1908,11 @@ namespace ccfdns
       };
 
       make_endpoint(
-        "/set-service-relying-party-policy",
+        "/set-service-definition",
         HTTP_POST,
         ccf::json_adapter(set_service_definition),
         ccf::no_auth_required)
-        .set_auto_schema<
-          SetServiceRelyingPartyPolicy::In,
-          SetServiceRelyingPartyPolicy::Out>()
+        .set_auto_schema<SetServiceDefinition::In, SetServiceDefinition::Out>()
         .set_forwarding_required(ccf::endpoints::ForwardingRequired::Never)
         .install();
 
@@ -1927,7 +1925,7 @@ namespace ccfdns
               ccf::http::headers::CONTENT_TYPE,
               ccf::http::headervalues::contenttype::TEXT);
 
-            const auto in = params.get<SetPlatformRelyingPartyPolicy::In>();
+            const auto in = params.get<SetPlatformDefinition::In>();
 
             ccf::pal::PlatformAttestationReportData report_data = {};
             ccf::pal::UVMEndorsements uvm_descriptor = {};
@@ -1955,13 +1953,13 @@ namespace ccfdns
         };
 
       make_endpoint(
-        "/set-platform-relying-party-policy",
+        "/set-platform-definition",
         HTTP_POST,
         ccf::json_adapter(set_platform_definition),
         ccf::no_auth_required)
         .set_auto_schema<
-          SetPlatformRelyingPartyPolicy::In,
-          SetPlatformRelyingPartyPolicy::Out>()
+          SetPlatformDefinition::In,
+          SetPlatformDefinition::Out>()
         .set_forwarding_required(ccf::endpoints::ForwardingRequired::Never)
         .install();
     }

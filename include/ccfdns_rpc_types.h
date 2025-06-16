@@ -60,7 +60,7 @@ namespace ccfdns
     using Out = void;
   };
 
-  struct SetServiceRelyingPartyPolicy
+  struct SetServiceDefinition
   {
     struct In
     {
@@ -71,7 +71,7 @@ namespace ccfdns
     using Out = void;
   };
 
-  struct SetPlatformRelyingPartyPolicy
+  struct SetPlatformDefinition
   {
     struct In
     {
