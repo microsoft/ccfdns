@@ -1884,9 +1884,10 @@ namespace ccfdns
           const auto in = params.get<SetServiceDefinition::In>();
 
           ccf::pal::PlatformAttestationReportData report_data = {};
+          ccf::pal::PlatformAttestationMeasurement& measurement = {};
           ccf::pal::UVMEndorsements uvm_descriptor = {};
           auto attestation = parse_and_verify_attestation(
-            in.attestation, report_data, uvm_descriptor);
+            in.attestation, report_data, measurement, uvm_descriptor);
 
           if (attestation.format != ccf::QuoteFormat::insecure_virtual)
           {
@@ -1928,9 +1929,10 @@ namespace ccfdns
             const auto in = params.get<SetPlatformDefinition::In>();
 
             ccf::pal::PlatformAttestationReportData report_data = {};
+            ccf::pal::PlatformAttestationMeasurement& measurement = {};
             ccf::pal::UVMEndorsements uvm_descriptor = {};
             auto attestation = parse_and_verify_attestation(
-              in.attestation, report_data, uvm_descriptor);
+              in.attestation, report_data, measurement, uvm_descriptor);
 
             if (attestation.format != ccf::QuoteFormat::insecure_virtual)
             {

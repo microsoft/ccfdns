@@ -23,6 +23,7 @@ from cryptography.hazmat.primitives import serialization, hashes
 from cryptography.hazmat.primitives.asymmetric import ec
 from hashlib import sha256
 from adns_service import aDNSConfig, set_policy
+from pycose.messages import Sign1Message  # type: ignore
 
 rdc = dns.rdataclass
 rdt = dns.rdatatype
@@ -156,22 +157,30 @@ allow if {{
 
 
 def get_platform_definition(enclave, good):
-    policy = (
-        get_security_policy(enclave)
-        if good
-        else corrupted(get_security_policy(enclave))
-    )
+    if enclave == "snp":
+        uvm_endorsements = infra.snp.get_container_group_uvm_endorsements_base64()
+        cose_envelope = Sign1Message.decode(base64.b64decode(uvm_endorsements))
+        payload = cose_envelope.payload.decode()
+        allowed_measurement = json.loads(payload)["x-ms-sevsnpvm-launchmeasurement"]
+    elif enclave == "virtual":
+        allowed_measurement = "Insecure hard-coded virtual measurement v1"
+    else:
+        raise ValueError(f"Unexpected enclave platform: {enclave}")
+
+    if not good:
+        allowed_measurement = corrupted(allowed_measurement)
+
     return f"""
 package policy
 
 default allow := false
 
-allowed_security_policy if {{
-    input.host_data == "{policy}"
+allowed_measurement if {{
+    input.measurement == "{allowed_measurement}"
 }}
 
 allow if {{
-    allowed_security_policy
+    allowed_measurement
 }}
 """
 

@@ -67,10 +67,37 @@ namespace
   }
 
   void verify_platform_definition(
-    const std::string& host_data, const std::string& policy)
+    const std::string& measurement, const std::string& policy)
   {
-    // Currently reuse service relying party logic, because input is the same.
-    verify_service_definition(host_data, policy);
+    nlohmann::json rego_input;
+    rego_input["measurement"] = measurement;
+
+    rego::Interpreter interpreter(true /* v1 compatible */);
+    auto rv = interpreter.add_module("policy", policy);
+
+    auto tv = interpreter.set_input_term(rego_input.dump());
+    if (tv != nullptr)
+    {
+      throw std::runtime_error(
+        fmt::format("Invalid policy input: {}", rego_input.dump()));
+    }
+
+    auto qv = interpreter.query("data.policy.allow");
+
+    if (qv == "{\"expressions\":[true]}")
+    {
+      return;
+    }
+    else if (qv == "{\"expressions\":[false]}")
+    {
+      throw std::runtime_error(
+        fmt::format("Policy not satisfied: {}", rego_input.dump()));
+    }
+    else
+    {
+      throw std::runtime_error(
+        fmt::format("Error while applying policy: {}", qv));
+    }
   }
 }
 
@@ -1560,12 +1587,16 @@ namespace aDNS
       ccf::QuoteInfo attestation;
       ccf::pal::PlatformAttestationReportData report_data = {};
       ccf::pal::UVMEndorsements uvm_endorsements_descriptor = {};
+      ccf::pal::PlatformAttestationMeasurement measurement = {};
       HostData host_data = {};
 
       try
       {
         attestation = parse_and_verify_attestation(
-          info.attestation, report_data, uvm_endorsements_descriptor);
+          info.attestation,
+          report_data,
+          measurement,
+          uvm_endorsements_descriptor);
 
         if (attestation.format != ccf::QuoteFormat::insecure_virtual)
         {
@@ -1617,8 +1648,7 @@ namespace aDNS
         {
           auto platform = nlohmann::json(info.attestation_type).dump();
           verify_platform_definition(
-            ccf::crypto::b64_from_raw(host_data.h.data(), host_data.h.size()),
-            platform_definition(platform));
+            ccf::ds::to_hex(measurement.data), platform_definition(platform));
 
           verify_service_definition(
             ccf::crypto::b64_from_raw(host_data.h.data(), host_data.h.size()),
