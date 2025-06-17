@@ -28,12 +28,12 @@ from pycose.messages import Sign1Message  # type: ignore
 rdc = dns.rdataclass
 rdt = dns.rdatatype
 
-SERVICE_REGISTRATION_ALLOW_ALL = """
+SERVICE_REGISTRATION_AUTH_ALLOW_ALL = """
 package policy
 default allow := true
 """
 
-PLATFORM_REGISTRATION_ALLOW_ALL = """
+PLATFORM_DEFINITION_AUTH_ALLOW_ALL = """
 package policy
 default allow := true
 """
@@ -135,10 +135,10 @@ def corrupted(some_str):
     return "0000" + some_str[4:]
 
 
-def get_service_definition(enclave, good):
+def get_service_definition(enclave, permissive):
     policy = (
         get_security_policy(enclave)
-        if good
+        if permissive
         else corrupted(get_security_policy(enclave))
     )
     return f"""
@@ -156,7 +156,7 @@ allow if {{
 """
 
 
-def get_platform_definition(enclave, good):
+def get_platform_definition(enclave, permissive):
     if enclave == "snp":
         uvm_endorsements = infra.snp.get_container_group_uvm_endorsements_base64()
         cose_envelope = Sign1Message.decode(base64.b64decode(uvm_endorsements))
@@ -167,7 +167,7 @@ def get_platform_definition(enclave, good):
     else:
         raise ValueError(f"Unexpected enclave platform: {enclave}")
 
-    if not good:
+    if not permissive:
         allowed_measurement = corrupted(allowed_measurement)
 
     return f"""
@@ -376,9 +376,9 @@ def register_failed(with_error, *args, **kwargs):
         )
 
 
-def create_service_registration_policy(network, good=True):
+def create_service_definition_auth(network, permissive=True):
     did, feed, svn = get_uvm_endorsements(network)
-    if not good:
+    if not permissive:
         svn = int(svn) + 1
 
     return f"""
@@ -407,9 +407,9 @@ allow if {{
 """
 
 
-def create_platform_registration_policy(network, good=True):
+def create_platform_definition_auth(network, permissive=True):
     did, feed, svn = get_uvm_endorsements(network)
-    if not good:
+    if not permissive:
         svn = int(svn) + 1
 
     return f"""
@@ -446,8 +446,8 @@ def set_platform_definition_auth(network, policy):
     set_policy(network, "set_platform_definition_auth", policy)
 
 
-def set_service_definition(network, enclave, service_name, good=True):
-    policy = get_service_definition(enclave=enclave, good=good)
+def set_service_definition(network, enclave, service_name, permissive=True):
+    policy = get_service_definition(enclave=enclave, permissive=permissive)
     primary, _ = network.find_primary()
 
     # Let's hash policy as report data for now.
@@ -467,8 +467,8 @@ def set_service_definition(network, enclave, service_name, good=True):
         assert r.status_code == http.HTTPStatus.NO_CONTENT, r
 
 
-def set_platform_definition(network, enclave, platform, good=True):
-    policy = get_platform_definition(enclave=enclave, good=good)
+def set_platform_definition(network, enclave, platform, permissive=True):
+    policy = get_platform_definition(enclave=enclave, permissive=permissive)
     primary, _ = network.find_primary()
 
     # Let's hash policy as report data for now.
@@ -527,14 +527,14 @@ def test_service_registration(network, args):
     enclave = args.enclave_platform
     service_key = ec.generate_private_key(ec.SECP384R1(), default_backend())
 
-    set_service_definition_auth(network, SERVICE_REGISTRATION_ALLOW_ALL)
-    set_platform_definition_auth(network, PLATFORM_REGISTRATION_ALLOW_ALL)
+    set_service_definition_auth(network, SERVICE_REGISTRATION_AUTH_ALLOW_ALL)
+    set_platform_definition_auth(network, PLATFORM_DEFINITION_AUTH_ALLOW_ALL)
 
     set_service_definition_successfully(
-        network, enclave, service_name="test.acidns10.attested.name.", good=True
+        network, enclave, service_name="test.acidns10.attested.name.", permissive=True
     )
     set_platform_definition_successfully(
-        network, enclave, platform=SEV_SNP_CONTAINERPLAT_AMD_UVM, good=True
+        network, enclave, platform=SEV_SNP_CONTAINERPLAT_AMD_UVM, permissive=True
     )
 
     register_successfully(
@@ -558,10 +558,10 @@ def test_service_registration(network, args):
 
     # Register under wrong service registration policy (modified host data, aka security policy).
     set_service_definition_successfully(
-        network, enclave, service_name="test.acidns10.attested.name.", good=False
+        network, enclave, service_name="test.acidns10.attested.name.", permissive=False
     )
     set_platform_definition_successfully(
-        network, enclave, platform=SEV_SNP_CONTAINERPLAT_AMD_UVM, good=True
+        network, enclave, platform=SEV_SNP_CONTAINERPLAT_AMD_UVM, permissive=True
     )
     register_failed(
         "Policy not satisfied",
@@ -573,10 +573,10 @@ def test_service_registration(network, args):
 
     # Register under wrong platform registration policy (modified host data, aka security policy).
     set_service_definition_successfully(
-        network, enclave, service_name="test.acidns10.attested.name.", good=True
+        network, enclave, service_name="test.acidns10.attested.name.", permissive=True
     )
     set_platform_definition_successfully(
-        network, enclave, platform=SEV_SNP_CONTAINERPLAT_AMD_UVM, good=False
+        network, enclave, platform=SEV_SNP_CONTAINERPLAT_AMD_UVM, permissive=False
     )
     register_failed(
         "Policy not satisfied",
@@ -590,7 +590,7 @@ def test_service_registration(network, args):
 def test_policy_registration(network, args):
     # Test with a proper service registration policy which checks UVM endorsements.
     set_service_definition_auth(
-        network, create_service_registration_policy(network, good=True)
+        network, create_service_definition_auth(network, permissive=True)
     )
     set_service_definition_successfully(
         network,
@@ -600,7 +600,7 @@ def test_policy_registration(network, args):
 
     # Test with incremented SVN to ensure current UVM endorsements are not accepted when setting new relying party policy.
     set_service_definition_auth(
-        network, create_service_registration_policy(network, good=False)
+        network, create_service_definition_auth(network, permissive=False)
     )
     set_service_definition_failed(
         "Policy not satisfied",
@@ -611,7 +611,7 @@ def test_policy_registration(network, args):
 
     # Same for platform relying party policy.
     set_platform_definition_auth(
-        network, create_platform_registration_policy(network, good=True)
+        network, create_platform_definition_auth(network, permissive=True)
     )
 
     set_platform_definition_successfully(
@@ -621,7 +621,7 @@ def test_policy_registration(network, args):
     )
 
     set_platform_definition_auth(
-        network, create_platform_registration_policy(network, good=False)
+        network, create_platform_definition_auth(network, permissive=False)
     )
     set_platform_definition_failed(
         "Policy not satisfied",
