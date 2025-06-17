@@ -175,8 +175,10 @@ package policy
 
 default allow := false
 
+allowed_measurements := ["{allowed_measurement}"]
+
 allowed_measurement if {{
-    input.measurement == "{allowed_measurement}"
+    input.measurement in allowed_measurements
 }}
 
 allow if {{
