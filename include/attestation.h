@@ -16,6 +16,7 @@ namespace aDNS
   static ccf::QuoteInfo parse_and_verify_attestation(
     std::string_view raw_attestation,
     ccf::pal::PlatformAttestationReportData& report_data,
+    ccf::pal::PlatformAttestationMeasurement& measurement,
     ccf::pal::UVMEndorsements& uvm_endorsements_descriptor)
   {
     auto attestation =
@@ -41,7 +42,6 @@ namespace aDNS
       // If not, fallback to attempt as byte-encoded chain as is.
     }
 
-    ccf::pal::PlatformAttestationMeasurement measurement = {};
     ccf::pal::verify_quote(attestation, measurement, report_data);
 
     if (attestation.format != ccf::QuoteFormat::insecure_virtual)
