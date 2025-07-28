@@ -1,0 +1,38 @@
+
+Application calls SSL_connect()
+           │
+           ▼
+    SSL_do_handshake()
+           │
+           ▼
+  populate_dane_hack() ◄──── [PATCH INJECTION POINT]
+           │
+           ▼
+Query DNS: "_443._tcp.hostname" TLSA
+           │
+           ▼
+     ┌─────────────┐
+     │ TLSA found? │
+     └─────┬───────┘
+           │
+  ┌────────▼────────┐
+  │ NO             │ YES
+  │                │
+  ▼                ▼
+┌─────────────┐   ┌──────────────────────┐
+│ Fallback to │   │ Enable DANE:         │
+│ standard    │   │ - SSL_dane_enable()  │
+│ PKI cert    │   │ - Parse TLSA records │
+│ validation  │   │ - SSL_dane_tlsa_add()│
+└─────────────┘   └──────────────────────┘
+  │                │
+  │                ▼
+  │              ┌──────────────────────┐
+  │              │ TLS Handshake with   │
+  │              │ DANE validation      │
+  │              └──────────────────────┘
+  │                │
+  └────────────────┼──────────────────────
+                   ▼
+              TLS Connection
+            (established/failed)
