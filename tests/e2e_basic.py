@@ -537,8 +537,6 @@ def test_service_registration(network, args):
         network, enclave, platform=SEV_SNP_CONTAINERPLAT_AMD_UVM, permissive=True
     )
 
-    breakpoint()
-
     register_successfully(
         primary,
         enclave=enclave,
