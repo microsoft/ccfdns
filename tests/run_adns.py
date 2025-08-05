@@ -5,7 +5,6 @@ import glob
 import http
 import base64
 import socket
-import requests
 import json
 import infra.e2e_args
 import os
@@ -18,9 +17,7 @@ import dns.dnssec
 import dns.rdtypes.ANY.SOA as SOA
 from cryptography import x509
 from cryptography.x509.oid import NameOID
-from cryptography.hazmat.backends import default_backend
-from cryptography.hazmat.primitives import serialization, hashes
-from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives import hashes
 from hashlib import sha256
 from adns_service import aDNSConfig, set_policy
 from pycose.messages import Sign1Message  # type: ignore
