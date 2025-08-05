@@ -1,1 +1,0 @@
- tdnf -y install  git      ca-certificates  build-essential      clang      cmake      ninja-build      which      openssl-devel      libuv-devel      nghttp2-devel      curl-devel      libarrow-devel      parquet-libs-devel      doxygen      clang-tools-extra-devel    lldb      expect       perl   libpsl-devel   jq vim

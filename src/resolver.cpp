@@ -1558,10 +1558,12 @@ namespace aDNS
 
     BUF_MEM* bptr{nullptr};
     BIO_get_mem_ptr(buf, &bptr);
-    small_vector<uint16_t> public_key_sv(bptr->length, (uint8_t*)bptr->data);
     std::span<const uint8_t> public_key_der{(uint8_t*)bptr->data, bptr->length};
 
     auto public_key_digest = ccf::crypto::sha256(public_key_der);
+
+    small_vector<uint16_t> public_key_sv(
+      public_key_digest.size(), public_key_digest.data());
 
     auto subject_name = X509_REQ_get_subject_name(req);
     ccf::crypto::OpenSSL::CHECKNULL(subject_name);
@@ -1715,7 +1717,7 @@ namespace aDNS
         TLSA(
           CertificateUsage::DANE_EE,
           Selector::SPKI,
-          MatchingType::Full,
+          MatchingType::SHA2_256,
           public_key_sv));
 
       remove(origin, tlsa_name, Class::IN, Type::TLSA);
@@ -1743,7 +1745,7 @@ namespace aDNS
         TLSA(
           CertificateUsage::DANE_EE,
           Selector::SPKI,
-          MatchingType::Full,
+          MatchingType::SHA2_256,
           public_key_sv));
 
       remove(origin, service_tlsa_name, Class::IN, Type::TLSA);
