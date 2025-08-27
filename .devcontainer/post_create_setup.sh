@@ -8,3 +8,8 @@ set -ex
 ./scripts/setup-dev.sh
 
 git config --global --add safe.directory /workspaces/ccfdns
+
+tdnf -y install bind bind-utils net-tools
+
+# By default, all owned by non-existing user ids due to vscode volume mapping.
+chown -R root .

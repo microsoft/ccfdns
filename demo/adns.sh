@@ -1,5 +1,14 @@
 set -ex
 
+# Function to cleanup
+cleanup() {
+    echo "Cleaning up ADNS processes..."
+    jobs -p | xargs -r kill 2>/dev/null || true
+    exit 0
+}
+
+trap cleanup SIGINT SIGTERM EXIT
+
 echo "Setting up Python environment..."
 if [ ! -f "env/bin/activate" ]
     then
