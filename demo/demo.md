@@ -19,9 +19,12 @@ cd /workspace/demo
 ./setup.sh
 ```
 
+Nit. Setup contains openssl cloning+building, may need intervention if run multiple times.
+
 In separate terminals, run
 
 ```
+./bind.sh
 ./adns.sh
 ./service.sh
 ./resolve.sh

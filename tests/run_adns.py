@@ -253,8 +253,8 @@ def run(args):
 
     adns_nw, _ = adns_service.run(
         args,
-        tcp_port=53,
-        udp_port=53,
+        tcp_port=5353,
+        udp_port=5353,
     )
 
     if not adns_nw:
@@ -262,7 +262,15 @@ def run(args):
 
     set_policies(adns_nw, args)
 
-    breakpoint()
+    print("ADNS network is running. Press Ctrl+C to stop.")
+    try:
+        while True:
+            import time
+
+            time.sleep(1)
+    except KeyboardInterrupt:
+        print("\nShutting down ADNS network...")
+        pass
 
 
 def main():
@@ -307,6 +315,10 @@ def main():
     targs.initial_service_cert_validity_days = 365
     targs.message_timeout_ms = 5000
     targs.election_timeout_ms = 60000
+
+    # Don't shut down the socket which is semi-manually managed via custom
+    # ccf::Session implementations for UDP/TCP.
+    targs.idle_connection_timeout_s = 3600 * 3600
 
     targs.adns = aDNSConfig(
         origin="acidns10.attested.name.",
