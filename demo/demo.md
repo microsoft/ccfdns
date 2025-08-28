@@ -24,8 +24,8 @@ Nit. Setup contains openssl cloning+building, may need intervention if run multi
 In separate terminals, run
 
 ```
-./bind.sh
 ./adns.sh
+./bind.sh # Depends on the previous, as it adds current aDNS KSK as a trusted-anchor
 ./service.sh
 ./resolve.sh
 ```
