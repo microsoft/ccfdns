@@ -342,7 +342,7 @@ namespace aDNS
       const Name& origin, const Name& name, QClass c, QType t) const;
 
     typedef std::pair<std::shared_ptr<ccf::crypto::KeyPair>, uint16_t>
-      KeyAndTag; // TODO: Should use OpenSSL type instead of KeyPair
+      KeyAndTag;
 
     KeyAndTag get_signing_key(
       const Name& origin, Class class_, bool key_signing);

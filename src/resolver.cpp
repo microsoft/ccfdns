@@ -549,7 +549,7 @@ namespace aDNS
       return RFC1035::NO_ERROR;
     }
 
-    // TODO: This is wrong. We need to find the closest encloser. See
+    // This is wrong. We need to find the closest encloser. See
     // https://www.rfc-editor.org/rfc/rfc5155#section-7.2.1
 
     const auto& ns = get_ordered_names(origin, static_cast<Class>(qclass));
@@ -630,9 +630,6 @@ namespace aDNS
 
     r += find_records(origin, preceding, QType::NSEC, sclass);
     r += find_rrsigs(origin, preceding, sclass, Type::NSEC);
-
-    // TODO: Wildcard expansion. Since we don't support wildcards, we can't
-    // easily search for one.
 
     return RFC1035::ResponseCode::NAME_ERROR;
   }
@@ -816,7 +813,7 @@ namespace aDNS
       return add_new_signing_key(origin, class_, key_signing);
     else
     {
-      auto chosen_key = suitable_keys.begin(); // TODO: which key do we pick?
+      auto chosen_key = suitable_keys.begin();
 
       RFC4034::DNSKEY dnskey(chosen_key->rdata);
       uint16_t key_tag = get_key_tag(dnskey);
@@ -1305,16 +1302,12 @@ namespace aDNS
     const Name& service_name,
     const std::map<std::string, NodeInfo>& node_info)
   {
-    // TODO add attestation records
+    // Not implemented
   }
 
   Resolver::RegistrationInformation Resolver::configure(
     const Configuration& cfg)
   {
-    // makes the configuration persistent and auditable
-    // TODO: which re-configurations should be authorized?
-    // ideally none, unless needed experimentally
-    // unclear how we support CCF reconfigurations
     set_configuration(cfg);
 
     update_nsec3_param(
@@ -1337,13 +1330,9 @@ namespace aDNS
 
     remove(cfg.origin, cfg.origin, Class::IN, Type::SOA);
     add(cfg.origin, mk_rr(cfg.origin, Type::SOA, Class::IN, 60, SOA(cfg.soa)));
-    // TODO review this TTL, it's possibly too low
-    // TODO check the provided primary name server against cfg.origin? See also
-    // node checks below.
 
     remove(cfg.origin, cfg.origin, Class::IN, Type::NS);
     remove(cfg.origin, cfg.origin, Class::IN, Type::A);
-    // TODO why would we keep any other records?
 
     for (const auto& [id, addr] : cfg.node_addresses)
     {
@@ -1425,8 +1414,6 @@ namespace aDNS
     bool compress,
     uint8_t records_per_name)
   {
-    // TODO: remove old records?
-
     std::vector<uint8_t> tmp;
 
     uint16_t rsz = rrdata.size();
@@ -1519,7 +1506,6 @@ namespace aDNS
 
   namespace
   {
-    // TODO needs cleanup and wrappers to avoid memleaks (in CCF?..)
     std::string get_common_name(const X509_NAME* name)
     {
       std::string r;
@@ -1757,8 +1743,6 @@ namespace aDNS
     }
 
     sign(origin);
-
-    // TODO save endorsements
   }
 
   const std::map<uint16_t, Type>& Resolver::get_supported_types() const

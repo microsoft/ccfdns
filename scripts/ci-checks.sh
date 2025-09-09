@@ -31,11 +31,10 @@ function endgroup() {
     fi
 }
 
-# MASTER-TODO: enable this by removing the todos from the repo first.
 # No inline TODOs in the codebase, use tickets, with a pointer to the code if necessary.
-# group "TODOs"
-# "$SCRIPT_DIR"/check-todo.sh .
-# endgroup
+group "TODOs"
+"$SCRIPT_DIR"/check-todo.sh .
+endgroup
 
 group "C/C++/Proto format"
 if [ $FIX -ne 0 ]; then
