@@ -57,7 +57,7 @@ jobs:
           ./scripts/setup-ci.sh
           mkdir build
           cd build
-          cmake -DCMAKE_BUILD_TYPE=Debug -DCOMPILE_TARGET=virtual -DBUILD_TESTS=OFF ..
+          cmake -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTS=OFF ..
           make -j16
           make install
 

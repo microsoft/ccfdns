@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation. All rights reserved. Licensed under the
 # Apache 2.0 License.
 
-cmake_minimum_required(VERSION 3.16)
+cmake_minimum_required(VERSION 3.21)
 
 include(FetchContent)
 
@@ -26,7 +26,7 @@ if((NOT CMAKE_C_COMPILER)
   endif()
 endif()
 
-# Conflicts with CCF snmalloc harcoding
+# Conflicts with CCF snmalloc hardcoding
 set(TRIESTE_USE_SNMALLOC OFF)
 
 FetchContent_Declare(
@@ -52,12 +52,17 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 option(VERBOSE_LOGGING "verbose logging" OFF)
 option(TRACE_LOGGING "extra verbose logging" OFF)
 
-find_package(ccf_${COMPILE_TARGET} REQUIRED HINTS ${CCF})
+get_property(all_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
+get_property(imported_targets DIRECTORY PROPERTY IMPORTED_TARGETS)
+MESSAGE(STATUS "Buildsystem targets: ${all_targets}")
+MESSAGE(STATUS "Imported targets: ${imported_targets}")
 
-set(CCF_PKG_DIR ${ccf_${COMPILE_TARGET}_DIR})
+find_package(ccf REQUIRED HINTS ${CCF})
+
+set(CCF_PKG_DIR ${ccf_DIR})
 set(CCF_PKG_INC ${CCF_PKG_DIR}/../include)
 
-set(ENCLAVE_TARGET ccfdns.${COMPILE_TARGET})
+set(ENCLAVE_TARGET ccfdns)
 
 find_package(ZLIB)
 
@@ -69,9 +74,7 @@ add_ccf_app(
   src/rfc4034.cpp
   src/rfc5155.cpp
   src/base32.cpp
-  LINK_LIBS_VIRTUAL
-  ZLIB::ZLIB
-  LINK_LIBS_SNP
+  LINK_LIBS
   ZLIB::ZLIB)
 
 target_link_libraries(${ENCLAVE_TARGET} PRIVATE regocpp::rego)
@@ -91,23 +94,18 @@ endforeach()
 
 enable_testing()
 
-set(TEST_PLATFORM_ARGS -t "${COMPILE_TARGET}")
-
-# For the e2e test to mock the attestation of the service being registered.
-if(COMPILE_TARGET STREQUAL "snp")
-  execute_process(
-    COMMAND "make"
-    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/get-snp-report"
-    RESULT_VARIABLE RETURN_CODE)
-  if(NOT RETURN_CODE STREQUAL "0")
-    message(FATAL_ERROR "Error calling cat /etc/os-release")
-  endif()
+execute_process(
+  COMMAND "make"
+  WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/get-snp-report"
+  RESULT_VARIABLE RETURN_CODE)
+if(NOT RETURN_CODE STREQUAL "0")
+  message(FATAL_ERROR "Error calling cat /etc/os-release")
 endif()
 
 add_test(
   NAME e2e_basic
   COMMAND python ../tests/e2e_basic.py -b "${CCF_PKG_DIR}/../bin" --library-dir
-          "${CMAKE_CURRENT_BINARY_DIR}" ${TEST_PLATFORM_ARGS})
+          "${CMAKE_CURRENT_BINARY_DIR}")
 set_property(
   TEST e2e_basic
   APPEND
@@ -116,33 +114,20 @@ set_property(
     "SNP_REPORT_BINARY=${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/get-snp-report/bin/get-snp-report"
 )
 
-if(COMPILE_TARGET STREQUAL "snp")
-  execute_process(
-    COMMAND find / -maxdepth 1 -type d -name "security-context*"
-    OUTPUT_VARIABLE SECURITY_CONTEXT_DIR
-    OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
-  message(STATUS "UVM security context directory: ${SECURITY_CONTEXT_DIR}")
-endif()
-
 function(add_unit_test name)
   add_executable(${name} ${ARGN})
   target_include_directories(
     ${name} PRIVATE "." "${CCF_PKG_INC}" "${CCF_PKG_INC}/ccf/_private"
                     "${CCF_PKG_INC}/3rdparty")
-  if(COMPILE_TARGET STREQUAL "virtual")
-    target_link_libraries(${name} PRIVATE ccfcrypto.host)
-  endif()
+
+  target_link_libraries(${name} PRIVATE ccfcrypto.host)
+
   add_test(NAME ${name} COMMAND ${name})
   set_property(
     TEST ${name}
     APPEND
     PROPERTY LABELS unit_test)
-  if(COMPILE_TARGET STREQUAL "snp")
-    set_property(
-      TEST ${name}
-      APPEND
-      PROPERTY ENVIRONMENT "UVM_SECURITY_CONTEXT_DIR=${SECURITY_CONTEXT_DIR}")
-  endif()
+
   if(TRACE_LOGGING)
     target_compile_definitions(${name} PRIVATE -DTRACE_LOGGING
                                                -DVERBOSE_LOGGING)
@@ -157,8 +142,7 @@ endfunction()
 
 add_unit_test(resolver_tests ../tests/resolver_tests.cpp src/resolver.cpp
               src/rfc4034.cpp src/rfc5155.cpp src/base32.cpp)
-target_link_libraries(resolver_tests PRIVATE ZLIB::ZLIB ccf.${COMPILE_TARGET}
-                                             regocpp::rego)
+target_link_libraries(resolver_tests PRIVATE ZLIB::ZLIB ccf regocpp::rego)
 target_include_directories(
   resolver_tests
   PRIVATE include

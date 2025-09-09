@@ -13,7 +13,7 @@ curl -L https://github.com/microsoft/CCF/releases/download/ccf-6.0.3/ccf_virtual
 mkdir -p ../build
 cd ../build
 rm CMakeCache.txt || true
-cmake -GNinja -DCOMPILE_TARGET=virtual -DCMAKE_BUILD_TYPE=Debug ..
+cmake -GNinja -DCMAKE_BUILD_TYPE=Debug ..
 ninja
 cd ../demo
 
