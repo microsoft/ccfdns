@@ -299,7 +299,6 @@ namespace ccfdns
     // advancing it based on the local host time if need be
     virtual uint32_t get_fresh_time() override
     {
-      // TODO: consider adding time quantum to the configuration
       uint32_t quantum = 5;
 
       check_context();
@@ -364,7 +363,6 @@ namespace ccfdns
     {
       check_context();
 
-      // TODO: keep a map of name -> class/type?
       for (const auto& [_, c] : get_supported_classes())
         for (const auto& [__, t] : get_supported_types())
         {
@@ -531,9 +529,6 @@ namespace ccfdns
       auto origins = rotx().ro<Origins>(origins_table_name);
       auto lowername = name.lowered();
       return origins->contains(lowername);
-      // TODO commit consistency
-      // && origins->get_globally_committed(lowername) ==
-      // origins->get(lowername);
     };
 
     virtual ccf::crypto::Pem get_private_key(
@@ -818,8 +813,9 @@ namespace ccfdns
       {
         auto entry = nodes_table->get(id);
 
-        // TODO attestation
+        // Not implemented
         auto attestation = "";
+
         r[id] = {
           .address = addr,
           .attestation = attestation,
@@ -1293,7 +1289,6 @@ namespace ccfdns
 
     virtual void handle_incoming_data(std::span<const uint8_t> data) override
     {
-      // TODO: separate addr for each request? Fork off?
       std::lock_guard<std::mutex> lock(mtx);
 
       std::vector<uint8_t> payload;
@@ -1396,7 +1391,6 @@ namespace ccfdns
           tc_reply.header.tc = true;
           tc_reply.questions = msg.questions;
           tc_reply.header.qdcount = msg.questions.size();
-          // TODO: Add OPT?
           outbuf = (std::vector<uint8_t>)tc_reply;
         }
 #endif
