@@ -84,7 +84,7 @@ jobs:
           set -ex
           mkdir build
           cd build
-          cmake -GNinja -DCOMPILE_TARGET=virtual -DCMAKE_BUILD_TYPE=Debug ..
+          cmake -GNinja -DCMAKE_BUILD_TYPE=Debug ..
           ninja
         shell: bash
 
@@ -155,7 +155,7 @@ jobs:
           set -ex
           mkdir build
           cd build
-          cmake -GNinja -DCOMPILE_TARGET=snp -DCMAKE_BUILD_TYPE=Debug ..
+          cmake -GNinja -DCMAKE_BUILD_TYPE=Debug ..
           ninja
         shell: bash
 
