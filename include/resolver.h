@@ -419,11 +419,6 @@ namespace aDNS
       std::shared_ptr<ccf::crypto::KeyPair> key,
       uint16_t key_tag,
       RFC4034::Algorithm signing_algorithm);
-
-    void add_attestation_records(
-      const Name& origin,
-      const Name& service_name,
-      const std::map<std::string, NodeInfo>& node_info);
   };
 
   uint16_t get_key_tag(const RFC4034::DNSKEY& dnskey_rdata);
