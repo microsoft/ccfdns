@@ -857,10 +857,6 @@ TEST_CASE("Service registration")
     Name("_443._tcp") + service_name, aDNS::QType::TLSA, aDNS::QClass::IN);
   REQUIRE(RFC4034::verify_rrsigs(r.answers, dnskey_rrs, type2str));
 
-  // Not implemented yet
-  // r = s.resolve(service_name, aDNS::QType::ATTEST, aDNS::QClass::IN);
-  // REQUIRE(RFC4034::verify_rrsigs(r.answers, dnskey_rrs, type2str));
-
   r = s.resolve(service_name, aDNS::QType::A, aDNS::QClass::IN);
   REQUIRE(RFC4034::verify_rrsigs(r.answers, dnskey_rrs, type2str));
 }

@@ -957,8 +957,6 @@ namespace ccfdns
                              const Name& name) {
               auto records = rotx().ro<Records>(table_name(origin, name, c, t));
               records->foreach([&r](const ResourceRecord& rr) {
-                if (static_cast<aDNS::Type>(rr.type) == aDNS::Type::ATTEST)
-                  r += "; ";
                 auto tmp = string_from_resource_record(rr) + "\n";
                 if (static_cast<aDNS::Type>(rr.type) == aDNS::Type::NSEC3)
                   r += std::regex_replace(tmp, std::regex("ATTEST"), "");
@@ -968,10 +966,6 @@ namespace ccfdns
                     return string_from_type(static_cast<aDNS::Type>(x));
                   };
                   RFC4034::RRSIG sd(rr.rdata, type2str);
-                  if (
-                    sd.type_covered ==
-                    static_cast<uint16_t>(aDNS::Type::ATTEST))
-                    r += "; ";
                   r += tmp;
                 }
                 else
