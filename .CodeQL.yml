@@ -6,6 +6,7 @@ path_classifiers:
   # Everything under build is generated
   generated:
     - build
-  # Everything under 3rdparty is external libraries
+  # Everything under 3rdparty and build/_deps is external libraries
   library:
     - 3rdparty
+    - build/_deps
