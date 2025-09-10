@@ -1294,14 +1294,6 @@ namespace aDNS
         r));
   }
 
-  void Resolver::add_attestation_records(
-    const Name& origin,
-    const Name& service_name,
-    const std::map<std::string, NodeInfo>& node_info)
-  {
-    // Not implemented
-  }
-
   Resolver::RegistrationInformation Resolver::configure(
     const Configuration& cfg)
   {
@@ -1351,8 +1343,6 @@ namespace aDNS
         cfg.origin,
         mk_rr(cfg.origin, Type::A, Class::IN, cfg.default_ttl, A(addr.ip)));
     }
-
-    add_attestation_records(cfg.origin, cfg.origin, out.node_information);
 
     // signs initial records; this triggers the creation of fresh DNSKEY
     // records.
@@ -1709,8 +1699,6 @@ namespace aDNS
       remove(origin, tlsa_name, Class::IN, Type::AAAA);
       add_fragmented(origin, tlsa_name, tlsa_rr);
     }
-
-    add_attestation_records(origin, service_name, rr.node_information);
 
     if (protocol_port_same_forall)
     {
