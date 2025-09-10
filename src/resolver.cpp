@@ -4,6 +4,7 @@
 #include "resolver.h"
 
 #include "attestation.h"
+#include "compression.h"
 #include "rfc1035.h"
 #include "rfc4034.h"
 
@@ -124,8 +125,6 @@ namespace aDNS
     {static_cast<uint16_t>(RFC5155::Type::NSEC3PARAM), Type::NSEC3PARAM},
 
     {static_cast<uint16_t>(RFC7671::Type::TLSA), Type::TLSA},
-
-    {static_cast<uint16_t>(aDNS::Types::Type::ATTEST), Type::ATTEST},
   };
 
   static const std::map<uint16_t, QType> supported_qtypes = {
@@ -159,7 +158,6 @@ namespace aDNS
     TFSF(RFC6891);
     TFSF(RFC5155);
     TFSF(RFC7671);
-    TFSF(aDNS::Types);
 
     throw std::runtime_error(
       fmt::format("unknown type string '{}'", type_string));
@@ -180,7 +178,6 @@ namespace aDNS
     SFTF(RFC6891);
     SFTF(RFC5155);
     SFTF(RFC7671);
-    SFTF(aDNS::Types);
 
     // https://datatracker.ietf.org/doc/html/rfc3597#section-5
     return "TYPE" + std::to_string(static_cast<uint16_t>(t));
