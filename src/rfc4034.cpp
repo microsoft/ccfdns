@@ -120,7 +120,6 @@ namespace RFC4034
       case U(RFC5155::Type::NSEC3):
       case U(RFC5155::Type::NSEC3PARAM):
       case U(RFC7671::Type::TLSA):
-      case U(aDNS::Types::Type::ATTEST):
         cr.rdata = rr.rdata;
         break;
       default:
