@@ -9,3 +9,4 @@ path_classifiers:
   # Everything under 3rdparty is external libraries
   library:
     - 3rdparty
+    - build
