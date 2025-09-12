@@ -164,13 +164,6 @@ namespace aDNS
         dnskey_records; // to be recorded as DS at the parent
     };
 
-    struct RegistrationRequest
-    {
-      std::vector<uint8_t> csr;
-      std::map<std::string, NodeInfo> node_information;
-      std::optional<std::string> configuration_receipt;
-    };
-
     struct Resolution
     {
       RFC1035::ResponseCode response_code = RFC1035::ResponseCode::NO_ERROR;
@@ -259,7 +252,7 @@ namespace aDNS
       const ccf::crypto::Pem& pem,
       bool key_signing) = 0;
 
-    virtual void register_service(const RegistrationRequest& req);
+    virtual void register_service(const std::vector<uint8_t>& req);
 
     virtual std::string service_definition_auth() const = 0;
 
@@ -288,7 +281,7 @@ namespace aDNS
     virtual uint32_t get_fresh_time() = 0;
 
     virtual void save_service_registration_request(
-      const Name& name, const RegistrationRequest& rr) = 0;
+      const Name& name, const std::vector<uint8_t>& rr) = 0;
 
     virtual std::map<std::string, NodeInfo> get_node_information() = 0;
 

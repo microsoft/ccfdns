@@ -171,12 +171,6 @@ namespace aDNS
     Resolver::RegistrationInformation, public_key, csr, node_information);
   DECLARE_JSON_OPTIONAL_FIELDS(
     Resolver::RegistrationInformation, dnskey_records);
-
-  DECLARE_JSON_TYPE_WITH_OPTIONAL_FIELDS(Resolver::RegistrationRequest);
-  DECLARE_JSON_REQUIRED_FIELDS(
-    Resolver::RegistrationRequest, csr, node_information);
-  DECLARE_JSON_OPTIONAL_FIELDS(
-    Resolver::RegistrationRequest, configuration_receipt);
 }
 
 namespace ccfdns
