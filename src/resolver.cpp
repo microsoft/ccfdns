@@ -8,6 +8,8 @@
 #include "rfc1035.h"
 #include "rfc4034.h"
 
+#include <ccf/crypto/base64.h>
+#include <ccf/crypto/cose_verifier.h>
 #include <ccf/crypto/entropy.h>
 #include <ccf/crypto/hash_bytes.h>
 #include <ccf/crypto/key_pair.h>
@@ -25,6 +27,11 @@
 #include <memory>
 #include <mutex>
 #include <openssl/x509.h>
+#include <qcbor/UsefulBuf.h>
+#include <qcbor/qcbor.h>
+#include <qcbor/qcbor_decode.h>
+#include <qcbor/qcbor_encode.h>
+#include <qcbor/qcbor_spiffy_decode.h>
 #include <rego/rego.hh>
 #include <set>
 #include <string>
@@ -99,6 +106,430 @@ namespace
       throw std::runtime_error(
         fmt::format("Error while applying policy: {}", qv));
     }
+  }
+}
+
+namespace
+{
+  // COSE/CWT constants
+  static constexpr int64_t COSE_ALG_LABEL = 1;
+  static constexpr int64_t CWT_CLAIMS_LABEL = 15;
+  static constexpr int64_t CWT_ISS_LABEL = 1;
+  static constexpr int64_t CWT_CNF_LABEL = 8;
+  static constexpr auto CWT_ATT_NAME = "att";
+  static constexpr auto CWT_SVI_NAME = "svi";
+
+  // CNF claim constants
+  static constexpr int64_t CNF_KTY_LABEL = 1;
+  static constexpr int64_t CNF_CRV_LABEL = -1;
+  static constexpr int64_t CNF_X_LABEL = -2;
+  static constexpr int64_t CNF_Y_LABEL = -3;
+
+  // Service info constants
+  static constexpr auto SVI_PORT_NAME = "port";
+  static constexpr auto SVI_PROTOCOL_NAME = "protocol";
+  static constexpr auto SVI_IPV4_NAME = "ipv4";
+
+  struct CnfClaim
+  {
+    int64_t kty{};
+    int64_t crv{};
+    std::vector<uint8_t> x{};
+    std::vector<uint8_t> y{};
+  };
+  struct ServiceInfo
+  {
+    std::string port{};
+    std::string protocol{};
+    std::string ipv4{};
+  };
+  struct CwtClaim
+  {
+    std::string iss{};
+    CnfClaim cnf{};
+    std::string att{};
+    ServiceInfo svi{};
+  };
+  struct ProtectedHeader
+  {
+    int64_t alg{};
+    CwtClaim cwt{};
+  };
+
+  struct CoseRequest
+  {
+    ProtectedHeader protected_header{};
+    std::vector<uint8_t> payload{};
+  };
+
+  inline UsefulBufC from_bytes(std::span<const uint8_t> v)
+  {
+    return UsefulBufC{v.data(), v.size()};
+  }
+
+  inline UsefulBufC from_string(std::string_view v)
+  {
+    return UsefulBufC{v.data(), v.size()};
+  }
+
+  inline std::vector<uint8_t> as_vector(UsefulBufC buf)
+  {
+    return std::vector<uint8_t>(
+      static_cast<const uint8_t*>(buf.ptr),
+      static_cast<const uint8_t*>(buf.ptr) + buf.len);
+  }
+
+  inline std::span<const uint8_t> as_span(UsefulBufC buf)
+  {
+    return {static_cast<const uint8_t*>(buf.ptr), buf.len};
+  }
+
+  inline std::string_view as_string(UsefulBufC buf)
+  {
+    return {static_cast<const char*>(buf.ptr), buf.len};
+  }
+
+  CnfClaim parse_cnf_claims(QCBORDecodeContext& ctx)
+  {
+    QCBORDecode_EnterMapFromMapN(&ctx, CWT_CNF_LABEL);
+    auto decode_error = QCBORDecode_GetError(&ctx);
+    if (decode_error != QCBOR_SUCCESS)
+    {
+      throw std::runtime_error(
+        fmt::format("Failed to decode CNF claims: {}", decode_error));
+    }
+
+    enum
+    {
+      CNF_KTY_INDEX,
+      CNF_CRV_INDEX,
+      CNF_X_INDEX,
+      CNF_Y_INDEX,
+      CNF_END_INDEX,
+    };
+    QCBORItem cnf_items[CNF_END_INDEX + 1];
+
+    cnf_items[CNF_KTY_INDEX].label.int64 = CNF_KTY_LABEL;
+    cnf_items[CNF_KTY_INDEX].uLabelType = QCBOR_TYPE_INT64;
+    cnf_items[CNF_KTY_INDEX].uDataType = QCBOR_TYPE_INT64;
+
+    cnf_items[CNF_CRV_INDEX].label.int64 = CNF_CRV_LABEL;
+    cnf_items[CNF_CRV_INDEX].uLabelType = QCBOR_TYPE_INT64;
+    cnf_items[CNF_CRV_INDEX].uDataType = QCBOR_TYPE_INT64;
+
+    cnf_items[CNF_X_INDEX].label.int64 = CNF_X_LABEL;
+    cnf_items[CNF_X_INDEX].uLabelType = QCBOR_TYPE_INT64;
+    cnf_items[CNF_X_INDEX].uDataType = QCBOR_TYPE_BYTE_STRING;
+
+    cnf_items[CNF_Y_INDEX].label.int64 = CNF_Y_LABEL;
+    cnf_items[CNF_Y_INDEX].uLabelType = QCBOR_TYPE_INT64;
+    cnf_items[CNF_Y_INDEX].uDataType = QCBOR_TYPE_BYTE_STRING;
+
+    cnf_items[CNF_END_INDEX].uLabelType = QCBOR_TYPE_NONE;
+
+    QCBORDecode_GetItemsInMap(&ctx, cnf_items);
+
+    auto qcbor_result = QCBORDecode_GetError(&ctx);
+    if (qcbor_result != QCBOR_SUCCESS)
+    {
+      throw std::runtime_error(fmt::format(
+        "Failed to decode CNF claim: {}", qcbor_err_to_str(qcbor_result)));
+    }
+
+    QCBORDecode_ExitMap(&ctx);
+
+    CnfClaim cnf{};
+
+    if (cnf_items[CNF_KTY_INDEX].uDataType == QCBOR_TYPE_NONE)
+    {
+      throw std::runtime_error("Missing or invalid 'kty' in cnf claim");
+    }
+    cnf.kty = cnf_items[CNF_KTY_INDEX].val.int64;
+
+    if (cnf_items[CNF_CRV_INDEX].uDataType == QCBOR_TYPE_NONE)
+    {
+      throw std::runtime_error("Missing or invalid 'crv' in cnf claim");
+    }
+    cnf.crv = cnf_items[CNF_CRV_INDEX].val.int64;
+
+    if (cnf_items[CNF_X_INDEX].uDataType == QCBOR_TYPE_NONE)
+    {
+      throw std::runtime_error("Missing or invalid 'x' in cnf claim");
+    }
+    cnf.x = as_vector(cnf_items[CNF_X_INDEX].val.string);
+
+    if (cnf_items[CNF_Y_INDEX].uDataType == QCBOR_TYPE_NONE)
+    {
+      throw std::runtime_error("Missing or invalid 'y' in cnf claim");
+    }
+    cnf.y = as_vector(cnf_items[CNF_Y_INDEX].val.string);
+
+    return cnf;
+  }
+
+  ServiceInfo parse_service_info(QCBORDecodeContext& ctx)
+  {
+    QCBORDecode_EnterMapFromMapSZ(&ctx, "svi");
+    auto decode_error = QCBORDecode_GetError(&ctx);
+    if (decode_error != QCBOR_SUCCESS)
+    {
+      throw std::runtime_error(
+        fmt::format("Failed to decode service info: {}", decode_error));
+    }
+
+    enum
+    {
+      SVI_PORT_INDEX,
+      SVI_PROTOCOL_INDEX,
+      SVI_IPV4_INDEX,
+      SVI_END_INDEX,
+    };
+    QCBORItem svi_items[SVI_END_INDEX + 1];
+
+    svi_items[SVI_PORT_INDEX].label.string = UsefulBuf_FromSZ(SVI_PORT_NAME);
+    svi_items[SVI_PORT_INDEX].uLabelType = QCBOR_TYPE_TEXT_STRING;
+    svi_items[SVI_PORT_INDEX].uDataType = QCBOR_TYPE_TEXT_STRING;
+
+    svi_items[SVI_PROTOCOL_INDEX].label.string =
+      UsefulBuf_FromSZ(SVI_PROTOCOL_NAME);
+    svi_items[SVI_PROTOCOL_INDEX].uLabelType = QCBOR_TYPE_TEXT_STRING;
+    svi_items[SVI_PROTOCOL_INDEX].uDataType = QCBOR_TYPE_TEXT_STRING;
+
+    svi_items[SVI_IPV4_INDEX].label.string = UsefulBuf_FromSZ(SVI_IPV4_NAME);
+    svi_items[SVI_IPV4_INDEX].uLabelType = QCBOR_TYPE_TEXT_STRING;
+    svi_items[SVI_IPV4_INDEX].uDataType = QCBOR_TYPE_TEXT_STRING;
+
+    svi_items[SVI_END_INDEX].uLabelType = QCBOR_TYPE_NONE;
+
+    QCBORDecode_GetItemsInMap(&ctx, svi_items);
+
+    auto qcbor_result = QCBORDecode_GetError(&ctx);
+    if (qcbor_result != QCBOR_SUCCESS)
+    {
+      throw std::runtime_error(fmt::format(
+        "Failed to decode service info: {}", qcbor_err_to_str(qcbor_result)));
+    }
+
+    QCBORDecode_ExitMap(&ctx);
+
+    ServiceInfo svi{};
+
+    if (svi_items[SVI_PORT_INDEX].uDataType == QCBOR_TYPE_NONE)
+    {
+      throw std::runtime_error("Missing or invalid 'port' in service info");
+    }
+    svi.port = as_string(svi_items[SVI_PORT_INDEX].val.string);
+
+    if (svi_items[SVI_PROTOCOL_INDEX].uDataType == QCBOR_TYPE_NONE)
+    {
+      throw std::runtime_error("Missing or invalid 'protocol' in service info");
+    }
+    svi.protocol = as_string(svi_items[SVI_PROTOCOL_INDEX].val.string);
+
+    if (svi_items[SVI_IPV4_INDEX].uDataType == QCBOR_TYPE_NONE)
+    {
+      throw std::runtime_error("Missing or invalid 'ipv4' in service info");
+    }
+    svi.ipv4 = as_string(svi_items[SVI_IPV4_INDEX].val.string);
+
+    return svi;
+  }
+
+  CwtClaim parse_cwt_claims(QCBORDecodeContext& ctx)
+  {
+    QCBORDecode_EnterMapFromMapN(&ctx, CWT_CLAIMS_LABEL);
+    auto decode_error = QCBORDecode_GetError(&ctx);
+    if (decode_error != QCBOR_SUCCESS)
+    {
+      throw std::runtime_error(
+        fmt::format("Failed to decode CWT claims: {}", decode_error));
+    }
+
+    enum
+    {
+      CWT_ISS_INDEX,
+      CWT_CNF_INDEX,
+      CWT_ATT_INDEX,
+      CWT_SVI_INDEX,
+      CWT_END_INDEX,
+    };
+
+    QCBORItem cwt_items[CWT_END_INDEX + 1];
+
+    cwt_items[CWT_ISS_INDEX].label.int64 = CWT_ISS_LABEL;
+    cwt_items[CWT_ISS_INDEX].uLabelType = QCBOR_TYPE_INT64;
+    cwt_items[CWT_ISS_INDEX].uDataType = QCBOR_TYPE_TEXT_STRING;
+
+    cwt_items[CWT_CNF_INDEX].label.int64 = CWT_CNF_LABEL;
+    cwt_items[CWT_CNF_INDEX].uLabelType = QCBOR_TYPE_INT64;
+    cwt_items[CWT_CNF_INDEX].uDataType = QCBOR_TYPE_MAP;
+
+    cwt_items[CWT_ATT_INDEX].label.string = UsefulBuf_FromSZ(CWT_ATT_NAME);
+    cwt_items[CWT_ATT_INDEX].uLabelType = QCBOR_TYPE_TEXT_STRING;
+    cwt_items[CWT_ATT_INDEX].uDataType = QCBOR_TYPE_TEXT_STRING;
+
+    cwt_items[CWT_SVI_INDEX].label.string = UsefulBuf_FromSZ(CWT_SVI_NAME);
+    cwt_items[CWT_SVI_INDEX].uLabelType = QCBOR_TYPE_TEXT_STRING;
+    cwt_items[CWT_SVI_INDEX].uDataType = QCBOR_TYPE_MAP;
+
+    cwt_items[CWT_END_INDEX].uLabelType = QCBOR_TYPE_NONE;
+
+    QCBORDecode_GetItemsInMap(&ctx, cwt_items);
+    decode_error = QCBORDecode_GetError(&ctx);
+    if (decode_error != QCBOR_SUCCESS)
+    {
+      throw std::runtime_error(
+        fmt::format("Failed to decode CWT claim contents: {}", decode_error));
+    }
+
+    CwtClaim cwt{};
+
+    if (cwt_items[CWT_ISS_INDEX].uDataType == QCBOR_TYPE_NONE)
+    {
+      throw std::runtime_error("Missing or invalid 'iss' in CWT claims");
+    }
+    cwt.iss = as_string(cwt_items[CWT_ISS_INDEX].val.string);
+
+    if (cwt_items[CWT_CNF_INDEX].uDataType == QCBOR_TYPE_NONE)
+    {
+      throw std::runtime_error("Missing 'cnf' in CWT claims");
+    }
+    cwt.cnf = parse_cnf_claims(ctx);
+
+    if (cwt_items[CWT_ATT_INDEX].uDataType == QCBOR_TYPE_NONE)
+    {
+      throw std::runtime_error("Missing or invalid 'att' in CWT claims");
+    }
+    cwt.att = as_string(cwt_items[CWT_ATT_INDEX].val.string);
+
+    if (cwt_items[CWT_SVI_INDEX].uDataType == QCBOR_TYPE_NONE)
+    {
+      throw std::runtime_error("Missing 'svi' in CWT claims");
+    }
+    cwt.svi = parse_service_info(ctx);
+
+    QCBORDecode_ExitMap(&ctx);
+
+    return cwt;
+  }
+
+  ProtectedHeader parse_protected_header_items(QCBORDecodeContext& ctx)
+  {
+    enum
+    {
+      ALG_INDEX,
+      CWT_CLAIMS_INDEX,
+      END_INDEX,
+    };
+    QCBORItem header_items[END_INDEX + 1];
+
+    header_items[ALG_INDEX].label.int64 = COSE_ALG_LABEL;
+    header_items[ALG_INDEX].uLabelType = QCBOR_TYPE_INT64;
+    header_items[ALG_INDEX].uDataType = QCBOR_TYPE_INT64;
+
+    header_items[CWT_CLAIMS_INDEX].label.int64 = CWT_CLAIMS_LABEL;
+    header_items[CWT_CLAIMS_INDEX].uLabelType = QCBOR_TYPE_INT64;
+    header_items[CWT_CLAIMS_INDEX].uDataType = QCBOR_TYPE_MAP;
+
+    header_items[END_INDEX].uLabelType = QCBOR_TYPE_NONE;
+
+    QCBORDecode_GetItemsInMap(&ctx, header_items);
+
+    auto qcbor_result = QCBORDecode_GetError(&ctx);
+    if (qcbor_result != QCBOR_SUCCESS)
+    {
+      throw std::runtime_error(fmt::format(
+        "Failed to decode protected header: {}",
+        qcbor_err_to_str(qcbor_result)));
+    }
+
+    ProtectedHeader phdr{};
+
+    if (header_items[ALG_INDEX].uDataType == QCBOR_TYPE_NONE)
+    {
+      throw std::runtime_error(
+        "Missing or invalid algorithm in protected header");
+    }
+    phdr.alg = header_items[ALG_INDEX].val.int64;
+
+    if (header_items[CWT_CLAIMS_INDEX].uDataType == QCBOR_TYPE_NONE)
+    {
+      throw std::runtime_error("Missing CWT claims in protected header");
+    }
+
+    phdr.cwt = parse_cwt_claims(ctx);
+
+    return phdr;
+  }
+
+  CoseRequest decode_cose_request(std::span<const uint8_t> input)
+  {
+    QCBORError qcbor_result;
+
+    QCBORDecodeContext ctx;
+    QCBORDecode_Init(&ctx, from_bytes(input), QCBOR_DECODE_MODE_NORMAL);
+
+    QCBORDecode_EnterArray(&ctx, nullptr);
+    qcbor_result = QCBORDecode_GetError(&ctx);
+    if (qcbor_result != QCBOR_SUCCESS)
+    {
+      throw std::runtime_error("Failed to parse COSE_Sign1 outer array");
+    }
+
+    uint64_t tag = QCBORDecode_GetNthTagOfLast(&ctx, 0);
+    if (tag != CBOR_TAG_COSE_SIGN1)
+    {
+      throw std::runtime_error("COSE_Sign1 is not tagged");
+    }
+
+    QCBORDecode_EnterBstrWrapped(&ctx, QCBOR_TAG_REQUIREMENT_NOT_A_TAG, NULL);
+    QCBORDecode_EnterMap(&ctx, NULL);
+
+    ProtectedHeader phdr = parse_protected_header_items(ctx);
+
+    QCBORDecode_ExitMap(&ctx);
+    QCBORDecode_ExitBstrWrapped(&ctx);
+
+    // Get unprotected header (not used).
+    QCBORItem uhdr;
+    QCBORDecode_GetNext(&ctx, &uhdr);
+
+    // Get payload
+    QCBORItem payload_item;
+    QCBORDecode_GetNext(&ctx, &payload_item);
+    if (payload_item.uDataType != QCBOR_TYPE_BYTE_STRING)
+    {
+      throw std::runtime_error("Expected payload to be a byte string");
+    }
+    std::vector<uint8_t> payload = as_vector(payload_item.val.string);
+
+    QCBORDecode_ExitArray(&ctx);
+
+    return {phdr, payload};
+  }
+
+  ccf::crypto::PublicKeyPtr reconstruct_public_key_from_cnf(const CnfClaim& cnf)
+  {
+    if (cnf.kty != 2)
+    {
+      throw std::runtime_error("Unsupported key type, expected EC2");
+    }
+    if (cnf.crv != 1)
+    {
+      throw std::runtime_error("Unsupported curve, expected P-256");
+    }
+    if (cnf.x.size() != 32 || cnf.y.size() != 32)
+    {
+      throw std::runtime_error("Invalid coordinate size for P-256");
+    }
+
+    ccf::crypto::JsonWebKeyECPublic jwk_public;
+    jwk_public.kty = ccf::crypto::JsonWebKeyType::EC;
+    jwk_public.crv = ccf::crypto::JsonWebKeyECCurve::P256;
+    jwk_public.x = ccf::crypto::b64url_from_raw(cnf.x, false);
+    jwk_public.y = ccf::crypto::b64url_from_raw(cnf.y, false);
+
+    return ccf::crypto::make_public_key(jwk_public);
   }
 }
 
@@ -1491,57 +1922,84 @@ namespace aDNS
       fmt::format("no suitable zone found for {}", std::string(name)));
   }
 
-  namespace
-  {
-    std::string get_common_name(const X509_NAME* name)
-    {
-      std::string r;
-      int i = X509_NAME_get_index_by_NID(name, NID_commonName, -1);
-      while (i != -1)
-      {
-        X509_NAME_ENTRY* entry = X509_NAME_get_entry(name, i);
-        ASN1_STRING* entry_string = X509_NAME_ENTRY_get_data(entry);
-        r += std::string(r.size() == 0 ? "" : " ") +
-          (char*)ASN1_STRING_get0_data(entry_string);
-        i = X509_NAME_get_index_by_NID(name, NID_commonName, i);
-      }
-      return r;
-    }
-  }
-
-  void Resolver::register_service(const RegistrationRequest& rr)
+  void Resolver::register_service(const std::vector<uint8_t>& request)
   {
     using namespace RFC7671;
 
-    CCF_APP_INFO("ADNS: In register service\n");
+    auto [phdr, payload] = decode_cose_request(request);
+    auto public_key = reconstruct_public_key_from_cnf(phdr.cwt.cnf);
 
-    auto configuration = get_configuration();
+    CCF_APP_INFO(
+      "Reconstructed public key DER: {}",
+      ccf::ds::to_hex(public_key->public_key_der()));
 
-    std::string csrtxt(rr.csr.begin(), rr.csr.end());
-    CCF_APP_INFO("ADNS: Importing CSR: {}", csrtxt);
-    ccf::crypto::OpenSSL::Unique_BIO mem(rr.csr.data(), rr.csr.size());
-    ccf::crypto::OpenSSL::Unique_X509_REQ_DER req(mem);
+    auto cose_verifier =
+      ccf::crypto::make_cose_verifier_from_key(public_key->public_key_pem());
+    std::span<uint8_t> authned_content{};
+    cose_verifier->verify(request, authned_content);
 
-    auto public_key = X509_REQ_get0_pubkey(req);
-    ccf::crypto::OpenSSL::CHECK1(X509_REQ_verify(req, public_key));
-
-    // Produce a SubjectPublicKeyInfo DER from the public key
-    ccf::crypto::OpenSSL::Unique_BIO buf{};
-    ccf::crypto::OpenSSL::CHECK1(i2d_PUBKEY_bio(buf, public_key));
-
-    BUF_MEM* bptr{nullptr};
-    BIO_get_mem_ptr(buf, &bptr);
-    std::span<const uint8_t> public_key_der{(uint8_t*)bptr->data, bptr->length};
-
-    auto public_key_digest = ccf::crypto::sha256(public_key_der);
+    auto public_key_digest = ccf::crypto::sha256(public_key->public_key_der());
 
     small_vector<uint16_t> public_key_sv(
       public_key_digest.size(), public_key_digest.data());
 
-    auto subject_name = X509_REQ_get_subject_name(req);
-    ccf::crypto::OpenSSL::CHECKNULL(subject_name);
-    auto common_name = get_common_name(subject_name);
-    Name service_name(common_name);
+    ccf::QuoteInfo attestation;
+    ccf::pal::PlatformAttestationReportData report_data = {};
+    ccf::pal::UVMEndorsements uvm_endorsements_descriptor = {};
+    ccf::pal::PlatformAttestationMeasurement measurement = {};
+    HostData host_data = {};
+
+    std::string attestation_json(payload.begin(), payload.end());
+
+    try
+    {
+      attestation = parse_and_verify_attestation(
+        attestation_json,
+        report_data,
+        measurement,
+        uvm_endorsements_descriptor);
+
+      if (attestation.format != ccf::QuoteFormat::insecure_virtual)
+      {
+        host_data = retrieve_host_data(attestation);
+      }
+    }
+    catch (const std::exception& e)
+    {
+      throw std::runtime_error(
+        fmt::format("ADNS: Failed to verify attestation report: {}", e.what()));
+    }
+
+    // SNP report data is 64 bytes, key hash is 32, the rest has to be zeroed.
+    // Virtual report data is set to 32 bytes in CCF.
+    assert(
+      report_data.data.size() == ccf::pal::snp_attestation_report_data_size ||
+      report_data.data.size() ==
+        ccf::pal::virtual_attestation_report_data_size);
+
+    assert(public_key_digest.size() == 32);
+
+    if (!std::equal(
+          public_key_digest.begin(),
+          public_key_digest.end(),
+          report_data.data.begin()))
+    {
+      throw std::runtime_error(
+        "ADNS: Attestation report hash does not match public key");
+    }
+
+    if (
+      report_data.data.size() == ccf::pal::snp_attestation_report_data_size &&
+      !std::all_of(
+        report_data.data.begin() + public_key_digest.size(),
+        report_data.data.end(),
+        [](uint8_t b) { return b == 0; }))
+    {
+      throw std::runtime_error(
+        "ADNS: Attestation report data for {} is not zeroed after key hash");
+    }
+
+    Name service_name(phdr.cwt.iss);
 
     if (!service_name.is_absolute())
       service_name += std::vector<Label>{Label()};
@@ -1553,179 +2011,70 @@ namespace aDNS
       std::string(service_name),
       std::string(origin));
 
-    save_service_registration_request(service_name, rr);
+    save_service_registration_request(service_name, request);
 
-    bool policy_ok = true;
-
-    for (const auto& [id, info] : rr.node_information)
+    if (attestation.format != ccf::QuoteFormat::insecure_virtual)
     {
-      ccf::QuoteInfo attestation;
-      ccf::pal::PlatformAttestationReportData report_data = {};
-      ccf::pal::UVMEndorsements uvm_endorsements_descriptor = {};
-      ccf::pal::PlatformAttestationMeasurement measurement = {};
-      HostData host_data = {};
-
       try
       {
-        attestation = parse_and_verify_attestation(
-          info.attestation,
-          report_data,
-          measurement,
-          uvm_endorsements_descriptor);
+        auto platform = nlohmann::json(phdr.cwt.att).dump();
+        verify_platform_definition(
+          ccf::ds::to_hex(measurement.data), platform_definition(platform));
 
-        if (attestation.format != ccf::QuoteFormat::insecure_virtual)
-        {
-          host_data = retrieve_host_data(attestation);
-        }
+        verify_service_definition(
+          ccf::crypto::b64_from_raw(host_data.h.data(), host_data.h.size()),
+          service_definition(service_name));
       }
       catch (const std::exception& e)
       {
-        throw std::runtime_error(fmt::format(
-          "ADNS: Failed to verify attestation report for {} : {}",
-          id,
-          e.what()));
-      }
-
-      // SNP report data is 64 bytes, key hash is 32, the rest has to be zeroed.
-      // Virtual report data is set to 32 bytes in CCF.
-      assert(
-        report_data.data.size() == ccf::pal::snp_attestation_report_data_size ||
-        report_data.data.size() ==
-          ccf::pal::virtual_attestation_report_data_size);
-
-      assert(public_key_digest.size() == 32);
-
-      if (!std::equal(
-            public_key_digest.begin(),
-            public_key_digest.end(),
-            report_data.data.begin()))
-      {
-        throw std::runtime_error(fmt::format(
-          "ADNS: Attestation report hash does not match public key for {}",
-          id));
-      }
-
-      if (
-        report_data.data.size() == ccf::pal::snp_attestation_report_data_size &&
-        !std::all_of(
-          report_data.data.begin() + public_key_digest.size(),
-          report_data.data.end(),
-          [](uint8_t b) { return b == 0; }))
-      {
-        throw std::runtime_error(fmt::format(
-          "ADNS: Attestation report data for {} is not zeroed after key hash",
-          id));
-      }
-
-      if (attestation.format != ccf::QuoteFormat::insecure_virtual)
-      {
-        try
-        {
-          auto platform = nlohmann::json(info.attestation_type).dump();
-          verify_platform_definition(
-            ccf::ds::to_hex(measurement.data), platform_definition(platform));
-
-          verify_service_definition(
-            ccf::crypto::b64_from_raw(host_data.h.data(), host_data.h.size()),
-            service_definition(service_name));
-        }
-        catch (const std::exception& e)
-        {
-          throw std::runtime_error(fmt::format(
-            "ADNS: Failed to register {} with error {}", id, e.what()));
-        }
+        throw std::runtime_error(
+          fmt::format("ADNS: Failed to register with error {}", e.what()));
       }
     }
 
-    auto service_protocol =
-      rr.node_information.begin()->second.address.protocol;
-    auto service_port = rr.node_information.begin()->second.address.port;
-    bool protocol_port_same_forall = true;
+    auto configuration = get_configuration();
 
-    for (const auto& [id, info] : rr.node_information)
-    {
-      const auto& name = info.address.name.terminated();
+    const auto& name = service_name.terminated();
 
-      if (
-        info.address.protocol != service_protocol ||
-        info.address.port != service_port)
-        protocol_port_same_forall = false;
+    if (!name.ends_with(service_name))
+      throw std::runtime_error(fmt::format(
+        "node name '{}' outside of service sub-zone '{}'",
+        std::string(name),
+        std::string(service_name)));
 
-      if (!name.ends_with(service_name))
-        throw std::runtime_error(fmt::format(
-          "node name '{}' outside of service sub-zone '{}'",
-          std::string(name),
-          std::string(service_name)));
-
-      add(
-        origin,
-        mk_rr(
-          name,
-          Type::A,
-          Class::IN,
-          configuration.default_ttl,
-          RFC1035::A(info.address.ip)));
-
-      // A records for the service name, one for each node.
-      add(
-        origin,
-        mk_rr(
-          service_name,
-          Type::A,
-          Class::IN,
-          configuration.default_ttl,
-          RFC1035::A(info.address.ip)));
-
-      // TLSA RR for node
-      std::string prolow = info.address.protocol;
-      std::transform(prolow.begin(), prolow.end(), prolow.begin(), ::tolower);
-      auto tlsa_name = Name("_" + std::to_string(info.address.port)) +
-        Name(std::string("_") + prolow) + name;
-
-      ResourceRecord tlsa_rr = mk_rr(
-        tlsa_name,
-        Type::TLSA,
+    add(
+      origin,
+      mk_rr(
+        name,
+        Type::A,
         Class::IN,
         configuration.default_ttl,
-        TLSA(
-          CertificateUsage::DANE_EE,
-          Selector::SPKI,
-          MatchingType::SHA2_256,
-          public_key_sv));
+        RFC1035::A(phdr.cwt.svi.ipv4)));
 
-      remove(origin, tlsa_name, Class::IN, Type::TLSA);
-      add(origin, tlsa_rr);
-
-      remove(origin, tlsa_name, Class::IN, Type::AAAA);
-      add_fragmented(origin, tlsa_name, tlsa_rr);
-    }
-
-    if (protocol_port_same_forall)
-    {
-      // TLSA RR for service
-      std::string prolow = service_protocol;
-      std::transform(prolow.begin(), prolow.end(), prolow.begin(), ::tolower);
-      auto service_tlsa_name = Name("_" + std::to_string(service_port)) +
-        Name(std::string("_") + prolow) + service_name;
-
-      auto tlsa_rr = mk_rr(
-        service_tlsa_name,
-        Type::TLSA,
+    add(
+      origin,
+      mk_rr(
+        service_name,
+        Type::A,
         Class::IN,
         configuration.default_ttl,
-        TLSA(
-          CertificateUsage::DANE_EE,
-          Selector::SPKI,
-          MatchingType::SHA2_256,
-          public_key_sv));
+        RFC1035::A(phdr.cwt.svi.ipv4)));
 
-      remove(origin, service_tlsa_name, Class::IN, Type::TLSA);
-      add(origin, tlsa_rr);
+    std::string prolow = phdr.cwt.svi.protocol;
+    std::transform(prolow.begin(), prolow.end(), prolow.begin(), ::tolower);
+    auto tlsa_name =
+      Name("_" + phdr.cwt.svi.port) + Name(std::string("_") + prolow) + name;
 
-      // Fragmented version
-      remove(origin, service_tlsa_name, Class::IN, Type::AAAA);
-      add_fragmented(origin, service_tlsa_name, tlsa_rr);
-    }
+    ResourceRecord tlsa_rr = mk_rr(
+      tlsa_name,
+      Type::TLSA,
+      Class::IN,
+      configuration.default_ttl,
+      TLSA(
+        CertificateUsage::DANE_EE,
+        Selector::SPKI,
+        MatchingType::SHA2_256,
+        public_key_sv));
 
     sign(origin);
   }

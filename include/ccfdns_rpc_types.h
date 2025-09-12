@@ -45,12 +45,6 @@ namespace ccfdns
     using Out = void;
   };
 
-  struct RegisterService
-  {
-    using In = aDNS::Resolver::RegistrationRequest;
-    using Out = void;
-  };
-
   struct Resign
   {
     struct In
