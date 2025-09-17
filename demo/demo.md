@@ -4,7 +4,7 @@ This guide walks you through running a complete demonstration of the OpenSSL DAN
 
 ## Demo Steps
 
-Open VScode devcontainer with aDNS, then setup all dependencies, including custom openssl build. 
+Open VScode devcontainer with aDNS, then setup all dependencies, including custom openssl build.
 
 ```bash
 cd demo
