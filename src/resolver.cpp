@@ -1573,9 +1573,8 @@ namespace aDNS
         report_data.data.end(),
         [](uint8_t b) { return b == 0; }))
     {
-      throw std::runtime_error(fmt::format(
-        "ADNS: Attestation report data for {} is not zeroed after key hash",
-        std::string(service_name)));
+      throw std::runtime_error(
+        "ADNS: Attestation report data for is not zeroed after key hash");
     }
 
     Name service_name(phdr.cwt.iss);
