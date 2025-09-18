@@ -11,6 +11,7 @@
 
 #include <ccf/crypto/key_pair.h>
 #include <ccf/crypto/pem.h>
+#include <ccf/ds/quote_info.h>
 #include <functional>
 #include <memory>
 #include <stdexcept>
@@ -21,16 +22,6 @@ namespace aDNS
   using Message = RFC1035::Message;
   using ResourceRecord = RFC1035::ResourceRecord;
   using CRRS = RFC4034::CRRS;
-
-  enum class AttestationType
-  {
-    SEV_SNP_CONTAINERPLAT_AMD_UVM = 0
-  };
-
-  DECLARE_JSON_ENUM(
-    AttestationType,
-    {{AttestationType::SEV_SNP_CONTAINERPLAT_AMD_UVM,
-      "SEV-SNP:ContainerPlat-AMD-UVM"}});
 
   enum class Type : uint16_t
   {
@@ -120,7 +111,7 @@ namespace aDNS
     {
       NodeAddress address;
       std::string attestation;
-      aDNS::AttestationType attestation_type;
+      ccf::QuoteFormat attestation_type;
     };
 
     struct Configuration
@@ -162,13 +153,6 @@ namespace aDNS
       std::map<std::string, NodeInfo> node_information;
       std::optional<std::vector<aDNS::ResourceRecord>>
         dnskey_records; // to be recorded as DS at the parent
-    };
-
-    struct RegistrationRequest
-    {
-      std::vector<uint8_t> csr;
-      std::map<std::string, NodeInfo> node_information;
-      std::optional<std::string> configuration_receipt;
     };
 
     struct Resolution
@@ -259,7 +243,7 @@ namespace aDNS
       const ccf::crypto::Pem& pem,
       bool key_signing) = 0;
 
-    virtual void register_service(const RegistrationRequest& req);
+    virtual void register_service(const std::vector<uint8_t>& req);
 
     virtual std::string service_definition_auth() const = 0;
 
@@ -288,7 +272,7 @@ namespace aDNS
     virtual uint32_t get_fresh_time() = 0;
 
     virtual void save_service_registration_request(
-      const Name& name, const RegistrationRequest& rr) = 0;
+      const Name& name, const std::vector<uint8_t>& rr) = 0;
 
     virtual std::map<std::string, NodeInfo> get_node_information() = 0;
 

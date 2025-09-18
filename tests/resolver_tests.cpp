@@ -2,6 +2,7 @@
 // Licensed under the Apache 2.0 License.
 
 #include "base32.h"
+#include "cose.h"
 #include "formatting.h"
 #include "resolver.h"
 #include "rfc1035.h"
@@ -11,9 +12,12 @@
 #include <ccf/crypto/ecdsa.h>
 #include <ccf/crypto/openssl/openssl_wrappers.h>
 #include <ccf/crypto/sha256.h>
+#include <ccf/ds/json.h>
 #include <ccf/ds/logger.h>
 #include <ccf/ds/quote_info.h>
 #include <ccf/pal/snp_ioctl.h>
+#include <openssl/evp.h>
+#include <t_cose/t_cose_sign1_sign.h>
 
 #define DOCTEST_CONFIG_IMPLEMENT
 #include <doctest/doctest.h>
@@ -33,6 +37,17 @@ default allow := true
 auto type2str = [](const auto& x) {
   return aDNS::string_from_type(static_cast<aDNS::Type>(x));
 };
+
+std::string get_attestation_type()
+{
+#if defined(PLATFORM_VIRTUAL)
+  return "Insecure_Virtual";
+#elif defined(PLATFORM_SNP)
+  return "AMD_SEV_SNP_v1";
+#else
+  throw std::exception("Bad platform");
+#endif
+}
 
 static std::vector<uint8_t> slurp_file(const std::string& file)
 {
@@ -302,23 +317,16 @@ default allow := true
   }
 
   virtual void save_service_registration_request(
-    const Name& name, const RegistrationRequest& rr) override
+    const Name& name, const std::vector<uint8_t>& rr) override
   {}
 
   virtual std::map<std::string, Resolver::NodeInfo> get_node_information()
     override
   {
-    std::map<std::string, Resolver::NodeInfo> r;
-    for (const auto& [id, addr] : configuration.node_addresses)
-      r[id] = {
-        .address = addr,
-        .attestation = get_attestation(),
-        .attestation_type =
-          aDNS::AttestationType::SEV_SNP_CONTAINERPLAT_AMD_UVM};
-    return r;
+    return {}; // not used in unittests
   }
 
-  std::string get_dummy_attestation()
+  cose::Attestation get_dummy_attestation()
   {
     const std::string measurement_literal =
       "Insecure hard-coded virtual measurement v1";
@@ -333,18 +341,15 @@ default allow := true
     evidence_json["measurement"] = measurement;
     evidence_json["report_data"] = report_data;
     auto evidence_str = evidence_json.dump();
-    auto evidence_encoded = ccf::crypto::b64_from_raw(
-      (uint8_t*)evidence_str.data(), evidence_str.size());
 
-    nlohmann::json attestation;
-    attestation["format"] = "Insecure_Virtual";
-    attestation["quote"] = evidence_encoded;
-    attestation["endorsements"] = "";
-    attestation["uvm_endorsements"] = "";
-    return attestation.dump();
+    return cose::Attestation{
+      .attestation = std::vector<uint8_t>(
+        evidence_str.data(), evidence_str.data() + evidence_str.size()),
+      .uvm_endorsements = {},
+      .endorsements = ""};
   }
 
-  std::string get_snp_attestation()
+  cose::Attestation get_snp_attestation()
   {
     auto key_der = get_service_key()->public_key_der();
     auto key_digest = ccf::crypto::sha256(key_der);
@@ -364,16 +369,13 @@ default allow := true
     auto uvm_endorsements =
       slurp_file_string(endorsements_path + "/reference-info-base64");
 
-    nlohmann::json attestation;
-    attestation["format"] = "AMD_SEV_SNP_v1";
-    attestation["quote"] =
-      ccf::crypto::b64_from_raw(snp_attestation->get_raw());
-    attestation["endorsements"] = endorsements;
-    attestation["uvm_endorsements"] = uvm_endorsements;
-    return attestation.dump();
+    return cose::Attestation{
+      .attestation = snp_attestation->get_raw(),
+      .uvm_endorsements = ccf::crypto::raw_from_b64(uvm_endorsements),
+      .endorsements = endorsements};
   }
 
-  std::string get_attestation()
+  cose::Attestation get_attestation()
   {
 #if defined(PLATFORM_VIRTUAL)
     return get_dummy_attestation();
@@ -384,11 +386,126 @@ default allow := true
 #endif
   }
 
+  std::vector<uint8_t> create_cose_sign1(
+    const cose::CwtClaim& cwt_claims, ccf::crypto::KeyPairPtr key)
+  {
+    using namespace cose;
+
+    const auto buf_size = 1024 * 1024;
+    std::vector<uint8_t> underlying_buffer(buf_size);
+    q_useful_buf signed_cose_buffer{underlying_buffer.data(), buf_size};
+
+    QCBOREncodeContext cbor_encode;
+    QCBOREncode_Init(&cbor_encode, signed_cose_buffer);
+
+    t_cose_sign1_sign_ctx sign_ctx = {};
+    t_cose_sign1_sign_init(&sign_ctx, 0, T_COSE_ALGORITHM_ES256);
+
+    auto der_data = key->private_key_der();
+    const unsigned char* der_ptr = der_data.data();
+    EVP_PKEY* evp_key =
+      d2i_PrivateKey(EVP_PKEY_EC, nullptr, &der_ptr, der_data.size());
+    assert(evp_key != nullptr);
+
+    t_cose_key signing_key = {};
+    signing_key.crypto_lib = T_COSE_CRYPTO_LIB_OPENSSL;
+    signing_key.k.key_ptr = evp_key;
+    t_cose_sign1_set_signing_key(&sign_ctx, signing_key, NULL_Q_USEFUL_BUF_C);
+
+    // tag
+
+    QCBOREncode_AddTag(&cbor_encode, CBOR_TAG_COSE_SIGN1);
+    QCBOREncode_OpenArray(&cbor_encode);
+
+    // phdr
+
+    uint8_t protected_buffer[1024];
+    UsefulBuf protected_buf = {protected_buffer, sizeof(protected_buffer)};
+
+    QCBOREncode_BstrWrap(&cbor_encode);
+    QCBOREncode_OpenMap(&cbor_encode); // > phdr
+
+    QCBOREncode_AddInt64ToMapN(&cbor_encode, 1, sign_ctx.cose_algorithm_id);
+
+    QCBOREncode_OpenMapInMapN(&cbor_encode, CWT_CLAIMS_LABEL); // > phdr.cwt
+
+    QCBOREncode_AddTextToMapN(
+      &cbor_encode, CWT_ISS_LABEL, from_string(cwt_claims.iss));
+
+    QCBOREncode_OpenMapInMapN(&cbor_encode, CWT_CNF_LABEL); // > phdr.cwt.cnf
+    QCBOREncode_AddInt64ToMapN(&cbor_encode, CNF_KTY_LABEL, cwt_claims.cnf.kty);
+    QCBOREncode_AddInt64ToMapN(&cbor_encode, CNF_CRV_LABEL, cwt_claims.cnf.crv);
+    QCBOREncode_AddBytesToMapN(
+      &cbor_encode, CNF_X_LABEL, from_bytes(cwt_claims.cnf.x));
+    QCBOREncode_AddBytesToMapN(
+      &cbor_encode, CNF_Y_LABEL, from_bytes(cwt_claims.cnf.y));
+    QCBOREncode_CloseMap(&cbor_encode); // < phdr.cwt.cnf
+
+    QCBOREncode_AddTextToMapSZ(
+      &cbor_encode, CWT_ATT_NAME, from_string(cwt_claims.att));
+
+    QCBOREncode_OpenMapInMapSZ(&cbor_encode, CWT_SVI_NAME); // > phdr.cwt.svi
+    QCBOREncode_AddTextToMapSZ(
+      &cbor_encode, SVI_PORT_NAME, from_string(cwt_claims.svi.port));
+    QCBOREncode_AddTextToMapSZ(
+      &cbor_encode, SVI_PROTOCOL_NAME, from_string(cwt_claims.svi.protocol));
+    QCBOREncode_AddTextToMapSZ(
+      &cbor_encode, SVI_IPV4_NAME, from_string(cwt_claims.svi.ipv4));
+    QCBOREncode_CloseMap(&cbor_encode); // < phdr.cwt.svi
+
+    QCBOREncode_CloseMap(&cbor_encode); // < phdr.cwt
+
+    QCBOREncode_CloseMap(&cbor_encode); // < phdr
+    QCBOREncode_CloseBstrWrap2(
+      &cbor_encode, false, &sign_ctx.protected_parameters);
+
+    // uhdr
+
+    QCBOREncode_OpenMap(&cbor_encode);
+    QCBOREncode_CloseMap(&cbor_encode);
+
+    // payload (staple attestation)
+
+    auto attestation = get_attestation();
+    QCBOREncode_BstrWrap(&cbor_encode);
+    QCBOREncode_OpenMap(&cbor_encode); // > attestation
+    QCBOREncode_AddBytesToMapSZ(
+      &cbor_encode, cose::PLD_ATTESTATION, from_bytes(attestation.attestation));
+    QCBOREncode_AddBytesToMapSZ(
+      &cbor_encode,
+      cose::PLD_UVM_ENDORSEMENTS,
+      from_bytes(attestation.uvm_endorsements));
+    QCBOREncode_AddTextToMapSZ(
+      &cbor_encode,
+      cose::PLD_ENDORSEMENTS,
+      from_string(attestation.endorsements));
+    QCBOREncode_CloseMap(&cbor_encode); // < attestation
+
+    // signature
+
+    auto err = t_cose_sign1_encode_signature_aad_internal(
+      &sign_ctx, NULL_Q_USEFUL_BUF_C, NULL_Q_USEFUL_BUF_C, &cbor_encode);
+
+    assert(err == T_COSE_SUCCESS);
+
+    q_useful_buf_c signed_cose = {};
+    auto qerr = QCBOREncode_Finish(&cbor_encode, &signed_cose);
+    assert(qerr == QCBOR_SUCCESS);
+
+    // Memory address is said to match:
+    // github.com/laurencelundblade/QCBOR/blob/v1.4.1/inc/qcbor/qcbor_encode.h#L2190-L2191
+    assert(signed_cose.ptr == underlying_buffer.data());
+
+    underlying_buffer.resize(signed_cose.len);
+    underlying_buffer.shrink_to_fit();
+    return underlying_buffer;
+  }
+
   ccf::crypto::KeyPairPtr get_service_key(bool refresh = false)
   {
     if (refresh || !service_key)
     {
-      service_key = ccf::crypto::make_key_pair(ccf::crypto::CurveID::SECP384R1);
+      service_key = ccf::crypto::make_key_pair(ccf::crypto::CurveID::SECP256R1);
     }
     return service_key;
   }
@@ -834,20 +951,24 @@ TEST_CASE("Service registration")
   s.configure(cfg);
 
   Name service_name("service42.example.com.");
+
   std::string url_name = service_name.unterminated();
 
-  RFC1035::A address("192.168.0.1");
+  const std::string address{"192.168.0.1"};
 
-  auto csr = s.get_service_key()->create_csr_der(
-    "CN=" + url_name, {{"alt." + url_name, false}});
+  const auto& xy = s.get_service_key()->coordinates();
+  cose::CnfClaim cnf{
+    .kty = 2, // EC2
+    .crv = 1, // ES256
+    .x = xy.x,
+    .y = xy.y};
+  cose::ServiceInfo svi{.port = "443", .protocol = "tcp", .ipv4 = address};
 
-  s.register_service(
-    {csr,
-     {{"id",
-       {{url_name, address, "tcp", 443},
-        s.get_attestation(),
-        aDNS::AttestationType::SEV_SNP_CONTAINERPLAT_AMD_UVM}}},
-     std::nullopt});
+  cose::CwtClaim cwt_claims{
+    .iss = url_name, .cnf = cnf, .att = get_attestation_type(), .svi = svi};
+
+  auto rr = s.create_cose_sign1(cwt_claims, s.get_service_key());
+  s.register_service(rr);
 
   auto dnskey_rrs =
     s.resolve(cfg.origin, aDNS::QType::DNSKEY, aDNS::QClass::IN).answers;

@@ -16,14 +16,14 @@ import dns.message
 import dns.query
 import dns.dnssec
 import dns.rdtypes.ANY.SOA as SOA
-from cryptography import x509
-from cryptography.x509.oid import NameOID
 from cryptography.hazmat.backends import default_backend
-from cryptography.hazmat.primitives import serialization, hashes
+from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from hashlib import sha256
 from adns_service import aDNSConfig, set_policy
 from pycose.messages import Sign1Message  # type: ignore
+import cbor2
+from cwt import COSE, COSEKey
 
 rdc = dns.rdataclass
 rdt = dns.rdatatype
@@ -38,8 +38,6 @@ package policy
 default allow := true
 """
 
-SEV_SNP_CONTAINERPLAT_AMD_UVM = "SEV-SNP:ContainerPlat-AMD-UVM"
-
 
 def get_container_group_snp_endorsements_base64():
     security_context_dir = infra.snp.get_security_context_dir()
@@ -52,22 +50,8 @@ def get_container_group_snp_endorsements_base64():
     ).read()
 
 
-def gen_csr(domain, key):
-    """Generate CSR for registration request"""
-    csr = (
-        x509.CertificateSigningRequestBuilder()
-        .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, domain)]))
-        .add_extension(
-            x509.SubjectAlternativeName(
-                [
-                    x509.DNSName(domain),
-                ]
-            ),
-            critical=False,
-        )
-        .sign(key, hashes.SHA256())
-    )
-    return csr
+def get_attestation_format(enclave):
+    return "Insecure_Virtual" if enclave == "virtual" else "AMD_SEV_SNP_v1"
 
 
 def get_dummy_attestation(report_data):
@@ -78,7 +62,7 @@ def get_dummy_attestation(report_data):
         "measurement": measurement,
         "report_data": base64.b64encode(report_data).decode(),
     }
-    return base64.b64encode(json.dumps(attestation).encode()).decode()
+    return bytes(json.dumps(attestation).encode())
 
 
 def get_host_data_base64():
@@ -93,11 +77,10 @@ def get_snp_attestation(report_data):
         capture_output=True,
     )
 
-    # hex(str) -> raw(b) -> b64(b) -> b64(str)
-    return base64.b64encode(bytes.fromhex(result.stdout.decode())).decode()
+    return bytes.fromhex(result.stdout.decode())
 
 
-def get_attestation(report_data, enclave):
+def get_attestation(report_data, enclave, as_json=True):
     if enclave == "snp":
         attestation = get_snp_attestation(report_data)
         endorsements = get_container_group_snp_endorsements_base64()
@@ -109,16 +92,26 @@ def get_attestation(report_data, enclave):
     else:
         raise ValueError(f"Unknown enclave platform: {enclave}")
 
-    attestation_format = (
-        "Insecure_Virtual" if enclave == "virtual" else "AMD_SEV_SNP_v1"
+    if as_json:
+        attestation = base64.b64encode(attestation).decode()
+        return json.dumps(
+            {
+                "quote": attestation,
+                "uvm_endorsements": uvm_endorsements,
+                "endorsements": endorsements,
+                "format": get_attestation_format(enclave),
+            }
+        )
+
+    uvm_endorsements = base64.b64decode(uvm_endorsements)
+
+    return cbor2.dumps(
+        {
+            "att": attestation,
+            "eds": endorsements,
+            "uvm": uvm_endorsements,
+        }
     )
-    dummy_attestation = {
-        "format": attestation_format,
-        "quote": attestation,
-        "endorsements": endorsements,
-        "uvm_endorsements": uvm_endorsements,
-    }
-    return json.dumps(dummy_attestation)
 
 
 def get_security_policy(enclave):
@@ -187,36 +180,83 @@ allow if {{
 """
 
 
+PHDR_ALG = 1
+ALG_ES256 = -7
+
+# CWT Claims (RFC9597) defined in https://www.iana.org/assignments/cwt/cwt.xhtml
+PHDR_CWT = 15
+
+CWT_ISS = 1
+CWT_SUB = 2
+CWT_CNF = 8
+
+# Key representation for CNF https://www.rfc-editor.org/rfc/rfc8747.html#section-3.2
+CNF_KTY = 1
+CNF_CRV = -1
+CNF_X = -2
+CNF_Y = -3
+
+# Other claims
+CWT_ATT = "att"  # (AT)testation (T)ype
+CWT_SVI = "svi"  # (S)er(V)ice (I)nformation
+
+
+def cose_register_service_request(
+    name, address, port, protocol, service_key, enclave, attestation
+):
+    pkey_data = service_key.public_key().public_numbers()
+    assert pkey_data.curve.name == "secp256r1", "Only supporting secp256r1 keys"
+
+    phdr = {
+        PHDR_ALG: ALG_ES256,
+        PHDR_CWT: {
+            CWT_ISS: name,
+            CWT_CNF: {
+                CNF_KTY: 2,  # EC2 key type
+                CNF_CRV: 1,  # P-256 curve
+                CNF_X: pkey_data.x.to_bytes(32, "big"),
+                CNF_Y: pkey_data.y.to_bytes(32, "big"),
+            },
+            CWT_ATT: get_attestation_format(enclave),
+            CWT_SVI: {
+                "ipv4": address,
+                "port": str(port),
+                "protocol": protocol,
+            },
+        },
+    }
+
+    pem_key = service_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.TraditionalOpenSSL,
+        encryption_algorithm=serialization.NoEncryption(),
+    ).decode()
+    cose_key = COSEKey.from_pem(pem_key)
+
+    cose = COSE.new()
+    return cose.encode_and_sign(
+        protected=phdr, unprotected={}, payload=attestation, key=cose_key
+    )
+
+
 def submit_service_registration(
     client, name, address, port, protocol, service_key, enclave_platform, attestation
 ):
     """Submit a service registration request"""
-    csr = gen_csr(name, service_key)
-    with open(f"{enclave_platform}_attestation.json", "w") as f:
-        f.write(attestation)
+
+    reg_request = cose_register_service_request(
+        name, address, port, protocol, service_key, enclave_platform, attestation
+    )
 
     r = client.post(
         "/app/register-service",
-        {
-            "csr": base64.b64encode(
-                csr.public_bytes(serialization.Encoding.DER)
-            ).decode(),
-            "node_information": {
-                # Possible to register multiple instances in one call
-                "default": {
-                    "address": {
-                        "name": name,
-                        "ip": address,
-                        "protocol": protocol,
-                        "port": port,
-                    },
-                    "attestation": attestation,
-                }
-            },
-        },
+        body=reg_request,
+        headers={"Content-Type": "application/cose"},
     )
-    if r.status_code != http.HTTPStatus.NO_CONTENT:
+
+    if r.status_code != http.HTTPStatus.OK:
         raise Exception(f"Failed to register service {name}: {r.status_code} {r.body}")
+
     return r
 
 
@@ -347,7 +387,8 @@ def register_and_ensure(
             "tcp",
             with_key,
             enclave,
-            attestation=with_attestation or get_attestation(report_data, enclave),
+            attestation=with_attestation
+            or get_attestation(report_data, enclave, as_json=False),
         )
 
         print("Checking record is installed")
@@ -525,7 +566,7 @@ def test_service_registration(network, args):
     primary, _ = network.find_primary()
 
     enclave = args.enclave_platform
-    service_key = ec.generate_private_key(ec.SECP384R1(), default_backend())
+    service_key = ec.generate_private_key(ec.SECP256R1(), default_backend())
 
     set_service_definition_auth(network, SERVICE_REGISTRATION_AUTH_ALLOW_ALL)
     set_platform_definition_auth(network, PLATFORM_DEFINITION_AUTH_ALLOW_ALL)
@@ -534,7 +575,7 @@ def test_service_registration(network, args):
         network, enclave, service_name="test.acidns10.attested.name.", permissive=True
     )
     set_platform_definition_successfully(
-        network, enclave, platform=SEV_SNP_CONTAINERPLAT_AMD_UVM, permissive=True
+        network, enclave, platform=get_attestation_format(enclave), permissive=True
     )
 
     register_successfully(
@@ -561,7 +602,7 @@ def test_service_registration(network, args):
         network, enclave, service_name="test.acidns10.attested.name.", permissive=False
     )
     set_platform_definition_successfully(
-        network, enclave, platform=SEV_SNP_CONTAINERPLAT_AMD_UVM, permissive=True
+        network, enclave, platform=get_attestation_format(enclave), permissive=True
     )
     register_failed(
         "Policy not satisfied",
@@ -576,7 +617,7 @@ def test_service_registration(network, args):
         network, enclave, service_name="test.acidns10.attested.name.", permissive=True
     )
     set_platform_definition_successfully(
-        network, enclave, platform=SEV_SNP_CONTAINERPLAT_AMD_UVM, permissive=False
+        network, enclave, platform=get_attestation_format(enclave), permissive=False
     )
     register_failed(
         "Policy not satisfied",
@@ -617,7 +658,7 @@ def test_policy_registration(network, args):
     set_platform_definition_successfully(
         network,
         enclave=args.enclave_platform,
-        platform=SEV_SNP_CONTAINERPLAT_AMD_UVM,
+        platform=get_attestation_format(args.enclave_platform),
     )
 
     set_platform_definition_auth(
@@ -627,7 +668,7 @@ def test_policy_registration(network, args):
         "Policy not satisfied",
         network,
         enclave=args.enclave_platform,
-        platform=SEV_SNP_CONTAINERPLAT_AMD_UVM,
+        platform=get_attestation_format(args.enclave_platform),
     )
 
 

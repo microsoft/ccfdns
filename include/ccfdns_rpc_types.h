@@ -8,6 +8,7 @@
 
 #include <ccf/crypto/pem.h>
 #include <ccf/ds/json.h>
+#include <ccf/ds/quote_info.h>
 #include <cstdint>
 
 namespace ccfdns
@@ -45,12 +46,6 @@ namespace ccfdns
     using Out = void;
   };
 
-  struct RegisterService
-  {
-    using In = aDNS::Resolver::RegistrationRequest;
-    using Out = void;
-  };
-
   struct Resign
   {
     struct In
@@ -75,7 +70,7 @@ namespace ccfdns
   {
     struct In
     {
-      aDNS::AttestationType platform;
+      ccf::QuoteFormat platform;
       std::string policy;
       std::string attestation;
     };

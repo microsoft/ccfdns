@@ -5,9 +5,12 @@
 
 #include "attestation.h"
 #include "compression.h"
+#include "cose.h"
 #include "rfc1035.h"
 #include "rfc4034.h"
 
+#include <ccf/crypto/base64.h>
+#include <ccf/crypto/cose_verifier.h>
 #include <ccf/crypto/entropy.h>
 #include <ccf/crypto/hash_bytes.h>
 #include <ccf/crypto/key_pair.h>
@@ -1491,57 +1494,95 @@ namespace aDNS
       fmt::format("no suitable zone found for {}", std::string(name)));
   }
 
-  namespace
-  {
-    std::string get_common_name(const X509_NAME* name)
-    {
-      std::string r;
-      int i = X509_NAME_get_index_by_NID(name, NID_commonName, -1);
-      while (i != -1)
-      {
-        X509_NAME_ENTRY* entry = X509_NAME_get_entry(name, i);
-        ASN1_STRING* entry_string = X509_NAME_ENTRY_get_data(entry);
-        r += std::string(r.size() == 0 ? "" : " ") +
-          (char*)ASN1_STRING_get0_data(entry_string);
-        i = X509_NAME_get_index_by_NID(name, NID_commonName, i);
-      }
-      return r;
-    }
-  }
-
-  void Resolver::register_service(const RegistrationRequest& rr)
+  void Resolver::register_service(const std::vector<uint8_t>& request)
   {
     using namespace RFC7671;
 
-    CCF_APP_INFO("ADNS: In register service\n");
+    auto [phdr, payload] = cose::decode_cose_request(request);
+    auto public_key = cose::reconstruct_public_key_from_cnf(phdr.cwt.cnf);
 
-    auto configuration = get_configuration();
+    CCF_APP_INFO(
+      "Reconstructed public key DER: {}",
+      ccf::ds::to_hex(public_key->public_key_der()));
 
-    std::string csrtxt(rr.csr.begin(), rr.csr.end());
-    CCF_APP_INFO("ADNS: Importing CSR: {}", csrtxt);
-    ccf::crypto::OpenSSL::Unique_BIO mem(rr.csr.data(), rr.csr.size());
-    ccf::crypto::OpenSSL::Unique_X509_REQ_DER req(mem);
+    auto cose_verifier =
+      ccf::crypto::make_cose_verifier_from_key(public_key->public_key_pem());
+    std::span<uint8_t> authned_content{};
+    cose_verifier->verify(request, authned_content);
 
-    auto public_key = X509_REQ_get0_pubkey(req);
-    ccf::crypto::OpenSSL::CHECK1(X509_REQ_verify(req, public_key));
-
-    // Produce a SubjectPublicKeyInfo DER from the public key
-    ccf::crypto::OpenSSL::Unique_BIO buf{};
-    ccf::crypto::OpenSSL::CHECK1(i2d_PUBKEY_bio(buf, public_key));
-
-    BUF_MEM* bptr{nullptr};
-    BIO_get_mem_ptr(buf, &bptr);
-    std::span<const uint8_t> public_key_der{(uint8_t*)bptr->data, bptr->length};
-
-    auto public_key_digest = ccf::crypto::sha256(public_key_der);
+    auto public_key_digest = ccf::crypto::sha256(public_key->public_key_der());
 
     small_vector<uint16_t> public_key_sv(
       public_key_digest.size(), public_key_digest.data());
 
-    auto subject_name = X509_REQ_get_subject_name(req);
-    ccf::crypto::OpenSSL::CHECKNULL(subject_name);
-    auto common_name = get_common_name(subject_name);
-    Name service_name(common_name);
+    ccf::QuoteInfo attestation;
+    ccf::pal::PlatformAttestationReportData report_data = {};
+    ccf::pal::UVMEndorsements uvm_endorsements_descriptor = {};
+    ccf::pal::PlatformAttestationMeasurement measurement = {};
+    HostData host_data = {};
+
+    auto [raw_attestation, uvm_endorsements, snp_endorsements] =
+      cose::parse_attestation(payload);
+
+    // Convert to CCF input format
+    nlohmann::json attestation_json;
+    attestation_json["quote"] = ccf::crypto::b64_from_raw(raw_attestation);
+    attestation_json["uvm_endorsements"] =
+      ccf::crypto::b64_from_raw(uvm_endorsements);
+    attestation_json["endorsements"] = snp_endorsements;
+    attestation_json["format"] = phdr.cwt.att;
+
+    try
+    {
+      attestation = parse_and_verify_attestation(
+        attestation_json.dump(),
+        report_data,
+        measurement,
+        uvm_endorsements_descriptor);
+
+      if (attestation.format != ccf::QuoteFormat::insecure_virtual)
+      {
+        host_data = retrieve_host_data(attestation);
+      }
+    }
+    catch (const std::exception& e)
+    {
+      throw std::runtime_error(
+        fmt::format("ADNS: Failed to verify attestation report: {}", e.what()));
+    }
+
+    // SNP report data is 64 bytes, key hash is 32, the rest has to be zeroed.
+    // Virtual report data is set to 32 bytes in CCF.
+    assert(
+      report_data.data.size() == ccf::pal::snp_attestation_report_data_size ||
+      report_data.data.size() ==
+        ccf::pal::virtual_attestation_report_data_size);
+
+    assert(public_key_digest.size() == 32);
+
+    if (!std::equal(
+          public_key_digest.begin(),
+          public_key_digest.end(),
+          report_data.data.begin()))
+    {
+      throw std::runtime_error(
+        "ADNS: Attestation report hash does not match public key");
+    }
+
+    if (
+      report_data.data.size() == ccf::pal::snp_attestation_report_data_size &&
+      !std::all_of(
+        report_data.data.begin() + public_key_digest.size(),
+        report_data.data.end(),
+        [](uint8_t b) { return b == 0; }))
+    {
+      throw std::runtime_error(
+        fmt::format(
+          "ADNS: Attestation report data for {} is not zeroed after key hash",
+          std::string(service_name)));
+    }
+
+    Name service_name(phdr.cwt.iss);
 
     if (!service_name.is_absolute())
       service_name += std::vector<Label>{Label()};
@@ -1553,179 +1594,73 @@ namespace aDNS
       std::string(service_name),
       std::string(origin));
 
-    save_service_registration_request(service_name, rr);
+    save_service_registration_request(service_name, request);
 
-    bool policy_ok = true;
-
-    for (const auto& [id, info] : rr.node_information)
+    if (attestation.format != ccf::QuoteFormat::insecure_virtual)
     {
-      ccf::QuoteInfo attestation;
-      ccf::pal::PlatformAttestationReportData report_data = {};
-      ccf::pal::UVMEndorsements uvm_endorsements_descriptor = {};
-      ccf::pal::PlatformAttestationMeasurement measurement = {};
-      HostData host_data = {};
-
       try
       {
-        attestation = parse_and_verify_attestation(
-          info.attestation,
-          report_data,
-          measurement,
-          uvm_endorsements_descriptor);
+        auto platform = nlohmann::json(phdr.cwt.att).dump();
+        verify_platform_definition(
+          ccf::ds::to_hex(measurement.data), platform_definition(platform));
 
-        if (attestation.format != ccf::QuoteFormat::insecure_virtual)
-        {
-          host_data = retrieve_host_data(attestation);
-        }
+        verify_service_definition(
+          ccf::crypto::b64_from_raw(host_data.h.data(), host_data.h.size()),
+          service_definition(service_name));
       }
       catch (const std::exception& e)
       {
-        throw std::runtime_error(fmt::format(
-          "ADNS: Failed to verify attestation report for {} : {}",
-          id,
-          e.what()));
-      }
-
-      // SNP report data is 64 bytes, key hash is 32, the rest has to be zeroed.
-      // Virtual report data is set to 32 bytes in CCF.
-      assert(
-        report_data.data.size() == ccf::pal::snp_attestation_report_data_size ||
-        report_data.data.size() ==
-          ccf::pal::virtual_attestation_report_data_size);
-
-      assert(public_key_digest.size() == 32);
-
-      if (!std::equal(
-            public_key_digest.begin(),
-            public_key_digest.end(),
-            report_data.data.begin()))
-      {
-        throw std::runtime_error(fmt::format(
-          "ADNS: Attestation report hash does not match public key for {}",
-          id));
-      }
-
-      if (
-        report_data.data.size() == ccf::pal::snp_attestation_report_data_size &&
-        !std::all_of(
-          report_data.data.begin() + public_key_digest.size(),
-          report_data.data.end(),
-          [](uint8_t b) { return b == 0; }))
-      {
-        throw std::runtime_error(fmt::format(
-          "ADNS: Attestation report data for {} is not zeroed after key hash",
-          id));
-      }
-
-      if (attestation.format != ccf::QuoteFormat::insecure_virtual)
-      {
-        try
-        {
-          auto platform = nlohmann::json(info.attestation_type).dump();
-          verify_platform_definition(
-            ccf::ds::to_hex(measurement.data), platform_definition(platform));
-
-          verify_service_definition(
-            ccf::crypto::b64_from_raw(host_data.h.data(), host_data.h.size()),
-            service_definition(service_name));
-        }
-        catch (const std::exception& e)
-        {
-          throw std::runtime_error(fmt::format(
-            "ADNS: Failed to register {} with error {}", id, e.what()));
-        }
+        throw std::runtime_error(
+          fmt::format("ADNS: Failed to register with error {}", e.what()));
       }
     }
 
-    auto service_protocol =
-      rr.node_information.begin()->second.address.protocol;
-    auto service_port = rr.node_information.begin()->second.address.port;
-    bool protocol_port_same_forall = true;
+    auto configuration = get_configuration();
 
-    for (const auto& [id, info] : rr.node_information)
-    {
-      const auto& name = info.address.name.terminated();
+    const auto& name = service_name.terminated();
 
-      if (
-        info.address.protocol != service_protocol ||
-        info.address.port != service_port)
-        protocol_port_same_forall = false;
+    if (!name.ends_with(service_name))
+      throw std::runtime_error(fmt::format(
+        "node name '{}' outside of service sub-zone '{}'",
+        std::string(name),
+        std::string(service_name)));
 
-      if (!name.ends_with(service_name))
-        throw std::runtime_error(fmt::format(
-          "node name '{}' outside of service sub-zone '{}'",
-          std::string(name),
-          std::string(service_name)));
-
-      add(
-        origin,
-        mk_rr(
-          name,
-          Type::A,
-          Class::IN,
-          configuration.default_ttl,
-          RFC1035::A(info.address.ip)));
-
-      // A records for the service name, one for each node.
-      add(
-        origin,
-        mk_rr(
-          service_name,
-          Type::A,
-          Class::IN,
-          configuration.default_ttl,
-          RFC1035::A(info.address.ip)));
-
-      // TLSA RR for node
-      std::string prolow = info.address.protocol;
-      std::transform(prolow.begin(), prolow.end(), prolow.begin(), ::tolower);
-      auto tlsa_name = Name("_" + std::to_string(info.address.port)) +
-        Name(std::string("_") + prolow) + name;
-
-      ResourceRecord tlsa_rr = mk_rr(
-        tlsa_name,
-        Type::TLSA,
+    add(
+      origin,
+      mk_rr(
+        name,
+        Type::A,
         Class::IN,
         configuration.default_ttl,
-        TLSA(
-          CertificateUsage::DANE_EE,
-          Selector::SPKI,
-          MatchingType::SHA2_256,
-          public_key_sv));
+        RFC1035::A(phdr.cwt.svi.ipv4)));
 
-      remove(origin, tlsa_name, Class::IN, Type::TLSA);
-      add(origin, tlsa_rr);
-
-      remove(origin, tlsa_name, Class::IN, Type::AAAA);
-      add_fragmented(origin, tlsa_name, tlsa_rr);
-    }
-
-    if (protocol_port_same_forall)
-    {
-      // TLSA RR for service
-      std::string prolow = service_protocol;
-      std::transform(prolow.begin(), prolow.end(), prolow.begin(), ::tolower);
-      auto service_tlsa_name = Name("_" + std::to_string(service_port)) +
-        Name(std::string("_") + prolow) + service_name;
-
-      auto tlsa_rr = mk_rr(
-        service_tlsa_name,
-        Type::TLSA,
+    add(
+      origin,
+      mk_rr(
+        service_name,
+        Type::A,
         Class::IN,
         configuration.default_ttl,
-        TLSA(
-          CertificateUsage::DANE_EE,
-          Selector::SPKI,
-          MatchingType::SHA2_256,
-          public_key_sv));
+        RFC1035::A(phdr.cwt.svi.ipv4)));
 
-      remove(origin, service_tlsa_name, Class::IN, Type::TLSA);
-      add(origin, tlsa_rr);
+    std::string prolow = phdr.cwt.svi.protocol;
+    std::transform(prolow.begin(), prolow.end(), prolow.begin(), ::tolower);
+    auto tlsa_name =
+      Name("_" + phdr.cwt.svi.port) + Name(std::string("_") + prolow) + name;
 
-      // Fragmented version
-      remove(origin, service_tlsa_name, Class::IN, Type::AAAA);
-      add_fragmented(origin, service_tlsa_name, tlsa_rr);
-    }
+    ResourceRecord tlsa_rr = mk_rr(
+      tlsa_name,
+      Type::TLSA,
+      Class::IN,
+      configuration.default_ttl,
+      TLSA(
+        CertificateUsage::DANE_EE,
+        Selector::SPKI,
+        MatchingType::SHA2_256,
+        public_key_sv));
+
+    remove(origin, tlsa_name, Class::IN, Type::TLSA);
+    add(origin, tlsa_rr);
 
     sign(origin);
   }
