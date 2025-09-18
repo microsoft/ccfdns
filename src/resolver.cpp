@@ -1638,7 +1638,9 @@ namespace aDNS
         configuration.default_ttl,
         RFC1035::A(phdr.cwt.svi.ipv4)));
 
-    std::string prolow = ccf::nonstd::to_lower(phdr.cwt.svi.protocol);
+    std::string prolow = phdr.cwt.svi.protocol;
+    ccf::nonstd::to_lower(prolow);
+
     auto tlsa_name =
       Name("_" + phdr.cwt.svi.port) + Name(std::string("_") + prolow) + name;
 
