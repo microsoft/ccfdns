@@ -132,16 +132,6 @@ namespace
 
 namespace ccfdns
 {
-  struct RegisterServiceWithPreviousVersion
-  {
-    RegisterService::In request;
-    std::optional<ccf::kv::Version> previous_version;
-  };
-
-  DECLARE_JSON_TYPE(RegisterServiceWithPreviousVersion);
-  DECLARE_JSON_REQUIRED_FIELDS(
-    RegisterServiceWithPreviousVersion, request, previous_version);
-
   using namespace ccf::indexing::strategies;
 
   class LastWriteTxIDByKey : public VisitEachEntryInMap
@@ -181,18 +171,13 @@ namespace ccfdns
       const std::string& node_id,
       std::shared_ptr<ccf::NetworkIdentitySubsystemInterface> nwid_ss,
       std::shared_ptr<ccf::NodeConfigurationInterface> nci_ss,
-      std::shared_ptr<ccf::CustomProtocolSubsystemInterface> cp_ss,
-      ccf::indexing::IndexingStrategies& istrats) :
+      std::shared_ptr<ccf::CustomProtocolSubsystemInterface> cp_ss) :
       Resolver(),
       node_id(node_id),
       nwid_ss(nwid_ss),
       nci_ss(nci_ss),
       cp_ss(cp_ss)
-    {
-      registration_index_strategy = std::make_shared<RegistrationRequestsIndex>(
-        registration_requests_table_name);
-      istrats.install_strategy(registration_index_strategy);
-    }
+    {}
 
     virtual ~CCFDNS() {}
 
@@ -235,13 +220,9 @@ namespace ccfdns
     const std::string platform_definition_table_name =
       "public:ccf.gov.ccfdns.platform_definition";
 
-    using RegistrationRequests =
-      ccf::ServiceMap<Name, RegisterServiceWithPreviousVersion>;
+    using RegistrationRequests = ccf::ServiceMap<Name, std::vector<uint8_t>>;
     const std::string registration_requests_table_name =
       "public:service_registration_requests";
-    using RegistrationRequestsIndex = LastWriteTxIDByKey;
-    std::shared_ptr<RegistrationRequestsIndex> registration_index_strategy =
-      nullptr;
 
     using Endorsements = ccf::ServiceMap<Name, std::vector<uint8_t>>;
     const std::string endorsements_table_name = "public:service_endorsements";
@@ -819,8 +800,7 @@ namespace ccfdns
         r[id] = {
           .address = addr,
           .attestation = attestation,
-          .attestation_type =
-            aDNS::AttestationType::SEV_SNP_CONTAINERPLAT_AMD_UVM};
+          .attestation_type = ccf::QuoteFormat::amd_sev_snp_v1};
       }
 
       return r;
@@ -898,35 +878,8 @@ namespace ccfdns
       return j.dump();
     }
 
-    std::string registration_receipt(
-      ccf::endpoints::ReadOnlyEndpointContext& ctx_,
-      ccf::historical::StatePtr historical_state,
-      const std::string& service_name)
-    {
-      auto historical_tx = historical_state->store->create_read_only_tx();
-      auto tbl = historical_tx.template ro<RegistrationRequests>(
-        registration_requests_table_name);
-      if (!tbl)
-        throw std::runtime_error("service registration table not found");
-      auto prev = tbl->get_version_of_previous_write(service_name);
-      const auto reg = tbl->get(service_name);
-      if (!reg)
-        throw std::runtime_error("service registration not found");
-      auto receipt = ccf::describe_receipt_v1(*historical_state->receipt);
-
-      CCF_APP_INFO(
-        "CCFDNS: Registration receipt size: {}", receipt.dump().size());
-
-      nlohmann::json j;
-      j["registration"] = reg->request;
-      j["receipt"] = receipt;
-      if (reg->previous_version)
-        j["previous_version"] = *reg->previous_version;
-      return j.dump();
-    }
-
     virtual void save_service_registration_request(
-      const Name& name, const RegistrationRequest& rr) override
+      const Name& name, const std::vector<uint8_t>& rr) override
     {
       check_context();
 
@@ -936,7 +889,7 @@ namespace ccfdns
         throw std::runtime_error(
           "could not access service registration request table");
 
-      rrtbl->put(name, {rr, rrtbl->get_version_of_previous_write(name)});
+      rrtbl->put(name, rr);
     }
 
     std::string dump()
@@ -1493,10 +1446,8 @@ namespace ccfdns
       auto nci_ss = context.get_subsystem<ccf::NodeConfigurationInterface>();
       auto cp_ss =
         context.get_subsystem<ccf::CustomProtocolSubsystemInterface>();
-      auto& istrats = context.get_indexing_strategies();
 
-      ccfdns =
-        std::make_shared<CCFDNS>(node_id, nwid_ss, nci_ss, cp_ss, istrats);
+      ccfdns = std::make_shared<CCFDNS>(node_id, nwid_ss, nci_ss, cp_ss);
 
       auto is_tx_committed =
         [this](ccf::View view, ccf::SeqNo seqno, std::string& error_reason) {
@@ -1586,63 +1537,6 @@ namespace ccfdns
           config_txid_extractor),
         ccf::no_auth_required)
         .set_auto_schema<void, std::string>()
-        .set_forwarding_required(ccf::endpoints::ForwardingRequired::Never)
-        .install();
-
-      auto registration_receipt =
-        [this](
-          ccf::endpoints::ReadOnlyEndpointContext& ctx,
-          ccf::historical::StatePtr historical_state) {
-          try
-          {
-            const auto parsed_query =
-              ccf::http::parse_query(ctx.rpc_ctx->get_request_query());
-            Name service_name =
-              Name(get_param(parsed_query, "service-name")).terminated();
-            CCF_APP_DEBUG(
-              "CCFDNS: registration_receipt: {}", std::string(service_name));
-            auto r =
-              ccfdns->registration_receipt(ctx, historical_state, service_name);
-            ctx.rpc_ctx->set_response_body(std::move(r));
-            ctx.rpc_ctx->set_response_status(HTTP_STATUS_OK);
-          }
-          catch (std::exception& ex)
-          {
-            ctx.rpc_ctx->set_response_body(ex.what());
-            ctx.rpc_ctx->set_response_status(HTTP_STATUS_BAD_REQUEST);
-          }
-        };
-
-      auto registration_txid_extractor =
-        [this](ccf::endpoints::ReadOnlyEndpointContext& ctx)
-        -> std::optional<ccf::TxID> {
-        const auto parsed_query =
-          ccf::http::parse_query(ctx.rpc_ctx->get_request_query());
-        auto txid = txid_from_query(parsed_query);
-        if (txid)
-          return *txid;
-        Name service_name =
-          Name(get_param(parsed_query, "service-name")).terminated();
-        auto sn = CCFDNS::RegistrationRequests::KeySerialiser::to_serialised(
-          service_name);
-        auto r = ccfdns->registration_index_strategy->last_write(sn);
-        CCF_APP_DEBUG(
-          "CCFDNS: registration_txid_extractor: {} {}",
-          std::string(service_name),
-          r.has_value());
-        return r;
-      };
-
-      make_read_only_endpoint(
-        "/registration-receipt",
-        HTTP_GET,
-        ccf::historical::read_only_adapter_v4(
-          registration_receipt,
-          context,
-          is_tx_committed,
-          registration_txid_extractor),
-        ccf::no_auth_required)
-        .set_auto_schema<std::string, std::string>()
         .set_forwarding_required(ccf::endpoints::ForwardingRequired::Never)
         .install();
 
@@ -1737,31 +1631,23 @@ namespace ccfdns
         .set_forwarding_required(ccf::endpoints::ForwardingRequired::Never)
         .install();
 
-      auto register_service = [this](auto& ctx, nlohmann::json&& params) {
+      auto register_service = [this](auto& ctx) {
         try
         {
           ContextContext cc(ccfdns, ctx);
-          CCF_APP_INFO(
-            "CCFDNS: Registration request size: {}",
-            ctx.rpc_ctx->get_request_body().size());
-          const auto in = params.get<RegisterService::In>();
-          ccfdns->register_service(in);
+          const auto& body = ctx.rpc_ctx->get_request_body();
+          ccfdns->register_service(body);
           ctx.rpc_ctx->set_response_status(HTTP_STATUS_OK);
-          return ccf::make_success();
         }
         catch (std::exception& ex)
         {
-          return ccf::make_error(
-            HTTP_STATUS_BAD_REQUEST, ccf::errors::InternalError, ex.what());
+          ctx.rpc_ctx->set_response_body(ex.what());
+          ctx.rpc_ctx->set_response_status(HTTP_STATUS_INTERNAL_SERVER_ERROR);
         }
       };
 
       make_endpoint(
-        "/register-service",
-        HTTP_POST,
-        ccf::json_adapter(register_service),
-        ccf::no_auth_required)
-        .set_auto_schema<RegisterService::In, RegisterService::Out>()
+        "/register-service", HTTP_POST, register_service, ccf::no_auth_required)
         .set_forwarding_required(ccf::endpoints::ForwardingRequired::Always)
         .install();
 
