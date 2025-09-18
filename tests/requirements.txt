@@ -20,4 +20,4 @@ pyOpenSSL
 dnspython[doh,dnssec]
 dnsstamps
 requests
-cwt
+cwt>3.1
