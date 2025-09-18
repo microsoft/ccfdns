@@ -1643,8 +1643,7 @@ namespace aDNS
         configuration.default_ttl,
         RFC1035::A(phdr.cwt.svi.ipv4)));
 
-    std::string prolow = phdr.cwt.svi.protocol;
-    std::transform(prolow.begin(), prolow.end(), prolow.begin(), ::tolower);
+    std::string prolow = ccf::nonstd::to_lower(phdr.cwt.svi.protocol);
     auto tlsa_name =
       Name("_" + phdr.cwt.svi.port) + Name(std::string("_") + prolow) + name;
 
