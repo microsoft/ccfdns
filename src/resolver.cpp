@@ -1512,9 +1512,6 @@ namespace aDNS
 
     auto public_key_digest = ccf::crypto::sha256(public_key->public_key_der());
 
-    small_vector<uint16_t> public_key_sv(
-      public_key_digest.size(), public_key_digest.data());
-
     ccf::QuoteInfo attestation;
     ccf::pal::PlatformAttestationReportData report_data = {};
     ccf::pal::UVMEndorsements uvm_endorsements_descriptor = {};
@@ -1576,10 +1573,9 @@ namespace aDNS
         report_data.data.end(),
         [](uint8_t b) { return b == 0; }))
     {
-      throw std::runtime_error(
-        fmt::format(
-          "ADNS: Attestation report data for {} is not zeroed after key hash",
-          std::string(service_name)));
+      throw std::runtime_error(fmt::format(
+        "ADNS: Attestation report data for {} is not zeroed after key hash",
+        std::string(service_name)));
     }
 
     Name service_name(phdr.cwt.iss);
@@ -1647,6 +1643,8 @@ namespace aDNS
     auto tlsa_name =
       Name("_" + phdr.cwt.svi.port) + Name(std::string("_") + prolow) + name;
 
+    small_vector<uint16_t> public_key_sv(
+      public_key_digest.size(), public_key_digest.data());
     ResourceRecord tlsa_rr = mk_rr(
       tlsa_name,
       Type::TLSA,

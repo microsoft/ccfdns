@@ -444,11 +444,11 @@ namespace aDNS
     {
       if (cnf.kty != 2)
       {
-        throw std::runtime_error("Unsupported key type, expected EC2");
+        throw std::runtime_error("Unsupported key type, expected EC2(2)");
       }
       if (cnf.crv != 1)
       {
-        throw std::runtime_error("Unsupported curve, expected P-256");
+        throw std::runtime_error("Unsupported curve, expected P-256(1)");
       }
       if (cnf.x.size() != 32 || cnf.y.size() != 32)
       {
