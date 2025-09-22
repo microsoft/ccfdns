@@ -1323,13 +1323,6 @@ namespace ccfdns
             ctx.rpc_ctx->get_request_body().size());
           Configure::Out out = {.registration_info = ccfdns->configure(in)};
 
-          auto log = nlohmann::json{
-            {"request", "/configure"}, {"input", in}, {"output", out}};
-
-          CCF_APP_INFO("CCFDNS: Out configuration");
-          ctx.rpc_ctx->set_claims_digest(ccf::ClaimsDigest::Digest(log.dump()));
-          CCF_APP_INFO("CCFDNS: Set claims digest");
-
           return ccf::make_success(out);
         }
         catch (std::exception& ex)
