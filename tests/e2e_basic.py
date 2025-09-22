@@ -672,8 +672,21 @@ def test_policy_registration(network, args):
     )
 
 
+def test_attestation(args):
+    """
+    Exercise attestation generation, and produce a sample attestation to be
+    saved to build artifacts for manual inspection and test purposes.
+    """
+    att = get_attestation(b"1234", args.enclave_platform, as_json=False)
+    with open(f"sample_{args.enclave_platform}_attestation.cbor", "wb") as f:
+        f.write(att)
+    assert len(att) > 0
+
+
 def run(args):
     """Run tests"""
+
+    test_attestation(args)
 
     adns_nw, _ = adns_service.run(
         args,

@@ -111,7 +111,7 @@ jobs:
             build/workspace/*/out
             build/workspace/*/err
             build/workspace/*/*.ledger/*
-            build/*.json
+            build/*.cbor
           if-no-files-found: ignore
         if: success() || failure()
 
@@ -182,6 +182,6 @@ jobs:
             build/workspace/*/out
             build/workspace/*/err
             build/workspace/*/*.ledger/*
-            build/*.json
+            build/*.cbor
           if-no-files-found: ignore
         if: success() || failure()
