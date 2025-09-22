@@ -767,6 +767,7 @@ namespace aDNS
 
     RFC4034::DNSKEYRR dnskey_rr =
       add_dnskey(origin, class_, new_zsk_pk, key_signing);
+
     auto new_zsk_tag = get_key_tag(dnskey_rr.rdata);
 
     CCF_APP_DEBUG(
@@ -785,7 +786,7 @@ namespace aDNS
     on_new_signing_key(
       origin,
       new_zsk_tag,
-      new_zsk->private_key_pem(),
+      new_zsk,
       configuration.use_key_signing_key && key_signing);
 
     return std::make_pair(new_zsk, new_zsk_tag);

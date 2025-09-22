@@ -132,38 +132,6 @@ namespace
 
 namespace ccfdns
 {
-  using namespace ccf::indexing::strategies;
-
-  class LastWriteTxIDByKey : public VisitEachEntryInMap
-  {
-  public:
-    LastWriteTxIDByKey(const std::string& map_name) :
-      VisitEachEntryInMap(map_name, "TxIDByKey")
-    {}
-
-    virtual void visit_entry(
-      const ccf::TxID& txid,
-      const ccf::ByteVector& k,
-      const ccf::ByteVector& v) override
-    {
-      std::lock_guard<ccf::pal::Mutex> guard(lock);
-      txids_by_key[k] = txid;
-    }
-
-    std::optional<ccf::TxID> last_write(const ccf::ByteVector& k)
-    {
-      auto it = txids_by_key.find(k);
-      if (it == txids_by_key.end())
-        return std::nullopt;
-      else
-        return it->second;
-    }
-
-  protected:
-    ccf::pal::Mutex lock;
-    std::unordered_map<ccf::ByteVector, ccf::TxID> txids_by_key;
-  };
-
   class CCFDNS : public Resolver
   {
   public:
@@ -314,7 +282,6 @@ namespace ccfdns
         static_cast<uint16_t>(RFC3596::Type::AAAA)) // skip
                                                     // AAAA-fragmented
                                                     // payloads
-        // CCF_APP_TRACE("CCFDNS: Add: {}", string_from_resource_record(rr));
 
         if (!origin.is_absolute())
           throw std::runtime_error("origin not absolute");
@@ -521,34 +488,29 @@ namespace ccfdns
       check_context();
 
       auto origin_lowered = origin.lowered();
-      auto table = rotx().ro<PrivateDNSKeys>(private_dnskey_table_name);
+
+      auto table = key_signing ?
+        rotx().ro<PrivateDNSKey>(key_signing_key_table) :
+        rotx().ro<PrivateDNSKey>(zone_signing_key_table);
       if (!table)
         return {};
-      auto key_maps = table->get(origin_lowered);
-      if (key_maps)
+
+      auto value = table->get(origin_lowered);
+      if (value)
       {
-        auto& key_map = key_signing ? key_maps->key_signing_keys :
-                                      key_maps->zone_signing_keys;
-        auto kit = key_map.find(tag);
-        if (kit != key_map.end())
+        auto kp = ccf::crypto::make_key_pair(value->key);
+        auto coord = kp->coordinates();
+        if (coord.x.size() + coord.y.size() == public_key.size())
         {
-          for (const auto& pem : kit->second)
-          {
-            auto kp = ccf::crypto::make_key_pair(pem);
-            auto coord = kp->coordinates();
-            if (coord.x.size() + coord.y.size() == public_key.size())
-            {
-              bool matches = true;
-              for (size_t i = 0; i < coord.x.size() && matches; i++)
-                if (public_key[i] != coord.x[i])
-                  matches = false;
-              for (size_t i = 0; i < coord.y.size() && matches; i++)
-                if (public_key[coord.x.size() + i] != coord.y[i])
-                  matches = false;
-              if (matches)
-                return pem;
-            }
-          }
+          bool matches = true;
+          for (size_t i = 0; i < coord.x.size() && matches; i++)
+            if (public_key[i] != coord.x[i])
+              matches = false;
+          for (size_t i = 0; i < coord.y.size() && matches; i++)
+            if (public_key[coord.x.size() + i] != coord.y[i])
+              matches = false;
+          if (matches)
+            return value->key;
         }
       }
 
@@ -559,26 +521,25 @@ namespace ccfdns
     virtual void on_new_signing_key(
       const Name& origin,
       uint16_t tag,
-      const ccf::crypto::Pem& pem,
+      const ccf::crypto::KeyPairPtr& kp,
       bool key_signing) override
     {
       check_context();
+      auto pem = kp->private_key_pem();
 
       auto origin_lowered = origin.lowered();
-      auto table = rwtx().rw<PrivateDNSKeys>(private_dnskey_table_name);
+      auto table = key_signing ?
+        rwtx().rw<PrivateDNSKey>(key_signing_key_table) :
+        rwtx().rw<PrivateDNSKey>(zone_signing_key_table);
       if (!table)
         throw std::runtime_error("could not get keys table");
-      auto value = table->get(origin_lowered);
-      if (!value)
-        value = ZoneKeyInfo();
-      auto& key_map =
-        key_signing ? value->key_signing_keys : value->zone_signing_keys;
-      auto kit = key_map.find(tag);
-      if (kit == key_map.end())
-        key_map[tag] = {pem};
-      else
-        kit->second.push_back(pem);
-      table->put(origin_lowered, *value);
+
+      table->put(origin_lowered, KeyInfo{tag, pem});
+      if (key_signing)
+      {
+        ctx->rpc_ctx->set_claims_digest(
+          ccf::ClaimsDigest::Digest(kp->public_key_der()));
+      }
     }
 
     virtual std::string service_definition_auth() const override
@@ -850,34 +811,6 @@ namespace ccfdns
       return reginfo;
     }
 
-    std::string configuration_receipt(
-      ccf::endpoints::ReadOnlyEndpointContext& ctx_,
-      ccf::historical::StatePtr historical_state)
-    {
-      std::string r;
-      auto historical_tx = historical_state->store->create_read_only_tx();
-      auto tbl = historical_tx.template ro<TConfigurationTable>(
-        configuration_table_name);
-      if (!tbl)
-        throw std::runtime_error("configuration table not found");
-      const auto cfg = tbl->get();
-      if (!cfg)
-        throw std::runtime_error("configuration not found");
-      const auto txid = tbl->get_version_of_previous_write();
-      if (!txid)
-        throw std::runtime_error("configuration TX ID not found");
-      auto receipt = ccf::describe_receipt_v1(*historical_state->receipt);
-
-      CCF_APP_INFO(
-        "CCFDNS: Configuration receipt size: {}", receipt.dump().size());
-
-      nlohmann::json j;
-      j["txid"] = txid.value();
-      j["configuration"] = cfg.value();
-      j["receipt"] = receipt;
-      return j.dump();
-    }
-
     virtual void save_service_registration_request(
       const Name& name, const std::vector<uint8_t>& rr) override
     {
@@ -890,82 +823,6 @@ namespace ccfdns
           "could not access service registration request table");
 
       rrtbl->put(name, rr);
-    }
-
-    std::string dump()
-    {
-      const auto& cfg = get_configuration();
-      std::string r;
-
-      auto origins = rotx().ro<CCFDNS::Origins>(origins_table_name);
-      origins->foreach([this, &r, &cfg](const Name& origin) {
-        r += "$ORIGIN " + (std::string)origin + "\n";
-        r += "$TTL " + std::to_string(cfg.default_ttl) + "\n\n";
-
-        for (const auto& [_, cls] : get_supported_classes())
-          for (const auto& [__, type] : get_supported_types())
-          {
-            auto names = rotx().ro<CCFDNS::Names>(names_table_name(origin));
-            names->foreach([this, &r, &origin, c = cls, t = type](
-                             const Name& name) {
-              auto records = rotx().ro<Records>(table_name(origin, name, c, t));
-              records->foreach([&r](const ResourceRecord& rr) {
-                auto tmp = string_from_resource_record(rr) + "\n";
-                if (static_cast<aDNS::Type>(rr.type) == aDNS::Type::NSEC3)
-                  r += std::regex_replace(tmp, std::regex("ATTEST"), "");
-                else if (static_cast<aDNS::Type>(rr.type) == aDNS::Type::RRSIG)
-                {
-                  auto type2str = [](const auto& x) {
-                    return string_from_type(static_cast<aDNS::Type>(x));
-                  };
-                  RFC4034::RRSIG sd(rr.rdata, type2str);
-                  r += tmp;
-                }
-                else
-                  r += tmp;
-                return true;
-              });
-              return true;
-            });
-          }
-        r += "\n";
-        return true;
-      });
-
-      return r;
-    }
-
-    virtual void save_endorsements(
-      const Name& service_name,
-      const std::vector<uint8_t>& endorsements) override
-    {
-      check_context();
-
-      CCF_APP_INFO(
-        "CCFDNS: Saving endorsements for {} ({} bytes)",
-        std::string(service_name),
-        endorsements.size());
-
-      auto tbl =
-        rwtx().template rw<CCFDNS::Endorsements>(endorsements_table_name);
-      if (!tbl)
-        throw std::runtime_error("could not access endorsements table");
-      tbl->put(service_name, endorsements);
-    }
-
-    virtual std::vector<uint8_t> get_endorsements(
-      const Name& service_name) override
-    {
-      check_context();
-
-      auto tbl =
-        rotx().template ro<CCFDNS::Endorsements>(endorsements_table_name);
-      if (!tbl)
-        throw std::runtime_error("could not access endorsements table");
-      auto r = tbl->get(service_name);
-      if (!r)
-        throw std::runtime_error("no endorsements found for service");
-      return *r;
     }
 
   protected:
@@ -1492,78 +1349,6 @@ namespace ccfdns
         .set_forwarding_required(ccf::endpoints::ForwardingRequired::Always)
         .install();
 
-      auto configuration_receipt =
-        [this](
-          ccf::endpoints::ReadOnlyEndpointContext& ctx,
-          ccf::historical::StatePtr historical_state) {
-          try
-          {
-            auto r = ccfdns->configuration_receipt(ctx, historical_state);
-            ctx.rpc_ctx->set_response_body(std::move(r));
-          }
-          catch (std::exception& ex)
-          {
-            ctx.rpc_ctx->set_response_body(ex.what());
-            ctx.rpc_ctx->set_response_status(HTTP_STATUS_BAD_REQUEST);
-          }
-        };
-
-      auto config_txid_extractor =
-        [this](ccf::endpoints::ReadOnlyEndpointContext& ctx)
-        -> std::optional<ccf::TxID> {
-        auto tbl = ctx.tx.ro<CCFDNS::TConfigurationTable>(
-          ccfdns->configuration_table_name);
-        if (!tbl)
-          throw std::runtime_error("configuration table not found");
-        const auto cfg = tbl->get();
-        if (!cfg)
-          throw std::runtime_error("configuration not found");
-        auto version = tbl->get_version_of_previous_write();
-        if (!version || *version == ccf::kv::NoVersion)
-          return std::nullopt;
-        ccf::View view;
-        if (get_view_for_seqno_v1(*version, view) != ccf::ApiResult::OK)
-          return std::nullopt;
-        return ccf::TxID{.view = view, .seqno = *version};
-      };
-
-      make_read_only_endpoint(
-        "/configuration-receipt",
-        HTTP_GET,
-        ccf::historical::read_only_adapter_v4(
-          configuration_receipt,
-          context,
-          is_tx_committed,
-          config_txid_extractor),
-        ccf::no_auth_required)
-        .set_auto_schema<void, std::string>()
-        .set_forwarding_required(ccf::endpoints::ForwardingRequired::Never)
-        .install();
-
-      auto add = [this](auto& ctx, nlohmann::json&& params) {
-        try
-        {
-          ContextContext cc(ccfdns, ctx);
-          const auto in = params.get<AddRecord::In>();
-          ccfdns->add(in.origin, in.record);
-          return ccf::make_success();
-        }
-        catch (std::exception& ex)
-        {
-          return ccf::make_error(
-            HTTP_STATUS_BAD_REQUEST, ccf::errors::InternalError, ex.what());
-        }
-      };
-
-      make_endpoint(
-        "/internal/add",
-        HTTP_POST,
-        ccf::json_adapter(add),
-        {std::make_shared<ccf::MemberCertAuthnPolicy>()})
-        .set_openapi_hidden(true)
-        .set_forwarding_required(ccf::endpoints::ForwardingRequired::Always)
-        .install();
-
       auto dns_query = [this](auto& ctx_) {
         try
         {
@@ -1649,102 +1434,6 @@ namespace ccfdns
       make_endpoint(
         "/register-service", HTTP_POST, register_service, ccf::no_auth_required)
         .set_forwarding_required(ccf::endpoints::ForwardingRequired::Always)
-        .install();
-
-      auto resign = [this](auto& ctx, nlohmann::json&& params) {
-        try
-        {
-          ContextContext cc(ccfdns, ctx);
-          const auto in = params.get<Resign::In>();
-          ccfdns->sign(in.origin);
-          return ccf::make_success();
-        }
-        catch (std::exception& ex)
-        {
-          return ccf::make_error(
-            HTTP_STATUS_BAD_REQUEST, ccf::errors::InternalError, ex.what());
-        }
-      };
-
-      make_endpoint(
-        "/resign",
-        HTTP_POST,
-        ccf::json_adapter(resign),
-        {std::make_shared<ccf::UserCertAuthnPolicy>()})
-        .set_auto_schema<Resign::In, Resign::Out>()
-        .set_forwarding_required(ccf::endpoints::ForwardingRequired::Never)
-        .install();
-
-      auto dump = [this](auto& ctx) {
-        try
-        {
-          ContextContext cc(ccfdns, ctx);
-          ctx.rpc_ctx->set_response_header(
-            ccf::http::headers::CONTENT_TYPE,
-            ccf::http::headervalues::contenttype::TEXT);
-          ctx.rpc_ctx->set_response_body(ccfdns->dump());
-          ctx.rpc_ctx->set_response_status(HTTP_STATUS_OK);
-        }
-        catch (std::exception& ex)
-        {
-          ctx.rpc_ctx->set_response_body(ex.what());
-          ctx.rpc_ctx->set_response_status(HTTP_STATUS_INTERNAL_SERVER_ERROR);
-        }
-      };
-
-      make_endpoint("/dump", HTTP_GET, dump, ccf::no_auth_required)
-        .set_forwarding_required(ccf::endpoints::ForwardingRequired::Never)
-        .install();
-
-      auto registration_policy = [this](auto& ctx) {
-        try
-        {
-          ContextContext cc(ccfdns, ctx);
-          ctx.rpc_ctx->set_response_header(
-            ccf::http::headers::CONTENT_TYPE,
-            ccf::http::headervalues::contenttype::TEXT);
-          ctx.rpc_ctx->set_response_body(ccfdns->service_definition_auth());
-          ctx.rpc_ctx->set_response_status(HTTP_STATUS_OK);
-        }
-        catch (std::exception& ex)
-        {
-          ctx.rpc_ctx->set_response_body(ex.what());
-          ctx.rpc_ctx->set_response_status(HTTP_STATUS_INTERNAL_SERVER_ERROR);
-        }
-      };
-
-      make_endpoint(
-        "/registration-policy",
-        HTTP_GET,
-        registration_policy,
-        ccf::no_auth_required)
-        .set_forwarding_required(ccf::endpoints::ForwardingRequired::Never)
-        .install();
-
-      auto get_endorsements = [this](auto& ctx) {
-        try
-        {
-          ContextContext cc(ccfdns, ctx);
-          const auto parsed_query =
-            ccf::http::parse_query(ctx.rpc_ctx->get_request_query());
-          Name service_name =
-            Name(get_param(parsed_query, "service_name")).terminated();
-          ctx.rpc_ctx->set_response_header(
-            ccf::http::headers::CONTENT_TYPE, "application/zlib");
-          ctx.rpc_ctx->set_response_body(
-            ccfdns->get_endorsements(service_name));
-          ctx.rpc_ctx->set_response_status(HTTP_STATUS_OK);
-        }
-        catch (std::exception& ex)
-        {
-          ctx.rpc_ctx->set_response_body(ex.what());
-          ctx.rpc_ctx->set_response_status(HTTP_STATUS_INTERNAL_SERVER_ERROR);
-        }
-      };
-
-      make_endpoint(
-        "/endorsements", HTTP_GET, get_endorsements, ccf::no_auth_required)
-        .set_forwarding_required(ccf::endpoints::ForwardingRequired::Never)
         .install();
 
       auto set_service_definition = [this](auto& ctx, nlohmann::json&& params) {
@@ -1836,6 +1525,55 @@ namespace ccfdns
         .set_auto_schema<
           SetPlatformDefinition::In,
           SetPlatformDefinition::Out>()
+        .set_forwarding_required(ccf::endpoints::ForwardingRequired::Never)
+        .install();
+
+      auto ksk_txid_extractor =
+        [this](ccf::endpoints::ReadOnlyEndpointContext& ctx)
+        -> std::optional<ccf::TxID> {
+        auto tbl = ctx.tx.ro<PrivateDNSKey>(key_signing_key_table);
+        if (!tbl)
+          throw std::runtime_error("KSK table not found");
+
+        auto req = ctx.rpc_ctx->get_request_body();
+        nlohmann::json j = nlohmann::json::parse(req);
+
+        auto zone = j.value("zone", "");
+        auto version = tbl->get_version_of_previous_write(RFC1035::Name(zone));
+
+        if (!version || *version == ccf::kv::NoVersion)
+          return std::nullopt;
+
+        ccf::View view;
+        if (get_view_for_seqno_v1(*version, view) != ccf::ApiResult::OK)
+          return std::nullopt;
+
+        return ccf::TxID{.view = view, .seqno = *version};
+      };
+
+      auto get_ksk_receipt = [this](
+                               ccf::endpoints::ReadOnlyEndpointContext& ctx,
+                               ccf::historical::StatePtr historical_state) {
+        try
+        {
+          auto historical_tx = historical_state->store->create_read_only_tx();
+          auto receipt = ccf::describe_receipt_v1(*historical_state->receipt);
+          ctx.rpc_ctx->set_response_body(receipt.dump());
+        }
+        catch (std::exception& ex)
+        {
+          ctx.rpc_ctx->set_response_body(ex.what());
+          ctx.rpc_ctx->set_response_status(HTTP_STATUS_BAD_REQUEST);
+        }
+      };
+
+      make_read_only_endpoint(
+        "/ksk-receipt",
+        HTTP_GET,
+        ccf::historical::read_only_adapter_v4(
+          get_ksk_receipt, context, is_tx_committed, ksk_txid_extractor),
+        ccf::no_auth_required)
+        .set_auto_schema<std::string, std::string>()
         .set_forwarding_required(ccf::endpoints::ForwardingRequired::Never)
         .install();
     }
