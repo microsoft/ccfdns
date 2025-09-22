@@ -60,7 +60,7 @@ jobs:
           set -ex
           gpg --import /etc/pki/rpm-gpg/MICROSOFT-RPM-GPG-KEY
           tdnf -y update
-          tdnf -y install ca-certificates git wget libuv libcurl
+          tdnf -y install ca-certificates git wget libuv-devel libcurl-devel
 
       - uses: actions/checkout@v4
         with:
@@ -126,7 +126,7 @@ jobs:
           set -ex
           gpg --import /etc/pki/rpm-gpg/MICROSOFT-RPM-GPG-KEY
           tdnf -y update
-          tdnf -y install ca-certificates git wget libuv libcurl
+          tdnf -y install ca-certificates git wget libuv-devel libcurl-devel
 
       - uses: actions/checkout@v4
         with:
