@@ -2,14 +2,22 @@
 // Licensed under the Apache 2.0 License.
 
 #include "base32.h"
+#include "cose.h"
 #include "formatting.h"
 #include "resolver.h"
 #include "rfc1035.h"
 #include "rfc4034.h"
 
+#include <ccf/_private/crypto/openssl/hash.h>
 #include <ccf/crypto/ecdsa.h>
 #include <ccf/crypto/openssl/openssl_wrappers.h>
+#include <ccf/crypto/sha256.h>
+#include <ccf/ds/json.h>
 #include <ccf/ds/logger.h>
+#include <ccf/ds/quote_info.h>
+#include <ccf/pal/snp_ioctl.h>
+#include <openssl/evp.h>
+#include <t_cose/t_cose_sign1_sign.h>
 
 #define DOCTEST_CONFIG_IMPLEMENT
 #include <doctest/doctest.h>
@@ -21,12 +29,48 @@ using namespace ccf::crypto::OpenSSL;
 
 static uint32_t default_ttl = 86400;
 
-std::string dummy_attestation =
-  R"({"source": "OE", "evidence": "none", "endorsements": "none"})";
+static std::string DEFAULT_PERMISSIVE_RELYING_PARTY_POLICY = R"(
+package policy
+default allow := true
+)";
 
 auto type2str = [](const auto& x) {
   return aDNS::string_from_type(static_cast<aDNS::Type>(x));
 };
+
+std::string get_attestation_type()
+{
+#if defined(PLATFORM_VIRTUAL)
+  return "Insecure_Virtual";
+#elif defined(PLATFORM_SNP)
+  return "AMD_SEV_SNP_v1";
+#else
+  throw std::exception("Bad platform");
+#endif
+}
+
+static std::vector<uint8_t> slurp_file(const std::string& file)
+{
+  std::ifstream f(file, std::ios::binary | std::ios::ate);
+  assert(f);
+
+  auto size = f.tellg();
+  f.seekg(0, std::ios::beg);
+
+  std::vector<uint8_t> data(size);
+  f.read((char*)data.data(), size);
+
+  std::cout << "Read " << size << " bytes from file: " << file << std::endl;
+
+  assert(f);
+  return data;
+}
+
+static std::string slurp_file_string(const std::string& file)
+{
+  auto v = slurp_file(file);
+  return {v.begin(), v.end()};
+}
 
 class TestResolver : public Resolver
 {
@@ -41,17 +85,29 @@ public:
     RFC4034::CanonicalNameOrdering>
     zones;
   std::set<Name, RFC4034::CanonicalNameOrdering> origins;
-  std::set<Name, RFC4034::CanonicalNameOrdering> delegated_zones;
 
   std::map<Name, ccf::crypto::Pem, RFC4034::CanonicalNameOrdering>
     key_signing_keys;
   std::map<Name, ccf::crypto::Pem, RFC4034::CanonicalNameOrdering>
     zone_signing_keys;
 
-  std::string service_registration_policy_str;
-  std::string delegation_policy_str;
+  std::string service_definition_auth_str = R"(
+package policy
+default allow := true
+)";
+
+  std::string platform_definition_auth_str = R"(
+package policy
+default allow := true
+)";
+
+  std::map<std::string, std::string> service_definition_str;
+
+  std::map<std::string, std::string> platform_definition_str;
 
   Resolver::Configuration configuration;
+
+  ccf::crypto::KeyPairPtr service_key{};
 
   virtual Configuration get_configuration() const override
   {
@@ -158,20 +214,15 @@ public:
     return origins.contains(origin.lowered());
   }
 
-  virtual bool is_delegated(const Name& origin, const Name& name) const override
-  {
-    return delegated_zones.contains(name.lowered());
-  }
-
   virtual ccf::crypto::Pem get_private_key(
     const Name& origin,
     uint16_t tag,
     const small_vector<uint16_t>& public_key,
     bool key_signing) override
   {
-    auto configuration = get_configuration();
+    auto conf = get_configuration();
 
-    if (configuration.use_key_signing_key && key_signing)
+    if (conf.use_key_signing_key && key_signing)
       return key_signing_keys[origin];
     else
       return zone_signing_keys[origin];
@@ -183,17 +234,13 @@ public:
     const ccf::crypto::Pem& pem,
     bool key_signing) override
   {
-    auto configuration = get_configuration();
+    auto conf = get_configuration();
 
-    if (configuration.use_key_signing_key && key_signing)
+    if (conf.use_key_signing_key && key_signing)
       key_signing_keys[origin] = pem;
     else
       zone_signing_keys[origin] = pem;
   }
-
-  void generate_leaf_certificate(
-    const Name& name, const std::vector<uint8_t>& csr = {}) override
-  {}
 
   virtual void show(const Name& origin) const
   {
@@ -208,48 +255,60 @@ public:
       CCF_APP_DEBUG("<empty>");
   }
 
-  virtual std::string service_registration_policy() const override
+  virtual std::string service_definition_auth() const override
   {
-    return service_registration_policy_str;
+    return service_definition_auth_str;
   }
 
-  virtual void set_service_registration_policy(
+  virtual void set_service_definition_auth(
     const std::string& new_policy) override
   {
-    service_registration_policy_str = new_policy;
+    service_definition_auth_str = new_policy;
   }
 
-  virtual bool evaluate_service_registration_policy(
-    const std::string& data) const override
+  virtual std::string platform_definition_auth() const override
   {
-    return true;
+    return platform_definition_auth_str;
   }
 
-  virtual std::vector<std::string> delegation_policy() const override
+  virtual void set_platform_definition_auth(
+    const std::string& new_policy) override
   {
-    return {delegation_policy_str};
+    platform_definition_auth_str = new_policy;
   }
 
-  virtual void set_delegation_policy(const std::string& new_policy) override
+  virtual std::string service_definition(
+    const std::string& service_name) const override
   {
-    delegation_policy_str = new_policy;
+    auto it = service_definition_str.find(service_name);
+    if (it != service_definition_str.end())
+    {
+      return it->second;
+    }
+    return DEFAULT_PERMISSIVE_RELYING_PARTY_POLICY;
   }
 
-  virtual bool evaluate_delegation_policy(
-    const std::string& data) const override
+  virtual void set_service_definition(
+    const std::string& service_name, const std::string& new_policy) override
   {
-    return true;
+    service_definition_str[service_name] = new_policy;
   }
 
-  virtual void set_service_certificate(
-    const std::string& service_dns_name,
-    const std::string& certificate_pem) override
-  {}
-
-  virtual std::string get_service_certificate(
-    const std::string& service_dns_name) override
+  virtual std::string platform_definition(
+    const std::string& platform) const override
   {
-    return "";
+    auto it = platform_definition_str.find(platform);
+    if (it != platform_definition_str.end())
+    {
+      return it->second;
+    }
+    return DEFAULT_PERMISSIVE_RELYING_PARTY_POLICY;
+  }
+
+  virtual void set_platform_definition(
+    const std::string& platform, const std::string& new_policy) override
+  {
+    platform_definition_str[platform] = new_policy;
   }
 
   uint32_t get_fresh_time() override
@@ -258,22 +317,197 @@ public:
   }
 
   virtual void save_service_registration_request(
-    const Name& name, const RegistrationRequest& rr) override
+    const Name& name, const std::vector<uint8_t>& rr) override
   {}
-
-  virtual void save_delegation_request(
-    const Name& name, const DelegationRequest& rr) override
-  {
-    delegated_zones.insert(name);
-  }
 
   virtual std::map<std::string, Resolver::NodeInfo> get_node_information()
     override
   {
-    std::map<std::string, Resolver::NodeInfo> r;
-    for (const auto& [id, addr] : configuration.node_addresses)
-      r[id] = {.address = addr, .attestation = dummy_attestation};
-    return r;
+    return {}; // not used in unittests
+  }
+
+  cose::Attestation get_dummy_attestation()
+  {
+    const std::string measurement_literal =
+      "Insecure hard-coded virtual measurement v1";
+    const std::string measurement = ccf::crypto::b64_from_raw(
+      (uint8_t*)measurement_literal.data(), measurement_literal.size());
+
+    auto key_der = get_service_key()->public_key_der();
+    auto key_digest = ccf::crypto::sha256(key_der);
+    auto report_data = ccf::crypto::b64_from_raw(key_digest);
+
+    nlohmann::json evidence_json;
+    evidence_json["measurement"] = measurement;
+    evidence_json["report_data"] = report_data;
+    auto evidence_str = evidence_json.dump();
+
+    return cose::Attestation{
+      .attestation = std::vector<uint8_t>(
+        evidence_str.data(), evidence_str.data() + evidence_str.size()),
+      .uvm_endorsements = {},
+      .endorsements = ""};
+  }
+
+  cose::Attestation get_snp_attestation()
+  {
+    auto key_der = get_service_key()->public_key_der();
+    auto key_digest = ccf::crypto::sha256(key_der);
+    assert(key_digest.size() == ccf::crypto::Sha256Hash::SIZE);
+    const std::span<const uint8_t, ccf::crypto::Sha256Hash::SIZE> as_span(
+      key_digest.data(), key_digest.data() + key_digest.size());
+    auto snp_attestation = ccf::pal::snp::get_attestation(
+      ccf::crypto::Sha256Hash::from_span(as_span));
+
+    // UVM_SECURITY_CONTEXT_DIR is set in cmake, so must be run via ctest (or
+    // ./tests.sh), or set it manually.
+    const std::string endorsements_path =
+      std::getenv("UVM_SECURITY_CONTEXT_DIR");
+    assert(!endorsements_path.empty());
+    auto endorsements =
+      slurp_file_string(endorsements_path + "/host-amd-cert-base64");
+    auto uvm_endorsements =
+      slurp_file_string(endorsements_path + "/reference-info-base64");
+
+    return cose::Attestation{
+      .attestation = snp_attestation->get_raw(),
+      .uvm_endorsements = ccf::crypto::raw_from_b64(uvm_endorsements),
+      .endorsements = endorsements};
+  }
+
+  cose::Attestation get_attestation()
+  {
+#if defined(PLATFORM_VIRTUAL)
+    return get_dummy_attestation();
+#elif defined(PLATFORM_SNP)
+    return get_snp_attestation();
+#else
+    throw std::exception("Bad platform");
+#endif
+  }
+
+  std::vector<uint8_t> create_cose_sign1(
+    const cose::CwtClaim& cwt_claims, ccf::crypto::KeyPairPtr key)
+  {
+    using namespace cose;
+
+    const auto buf_size = 1024 * 1024;
+    std::vector<uint8_t> underlying_buffer(buf_size);
+    q_useful_buf signed_cose_buffer{underlying_buffer.data(), buf_size};
+
+    QCBOREncodeContext cbor_encode;
+    QCBOREncode_Init(&cbor_encode, signed_cose_buffer);
+
+    t_cose_sign1_sign_ctx sign_ctx = {};
+    t_cose_sign1_sign_init(&sign_ctx, 0, T_COSE_ALGORITHM_ES256);
+
+    auto der_data = key->private_key_der();
+    const unsigned char* der_ptr = der_data.data();
+    EVP_PKEY* evp_key =
+      d2i_PrivateKey(EVP_PKEY_EC, nullptr, &der_ptr, der_data.size());
+    assert(evp_key != nullptr);
+
+    t_cose_key signing_key = {};
+    signing_key.crypto_lib = T_COSE_CRYPTO_LIB_OPENSSL;
+    signing_key.k.key_ptr = evp_key;
+    t_cose_sign1_set_signing_key(&sign_ctx, signing_key, NULL_Q_USEFUL_BUF_C);
+
+    // tag
+
+    QCBOREncode_AddTag(&cbor_encode, CBOR_TAG_COSE_SIGN1);
+    QCBOREncode_OpenArray(&cbor_encode);
+
+    // phdr
+
+    uint8_t protected_buffer[1024];
+    UsefulBuf protected_buf = {protected_buffer, sizeof(protected_buffer)};
+
+    QCBOREncode_BstrWrap(&cbor_encode);
+    QCBOREncode_OpenMap(&cbor_encode); // > phdr
+
+    QCBOREncode_AddInt64ToMapN(&cbor_encode, 1, sign_ctx.cose_algorithm_id);
+
+    QCBOREncode_OpenMapInMapN(&cbor_encode, CWT_CLAIMS_LABEL); // > phdr.cwt
+
+    QCBOREncode_AddTextToMapN(
+      &cbor_encode, CWT_ISS_LABEL, from_string(cwt_claims.iss));
+
+    QCBOREncode_OpenMapInMapN(&cbor_encode, CWT_CNF_LABEL); // > phdr.cwt.cnf
+    QCBOREncode_AddInt64ToMapN(&cbor_encode, CNF_KTY_LABEL, cwt_claims.cnf.kty);
+    QCBOREncode_AddInt64ToMapN(&cbor_encode, CNF_CRV_LABEL, cwt_claims.cnf.crv);
+    QCBOREncode_AddBytesToMapN(
+      &cbor_encode, CNF_X_LABEL, from_bytes(cwt_claims.cnf.x));
+    QCBOREncode_AddBytesToMapN(
+      &cbor_encode, CNF_Y_LABEL, from_bytes(cwt_claims.cnf.y));
+    QCBOREncode_CloseMap(&cbor_encode); // < phdr.cwt.cnf
+
+    QCBOREncode_AddTextToMapSZ(
+      &cbor_encode, CWT_ATT_NAME, from_string(cwt_claims.att));
+
+    QCBOREncode_OpenMapInMapSZ(&cbor_encode, CWT_SVI_NAME); // > phdr.cwt.svi
+    QCBOREncode_AddTextToMapSZ(
+      &cbor_encode, SVI_PORT_NAME, from_string(cwt_claims.svi.port));
+    QCBOREncode_AddTextToMapSZ(
+      &cbor_encode, SVI_PROTOCOL_NAME, from_string(cwt_claims.svi.protocol));
+    QCBOREncode_AddTextToMapSZ(
+      &cbor_encode, SVI_IPV4_NAME, from_string(cwt_claims.svi.ipv4));
+    QCBOREncode_CloseMap(&cbor_encode); // < phdr.cwt.svi
+
+    QCBOREncode_CloseMap(&cbor_encode); // < phdr.cwt
+
+    QCBOREncode_CloseMap(&cbor_encode); // < phdr
+    QCBOREncode_CloseBstrWrap2(
+      &cbor_encode, false, &sign_ctx.protected_parameters);
+
+    // uhdr
+
+    QCBOREncode_OpenMap(&cbor_encode);
+    QCBOREncode_CloseMap(&cbor_encode);
+
+    // payload (staple attestation)
+
+    auto attestation = get_attestation();
+    QCBOREncode_BstrWrap(&cbor_encode);
+    QCBOREncode_OpenMap(&cbor_encode); // > attestation
+    QCBOREncode_AddBytesToMapSZ(
+      &cbor_encode, cose::PLD_ATTESTATION, from_bytes(attestation.attestation));
+    QCBOREncode_AddBytesToMapSZ(
+      &cbor_encode,
+      cose::PLD_UVM_ENDORSEMENTS,
+      from_bytes(attestation.uvm_endorsements));
+    QCBOREncode_AddTextToMapSZ(
+      &cbor_encode,
+      cose::PLD_ENDORSEMENTS,
+      from_string(attestation.endorsements));
+    QCBOREncode_CloseMap(&cbor_encode); // < attestation
+
+    // signature
+
+    auto err = t_cose_sign1_encode_signature_aad_internal(
+      &sign_ctx, NULL_Q_USEFUL_BUF_C, NULL_Q_USEFUL_BUF_C, &cbor_encode);
+
+    assert(err == T_COSE_SUCCESS);
+
+    q_useful_buf_c signed_cose = {};
+    auto qerr = QCBOREncode_Finish(&cbor_encode, &signed_cose);
+    assert(qerr == QCBOR_SUCCESS);
+
+    // Memory address is said to match:
+    // github.com/laurencelundblade/QCBOR/blob/v1.4.1/inc/qcbor/qcbor_encode.h#L2190-L2191
+    assert(signed_cose.ptr == underlying_buffer.data());
+
+    underlying_buffer.resize(signed_cose.len);
+    underlying_buffer.shrink_to_fit();
+    return underlying_buffer;
+  }
+
+  ccf::crypto::KeyPairPtr get_service_key(bool refresh = false)
+  {
+    if (refresh || !service_key)
+    {
+      service_key = ccf::crypto::make_key_pair(ccf::crypto::CurveID::SECP256R1);
+    }
+    return service_key;
   }
 };
 
@@ -468,24 +702,50 @@ TEST_CASE("Basic lookups")
     RFC1035::Message msg = mk_question("wwwv6.example.com.", aDNS::QType::AAAA);
     auto response = s.reply(msg).message;
     REQUIRE(response.answers.size() > 0);
-    /* clang-format off */
     REQUIRE(
       response.answers[0].rdata ==
       small_vector<uint16_t>{
-        0xFE, 0xDC, 0xBA, 0x98, 0x76, 0x54, 0x32, 0x10, 0xFE, 0xDC, 0xBA, 0x98, 0x76, 0x54, 0x32, 0x10});
-    /* clang-format on */
+        0xFE,
+        0xDC,
+        0xBA,
+        0x98,
+        0x76,
+        0x54,
+        0x32,
+        0x10,
+        0xFE,
+        0xDC,
+        0xBA,
+        0x98,
+        0x76,
+        0x54,
+        0x32,
+        0x10});
   }
 
   {
     RFC1035::Message msg = mk_question("www.example.com.", aDNS::QType::AAAA);
     auto response = s.reply(msg).message;
     REQUIRE(response.answers.size() > 0);
-    /* clang-format off */
     REQUIRE(
       response.answers[0].rdata ==
       small_vector<uint16_t>{
-        0xFE, 0xDC, 0xBA, 0x98, 0x76, 0x54, 0x32, 0x10, 0xFE, 0xDC, 0xBA, 0x98, 0x76, 0x54, 0x32, 0x11});
-    /* clang-format on */
+        0xFE,
+        0xDC,
+        0xBA,
+        0x98,
+        0x76,
+        0x54,
+        0x32,
+        0x10,
+        0xFE,
+        0xDC,
+        0xBA,
+        0x98,
+        0x76,
+        0x54,
+        0x32,
+        0x11});
   }
 
   {
@@ -674,53 +934,41 @@ TEST_CASE("RRSIG tests")
   s.show(origin);
 }
 
-namespace ccf::crypto::OpenSSL
-{
-  // TODO impl this in CCF crypto interface
-  struct Unique_X509_REQ_DER
-    : public Unique_SSL_OBJECT<X509_REQ, X509_REQ_new, X509_REQ_free>
-  {
-    using Unique_SSL_OBJECT::Unique_SSL_OBJECT;
-    Unique_X509_REQ_DER(BIO* mem) :
-      Unique_SSL_OBJECT(d2i_X509_REQ_bio(mem, NULL), X509_REQ_free)
-    {}
-  };
-}
-
 TEST_CASE("Service registration")
 {
   TestResolver s;
 
   Resolver::Configuration cfg;
-  cfg = {
-    .origin = Name("example.com."),
-    .soa = "ns1.example.com. joe.example.com. 4 604800 86400 2419200 0",
-    .contact = {"joe@example.com"},
-    .service_ca = {.name = "myCA"},
-    .node_addresses =
-      {{"id",
-        Resolver::NodeAddress{
-          .name = Name("ns1.example.com."),
-          .ip = "127.0.0.1",
-          .protocol = "tcp",
-          .port = 53}}},
-  };
+  cfg.origin = Name("example.com.");
+  cfg.soa = "ns1.example.com. joe.example.com. 4 604800 86400 2419200 0";
+  cfg.node_addresses = {
+    {"id",
+     Resolver::NodeAddress{
+       .name = Name("ns1.example.com."),
+       .ip = "127.0.0.1",
+       .protocol = "tcp",
+       .port = 53}}};
   s.configure(cfg);
 
   Name service_name("service42.example.com.");
-  auto service_key =
-    ccf::crypto::make_key_pair(ccf::crypto::CurveID::SECP384R1);
+
   std::string url_name = service_name.unterminated();
 
-  RFC1035::A address("192.168.0.1");
+  const std::string address{"192.168.0.1"};
 
-  auto csr =
-    service_key->create_csr_der("CN=" + url_name, {{"alt." + url_name, false}});
+  const auto& xy = s.get_service_key()->coordinates();
+  cose::CnfClaim cnf{
+    .kty = 2, // EC2
+    .crv = 1, // ES256
+    .x = xy.x,
+    .y = xy.y};
+  cose::ServiceInfo svi{.port = "443", .protocol = "tcp", .ipv4 = address};
 
-  s.register_service(
-    {csr,
-     {"joe@example.com"},
-     {{"id", {{url_name, address, "tcp", 443}, dummy_attestation}}}});
+  cose::CwtClaim cwt_claims{
+    .iss = url_name, .cnf = cnf, .att = get_attestation_type(), .svi = svi};
+
+  auto rr = s.create_cose_sign1(cwt_claims, s.get_service_key());
+  s.register_service(rr);
 
   auto dnskey_rrs =
     s.resolve(cfg.origin, aDNS::QType::DNSKEY, aDNS::QClass::IN).answers;
@@ -730,96 +978,13 @@ TEST_CASE("Service registration")
     Name("_443._tcp") + service_name, aDNS::QType::TLSA, aDNS::QClass::IN);
   REQUIRE(RFC4034::verify_rrsigs(r.answers, dnskey_rrs, type2str));
 
-  // Not implemented yet
-  // r = s.resolve(service_name, aDNS::QType::ATTEST, aDNS::QClass::IN);
-  // REQUIRE(RFC4034::verify_rrsigs(r.answers, dnskey_rrs, type2str));
-
   r = s.resolve(service_name, aDNS::QType::A, aDNS::QClass::IN);
   REQUIRE(RFC4034::verify_rrsigs(r.answers, dnskey_rrs, type2str));
-
-  s.install_acme_response(
-    cfg.origin, service_name, {}, RFC1035::TXT("sometoken"));
-  auto challenge_name = Name("_acme-challenge") + service_name;
-  r = s.resolve(challenge_name, aDNS::QType::TXT, aDNS::QClass::IN);
-  REQUIRE(RFC4034::verify_rrsigs(r.answers, dnskey_rrs, type2str));
-}
-
-TEST_CASE("Delegation")
-{
-  TestResolver main, sub;
-
-  Resolver::Configuration main_cfg, sub_cfg;
-
-  main_cfg = {
-    .origin = Name("example.com."),
-    .soa = "ns1.example.com. joe.example.com. 4 604800 86400 2419200 0",
-    .contact = {"joe@example.com"},
-    .service_ca = {.name = "myCA"},
-    .node_addresses =
-      {{"id",
-        Resolver::NodeAddress{
-          .name = Name("ns1.example.com."),
-          .ip = "127.0.0.1",
-          .protocol = "tcp",
-          .port = 53}}},
-  };
-
-  auto main_reginfo = main.configure(main_cfg);
-
-  sub_cfg = {
-    .origin = Name("sub.example.com."),
-    .soa = "ns1.sub.example.com. joe.sub.example.com. 4 604800 86400 2419200 0",
-    .contact = {"joe@sub.example.com"},
-    .service_ca = {.name = "myCA"},
-    .node_addresses =
-      {{"id",
-        Resolver::NodeAddress{
-          .name = Name("ns1.sub.example.com."),
-          .ip = "127.0.1.1",
-          .protocol = "tcp",
-          .port = 53}}},
-  };
-
-  auto sub_reginfo = sub.configure(sub_cfg);
-
-  REQUIRE(sub_reginfo.dnskey_records != std::nullopt);
-  REQUIRE(!sub_reginfo.node_information.empty());
-
-  Resolver::DelegationRequest dr = {
-    .subdomain = sub_cfg.origin,
-    .csr = sub_reginfo.csr,
-    .contact = {"someone@sub.example.com"},
-    .node_information = sub_reginfo.node_information,
-    .dnskey_records = *sub_reginfo.dnskey_records};
-
-  main.register_delegation(dr);
-
-  auto dnskey_rrs =
-    main.resolve(main_cfg.origin, aDNS::QType::DNSKEY, aDNS::QClass::IN)
-      .answers;
-  REQUIRE(RFC4034::verify_rrsigs(dnskey_rrs, dnskey_rrs, type2str));
-
-  auto dnskey_sub_rrs =
-    sub.resolve(sub_cfg.origin, aDNS::QType::DNSKEY, aDNS::QClass::IN).answers;
-  REQUIRE(RFC4034::verify_rrsigs(dnskey_sub_rrs, dnskey_sub_rrs, type2str));
-
-  auto r = main.resolve(sub_cfg.origin, aDNS::QType::A, aDNS::QClass::IN);
-
-  REQUIRE(r.answers.size() == 0);
-  REQUIRE(r.authorities.size() == 3); // NS + DS + RRSIG (over DS)
-  REQUIRE(r.additionals.size() == 1); // Glue record
-  // Note: verify_rrsigs would fail here because the delegation record (NS) is
-  // not signed.
-
-  r = main.resolve(sub_cfg.origin, aDNS::QType::NS, aDNS::QClass::IN);
-  REQUIRE(r.answers.size() == 0); // _unsigned_ NS record
-  REQUIRE(r.authorities.size() == 3);
-  REQUIRE(r.additionals.size() == 1);
 }
 
 int main(int argc, char** argv)
 {
-  ccf::logger::config::default_init();
+  ccf::crypto::openssl_sha256_init();
   doctest::Context context;
   context.applyCommandLine(argc, argv);
   int res = context.run();

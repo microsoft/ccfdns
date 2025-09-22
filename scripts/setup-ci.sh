@@ -6,4 +6,9 @@ set -ex
 
 tdnf -y install zlib-devel  \
     clang-tools-extra  \
-    python-pip
+    glibc-devel  \
+    glibc-static  \
+    python3  \
+    python-pip  \
+    git  \
+    npm

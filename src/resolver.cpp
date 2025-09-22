@@ -3,18 +3,14 @@
 
 #include "resolver.h"
 
-#include "adns_types.h"
-#include "base32.h"
+#include "attestation.h"
 #include "compression.h"
-#include "formatting.h"
+#include "cose.h"
 #include "rfc1035.h"
-#include "rfc3596.h"
 #include "rfc4034.h"
-#include "rfc5155.h"
-#include "rfc6891.h"
-#include "rfc7671.h"
-#include "small_vector.h"
 
+#include <ccf/crypto/base64.h>
+#include <ccf/crypto/cose_verifier.h>
 #include <ccf/crypto/entropy.h>
 #include <ccf/crypto/hash_bytes.h>
 #include <ccf/crypto/key_pair.h>
@@ -22,47 +18,91 @@
 #include <ccf/crypto/openssl/openssl_wrappers.h>
 #include <ccf/crypto/rsa_key_pair.h>
 #include <ccf/crypto/san.h>
+#include <ccf/crypto/sha256.h>
 #include <ccf/crypto/sha256_hash.h>
 #include <ccf/crypto/verifier.h>
 #include <ccf/ds/logger.h>
 #include <cctype>
 #include <chrono>
-#include <cstddef>
 #include <map>
 #include <memory>
 #include <mutex>
-#include <openssl/bn.h>
-#include <openssl/core_names.h>
-#include <openssl/ec.h>
-#include <openssl/ecdsa.h>
-#include <openssl/engine.h>
-#include <openssl/err.h>
-#include <openssl/evp.h>
-#include <openssl/ossl_typ.h>
-#include <openssl/param_build.h>
-#include <openssl/pem.h>
-#include <openssl/types.h>
 #include <openssl/x509.h>
-#include <openssl/x509v3.h>
+#include <rego/rego.hh>
 #include <set>
-#include <sstream>
-#include <stdexcept>
 #include <string>
-#include <unordered_set>
 
 using namespace RFC1035;
 
-namespace ccf::crypto::OpenSSL
+namespace
 {
-  // TODO impl this in CCF crypto interface
-  struct Unique_X509_REQ_DER
-    : public Unique_SSL_OBJECT<X509_REQ, X509_REQ_new, X509_REQ_free>
+  void verify_service_definition(
+    const std::string& host_data, const std::string& policy)
   {
-    using Unique_SSL_OBJECT::Unique_SSL_OBJECT;
-    Unique_X509_REQ_DER(BIO* mem) :
-      Unique_SSL_OBJECT(d2i_X509_REQ_bio(mem, NULL), X509_REQ_free)
-    {}
-  };
+    nlohmann::json rego_input;
+    rego_input["host_data"] = host_data;
+
+    rego::Interpreter interpreter(true /* v1 compatible */);
+    auto rv = interpreter.add_module("policy", policy);
+
+    auto tv = interpreter.set_input_term(rego_input.dump());
+    if (tv != nullptr)
+    {
+      throw std::runtime_error(
+        fmt::format("Invalid policy input: {}", rego_input.dump()));
+    }
+
+    auto qv = interpreter.query("data.policy.allow");
+
+    if (qv == "{\"expressions\":[true]}")
+    {
+      return;
+    }
+    else if (qv == "{\"expressions\":[false]}")
+    {
+      throw std::runtime_error(
+        fmt::format("Policy not satisfied: {}", rego_input.dump()));
+    }
+    else
+    {
+      throw std::runtime_error(
+        fmt::format("Error while applying policy: {}", qv));
+    }
+  }
+
+  void verify_platform_definition(
+    const std::string& measurement, const std::string& policy)
+  {
+    nlohmann::json rego_input;
+    rego_input["measurement"] = measurement;
+
+    rego::Interpreter interpreter(true /* v1 compatible */);
+    auto rv = interpreter.add_module("policy", policy);
+
+    auto tv = interpreter.set_input_term(rego_input.dump());
+    if (tv != nullptr)
+    {
+      throw std::runtime_error(
+        fmt::format("Invalid policy input: {}", rego_input.dump()));
+    }
+
+    auto qv = interpreter.query("data.policy.allow");
+
+    if (qv == "{\"expressions\":[true]}")
+    {
+      return;
+    }
+    else if (qv == "{\"expressions\":[false]}")
+    {
+      throw std::runtime_error(
+        fmt::format("Policy not satisfied: {}", rego_input.dump()));
+    }
+    else
+    {
+      throw std::runtime_error(
+        fmt::format("Error while applying policy: {}", qv));
+    }
+  }
 }
 
 namespace aDNS
@@ -88,10 +128,6 @@ namespace aDNS
     {static_cast<uint16_t>(RFC5155::Type::NSEC3PARAM), Type::NSEC3PARAM},
 
     {static_cast<uint16_t>(RFC7671::Type::TLSA), Type::TLSA},
-
-    {static_cast<uint16_t>(RFC8659::Type::CAA), Type::CAA},
-
-    {static_cast<uint16_t>(aDNS::Types::Type::ATTEST), Type::ATTEST},
   };
 
   static const std::map<uint16_t, QType> supported_qtypes = {
@@ -125,8 +161,6 @@ namespace aDNS
     TFSF(RFC6891);
     TFSF(RFC5155);
     TFSF(RFC7671);
-    TFSF(RFC8659);
-    TFSF(aDNS::Types);
 
     throw std::runtime_error(
       fmt::format("unknown type string '{}'", type_string));
@@ -147,8 +181,6 @@ namespace aDNS
     SFTF(RFC6891);
     SFTF(RFC5155);
     SFTF(RFC7671);
-    SFTF(RFC8659);
-    SFTF(aDNS::Types);
 
     // https://datatracker.ietf.org/doc/html/rfc3597#section-5
     return "TYPE" + std::to_string(static_cast<uint16_t>(t));
@@ -215,38 +247,41 @@ namespace aDNS
   std::shared_ptr<RDataFormat> mk_rdata_format(
     Type t, const small_vector<uint16_t>& rdata)
   {
-    // clang-format off
     switch (t)
     {
-      case Type::A: return std::make_shared<RFC1035::A>(rdata); break;
-      case Type::NS: return std::make_shared<RFC1035::NS>(rdata); break;
-      case Type::CNAME: return std::make_shared<RFC1035::CNAME>(rdata); break;
-      case Type::SOA: return std::make_shared<RFC1035::SOA>(rdata); break;
-      case Type::MX: return std::make_shared<RFC1035::MX>(rdata); break;
-      case Type::TXT: return std::make_shared<RFC1035::TXT>(rdata); break;
-
-      case Type::AAAA: return std::make_shared<RFC3596::AAAA>(rdata); break;
-
-      case Type::DNSKEY: return std::make_shared<RFC4034::DNSKEY>(rdata); break;
-      case Type::DS: return std::make_shared<RFC4034::DS>(rdata); break;
-      case Type::RRSIG: return std::make_shared<RFC4034::RRSIG>(rdata, type2str); break;
-      case Type::NSEC: return std::make_shared<RFC4034::NSEC>(rdata, type2str); break;
-
-      case Type::NSEC3: return std::make_shared<RFC5155::NSEC3>(rdata, type2str); break;
-      case Type::NSEC3PARAM: return std::make_shared<RFC5155::NSEC3PARAM>(rdata); break;
-
-      case Type::OPT: return std::make_shared<RFC6891::OPT>(rdata); break;
-
-      case Type::TLSA: return std::make_shared<RFC7671::TLSA>(rdata); break;
-
-      case Type::CAA: return std::make_shared<RFC8659::CAA>(rdata); break;
-
-      // case Type::TLSKEY: return std::make_shared<aDNS::Types::TLSKEY>(rdata); break;
-      // case Type::ATTEST: return std::make_shared<aDNS::Types::ATTEST>(rdata); break;
-
-      default: throw std::runtime_error("unsupported rdata format");
+      case Type::A:
+        return std::make_shared<RFC1035::A>(rdata);
+      case Type::NS:
+        return std::make_shared<RFC1035::NS>(rdata);
+      case Type::CNAME:
+        return std::make_shared<RFC1035::CNAME>(rdata);
+      case Type::SOA:
+        return std::make_shared<RFC1035::SOA>(rdata);
+      case Type::MX:
+        return std::make_shared<RFC1035::MX>(rdata);
+      case Type::TXT:
+        return std::make_shared<RFC1035::TXT>(rdata);
+      case Type::AAAA:
+        return std::make_shared<RFC3596::AAAA>(rdata);
+      case Type::DNSKEY:
+        return std::make_shared<RFC4034::DNSKEY>(rdata);
+      case Type::DS:
+        return std::make_shared<RFC4034::DS>(rdata);
+      case Type::RRSIG:
+        return std::make_shared<RFC4034::RRSIG>(rdata, type2str);
+      case Type::NSEC:
+        return std::make_shared<RFC4034::NSEC>(rdata, type2str);
+      case Type::NSEC3:
+        return std::make_shared<RFC5155::NSEC3>(rdata, type2str);
+      case Type::NSEC3PARAM:
+        return std::make_shared<RFC5155::NSEC3PARAM>(rdata);
+      case Type::OPT:
+        return std::make_shared<RFC6891::OPT>(rdata);
+      case Type::TLSA:
+        return std::make_shared<RFC7671::TLSA>(rdata);
+      default:
+        throw std::runtime_error("unsupported rdata format");
     }
-    // clang-format on
   }
 
   std::string string_from_resource_record(const ResourceRecord& rr)
@@ -461,7 +496,6 @@ namespace aDNS
       qclass,
       qtype,
       [this, &origin, &records, &condition](const auto& rr) {
-        // CCF_APP_TRACE("ADNS:  - {}", string_from_resource_record(rr));
         if ((!condition || (*condition)(rr)))
           records.insert(rr);
         return true;
@@ -515,7 +549,7 @@ namespace aDNS
       return RFC1035::NO_ERROR;
     }
 
-    // TODO: This is wrong. We need to find the closest encloser. See
+    // This is wrong. We need to find the closest encloser. See
     // https://www.rfc-editor.org/rfc/rfc5155#section-7.2.1
 
     const auto& ns = get_ordered_names(origin, static_cast<Class>(qclass));
@@ -597,9 +631,6 @@ namespace aDNS
     r += find_records(origin, preceding, QType::NSEC, sclass);
     r += find_rrsigs(origin, preceding, sclass, Type::NSEC);
 
-    // TODO: Wildcard expansion. Since we don't support wildcards, we can't
-    // easily search for one.
-
     return RFC1035::ResponseCode::NAME_ERROR;
   }
 
@@ -635,20 +666,8 @@ namespace aDNS
 
     RFC4034::CanonicalRRSet records;
 
-    bool delegated = is_delegated(origin, qname);
-
-    if (!delegated || qtype == QType::DS)
-    {
-      records = find_records(origin, qname, qtype, qclass);
-      result.is_authoritative = true;
-    }
-    else if (qtype == QType::A || qtype == QType::AAAA)
-    {
-      // Direct query for glue records. Not sure queries of this form are
-      // standards compliant.
-      records = find_records(origin + Name("glue."), qname, qtype, qclass);
-      result.is_authoritative = true;
-    }
+    records = find_records(origin, qname, qtype, qclass);
+    result.is_authoritative = true;
 
     for (const auto& rr : records)
       if (rr.name == qname)
@@ -662,40 +681,13 @@ namespace aDNS
       auto cfg = get_configuration();
       auto& ra = result.authorities;
 
-      if (delegated)
-      {
-        for (Name n = qname; n != origin && !n.is_root(); n = n.parent())
-        {
-          // Delegation records
-          ra += find_records(origin, n, QType::NS, qclass);
+      ra += find_records(origin, origin, QType::SOA, qclass);
+      ra += find_rrsigs(origin, origin, qclass, Type::SOA);
 
-          ra += find_records(origin, n, QType::DS, qclass);
-          ra += find_rrsigs(origin, n, qclass, Type::DS);
-
-          // Glue records
-          for (const auto& rr : ra)
-            if (rr.type == static_cast<uint16_t>(Type::NS))
-            {
-              result.additionals += find_records(
-                origin + Name("glue."),
-                NS(rr.rdata).nsdname,
-                static_cast<QType>(Type::A),
-                qclass);
-            }
-        }
-
-        result.response_code = ResponseCode::NO_ERROR;
-      }
+      if (cfg.use_nsec3)
+        result.response_code = find_nsec3_records(origin, qclass, qname, ra);
       else
-      {
-        ra += find_records(origin, origin, QType::SOA, qclass);
-        ra += find_rrsigs(origin, origin, qclass, Type::SOA);
-
-        if (cfg.use_nsec3)
-          result.response_code = find_nsec3_records(origin, qclass, qname, ra);
-        else
-          result.response_code = find_nsec_records(origin, qclass, qname, ra);
-      }
+        result.response_code = find_nsec_records(origin, qclass, qname, ra);
     }
 
     CCF_APP_DEBUG(
@@ -769,12 +761,7 @@ namespace aDNS
   {
     const auto& configuration = get_configuration();
 
-    std::shared_ptr<ccf::crypto::KeyPair> new_zsk;
-
-    if (configuration.fixed_zsk)
-      new_zsk = ccf::crypto::make_key_pair(*configuration.fixed_zsk);
-    else
-      new_zsk = ccf::crypto::make_key_pair();
+    auto new_zsk = ccf::crypto::make_key_pair();
 
     small_vector<uint16_t> new_zsk_pk = encode_public_key(new_zsk);
 
@@ -826,7 +813,7 @@ namespace aDNS
       return add_new_signing_key(origin, class_, key_signing);
     else
     {
-      auto chosen_key = suitable_keys.begin(); // TODO: which key do we pick?
+      auto chosen_key = suitable_keys.begin();
 
       RFC4034::DNSKEY dnskey(chosen_key->rdata);
       uint16_t key_tag = get_key_tag(dnskey);
@@ -1249,34 +1236,6 @@ namespace aDNS
       rdata);
   }
 
-  void Resolver::add_caa_records(
-    const Name& origin,
-    const Name& name,
-    const std::string& ca_name,
-    const std::vector<std::string>& contact)
-  {
-    using namespace RFC8659;
-
-    add(
-      origin,
-      mk_rr(
-        name,
-        aDNS::Type::CAA,
-        Class::IN,
-        3600,
-        CAA(0, "issue", ca_name + "; validationmethods=dns-01")));
-
-    for (const auto& email : contact)
-      add(
-        origin,
-        mk_rr(
-          name,
-          aDNS::Type::CAA,
-          Class::IN,
-          3600,
-          CAA(0, "iodef", "mailto:" + email)));
-  }
-
   small_vector<uint8_t> Resolver::get_nsec3_salt(
     const Name& origin, aDNS::QClass class_)
   {
@@ -1338,21 +1297,9 @@ namespace aDNS
         r));
   }
 
-  void Resolver::add_attestation_records(
-    const Name& origin,
-    const Name& service_name,
-    const std::map<std::string, NodeInfo>& node_info)
-  {
-    // TODO add attestation records
-  }
-
   Resolver::RegistrationInformation Resolver::configure(
     const Configuration& cfg)
   {
-    // makes the configuration persistent and auditable
-    // TODO: which re-configurations should be authorized?
-    // ideally none, unless needed experimentally
-    // unclear how we support CCF reconfigurations
     set_configuration(cfg);
 
     update_nsec3_param(
@@ -1366,9 +1313,6 @@ namespace aDNS
     if (cfg.node_addresses.empty())
       throw std::runtime_error("missing node information");
 
-    if (cfg.contact.empty())
-      throw std::runtime_error("at least one contact is required");
-
     auto tls_key = get_tls_key();
 
     RegistrationInformation out;
@@ -1378,15 +1322,9 @@ namespace aDNS
 
     remove(cfg.origin, cfg.origin, Class::IN, Type::SOA);
     add(cfg.origin, mk_rr(cfg.origin, Type::SOA, Class::IN, 60, SOA(cfg.soa)));
-    // TODO review this TTL, it's possibly too low
-    // TODO check the provided primary name server against cfg.origin? See also
-    // node checks below.
 
     remove(cfg.origin, cfg.origin, Class::IN, Type::NS);
     remove(cfg.origin, cfg.origin, Class::IN, Type::A);
-    // TODO why would we keep any other records?
-
-    add_caa_records(cfg.origin, cfg.origin, cfg.service_ca.name, cfg.contact);
 
     for (const auto& [id, addr] : cfg.node_addresses)
     {
@@ -1407,12 +1345,7 @@ namespace aDNS
       add(
         cfg.origin,
         mk_rr(cfg.origin, Type::A, Class::IN, cfg.default_ttl, A(addr.ip)));
-
-      remove(cfg.origin, addr.name, Class::IN, Type::CAA);
-      add_caa_records(cfg.origin, addr.name, cfg.service_ca.name, cfg.contact);
     }
-
-    add_attestation_records(cfg.origin, cfg.origin, out.node_information);
 
     // signs initial records; this triggers the creation of fresh DNSKEY
     // records.
@@ -1471,8 +1404,6 @@ namespace aDNS
     bool compress,
     uint8_t records_per_name)
   {
-    // TODO: remove old records?
-
     std::vector<uint8_t> tmp;
 
     uint16_t rsz = rrdata.size();
@@ -1563,359 +1494,173 @@ namespace aDNS
       fmt::format("no suitable zone found for {}", std::string(name)));
   }
 
-  namespace
-  {
-    // TODO needs cleanup and wrappers to avoid memleaks (in CCF?..)
-    std::string get_common_name(const X509_NAME* name)
-    {
-      std::string r;
-      int i = X509_NAME_get_index_by_NID(name, NID_commonName, -1);
-      while (i != -1)
-      {
-        X509_NAME_ENTRY* entry = X509_NAME_get_entry(name, i);
-        ASN1_STRING* entry_string = X509_NAME_ENTRY_get_data(entry);
-        r += std::string(r.size() == 0 ? "" : " ") +
-          (char*)ASN1_STRING_get0_data(entry_string);
-        i = X509_NAME_get_index_by_NID(name, NID_commonName, i);
-      }
-      return r;
-    }
-  }
-
-  void Resolver::register_service(const RegistrationRequest& rr)
+  void Resolver::register_service(const std::vector<uint8_t>& request)
   {
     using namespace RFC7671;
-    using namespace RFC8659;
 
-    CCF_APP_INFO("ADNS: In register service\n");
+    auto [phdr, payload] = cose::decode_cose_request(request);
+    auto public_key = cose::reconstruct_public_key_from_cnf(phdr.cwt.cnf);
 
-    auto configuration = get_configuration();
+    CCF_APP_INFO(
+      "Reconstructed public key DER: {}",
+      ccf::ds::to_hex(public_key->public_key_der()));
 
-    std::string csrtxt(rr.csr.begin(), rr.csr.end());
-    CCF_APP_INFO("ADNS: Importing CSR: {}", csrtxt);
-    ccf::crypto::OpenSSL::Unique_BIO mem(rr.csr.data(), rr.csr.size());
-    ccf::crypto::OpenSSL::Unique_X509_REQ_DER req(mem);
+    auto cose_verifier =
+      ccf::crypto::make_cose_verifier_from_key(public_key->public_key_pem());
+    std::span<uint8_t> authned_content{};
+    cose_verifier->verify(request, authned_content);
 
-    auto public_key = X509_REQ_get0_pubkey(req);
-    ccf::crypto::OpenSSL::CHECK1(X509_REQ_verify(req, public_key));
+    auto public_key_digest = ccf::crypto::sha256(public_key->public_key_der());
 
-    auto subject_name = X509_REQ_get_subject_name(req);
-    ccf::crypto::OpenSSL::CHECKNULL(subject_name);
-    auto common_name = get_common_name(subject_name);
-    Name service_name(common_name);
+    ccf::QuoteInfo attestation;
+    ccf::pal::PlatformAttestationReportData report_data = {};
+    ccf::pal::UVMEndorsements uvm_endorsements_descriptor = {};
+    ccf::pal::PlatformAttestationMeasurement measurement = {};
+    HostData host_data = {};
+
+    auto [raw_attestation, uvm_endorsements, snp_endorsements] =
+      cose::parse_attestation(payload);
+
+    // Convert to CCF input format
+    nlohmann::json attestation_json;
+    attestation_json["quote"] = ccf::crypto::b64_from_raw(raw_attestation);
+    attestation_json["uvm_endorsements"] =
+      ccf::crypto::b64_from_raw(uvm_endorsements);
+    attestation_json["endorsements"] = snp_endorsements;
+    attestation_json["format"] = phdr.cwt.att;
+
+    try
+    {
+      attestation = parse_and_verify_attestation(
+        attestation_json.dump(),
+        report_data,
+        measurement,
+        uvm_endorsements_descriptor);
+
+      if (attestation.format != ccf::QuoteFormat::insecure_virtual)
+      {
+        host_data = retrieve_host_data(attestation);
+      }
+    }
+    catch (const std::exception& e)
+    {
+      throw std::runtime_error(
+        fmt::format("ADNS: Failed to verify attestation report: {}", e.what()));
+    }
+
+    // SNP report data is 64 bytes, key hash is 32, the rest has to be zeroed.
+    // Virtual report data is set to 32 bytes in CCF.
+    assert(
+      report_data.data.size() == ccf::pal::snp_attestation_report_data_size ||
+      report_data.data.size() ==
+        ccf::pal::virtual_attestation_report_data_size);
+
+    assert(public_key_digest.size() == 32);
+
+    if (!std::equal(
+          public_key_digest.begin(),
+          public_key_digest.end(),
+          report_data.data.begin()))
+    {
+      throw std::runtime_error(
+        "ADNS: Attestation report hash does not match public key");
+    }
+
+    if (
+      report_data.data.size() == ccf::pal::snp_attestation_report_data_size &&
+      !std::all_of(
+        report_data.data.begin() + public_key_digest.size(),
+        report_data.data.end(),
+        [](uint8_t b) { return b == 0; }))
+    {
+      throw std::runtime_error(
+        "ADNS: Attestation report data for is not zeroed after key hash");
+    }
+
+    Name service_name(phdr.cwt.iss);
 
     if (!service_name.is_absolute())
       service_name += std::vector<Label>{Label()};
 
     auto origin = find_zone(service_name);
 
-    // TODO origin == configuration.origin, or even service_name ==
-    // {label}.configuration.origin
-
     CCF_APP_INFO(
       "ADNS: Register service {} in {}",
       std::string(service_name),
       std::string(origin));
-    save_service_registration_request(service_name, rr);
 
-    bool policy_ok = false;
+    save_service_registration_request(service_name, request);
 
-    // TODO attestation check
-    policy_ok = true;
-
-    if (!policy_ok)
-      throw std::runtime_error("service registration policy evaluation failed");
-
-    ccf::crypto::OpenSSL::Unique_BIO buf{};
-    ccf::crypto::OpenSSL::CHECK1(i2d_PUBKEY_bio(buf, public_key));
-
-    BUF_MEM* bptr{nullptr};
-    BIO_get_mem_ptr(buf, &bptr);
-    small_vector<uint16_t> public_key_sv(bptr->length, (uint8_t*)bptr->data);
-
-    auto service_protocol =
-      rr.node_information.begin()->second.address.protocol;
-    auto service_port = rr.node_information.begin()->second.address.port;
-    bool protocol_port_same_forall = true;
-
-    for (const auto& [id, info] : rr.node_information)
+    if (attestation.format != ccf::QuoteFormat::insecure_virtual)
     {
-      const auto& name = info.address.name.terminated();
+      try
+      {
+        auto platform = nlohmann::json(phdr.cwt.att).dump();
+        verify_platform_definition(
+          ccf::ds::to_hex(measurement.data), platform_definition(platform));
 
-      if (
-        info.address.protocol != service_protocol ||
-        info.address.port != service_port)
-        protocol_port_same_forall = false;
-
-      if (!name.ends_with(service_name))
-        throw std::runtime_error(fmt::format(
-          "node name '{}' outside of service sub-zone '{}'",
-          std::string(name),
-          std::string(service_name)));
-
-      add(
-        origin,
-        mk_rr(
-          name,
-          Type::A,
-          Class::IN,
-          configuration.default_ttl,
-          RFC1035::A(info.address.ip)));
-
-      // A records for the service name, one for each node.
-      add(
-        origin,
-        mk_rr(
-          service_name,
-          Type::A,
-          Class::IN,
-          configuration.default_ttl,
-          RFC1035::A(info.address.ip)));
-
-      // TLSA RR for node
-      std::string prolow = info.address.protocol;
-      std::transform(prolow.begin(), prolow.end(), prolow.begin(), ::tolower);
-      auto tlsa_name = Name("_" + std::to_string(info.address.port)) +
-        Name(std::string("_") + prolow) + name;
-
-      ResourceRecord tlsa_rr = mk_rr(
-        tlsa_name,
-        Type::TLSA,
-        Class::IN,
-        configuration.default_ttl,
-        TLSA(
-          CertificateUsage::DANE_EE,
-          Selector::SPKI,
-          MatchingType::Full,
-          public_key_sv));
-
-      remove(origin, tlsa_name, Class::IN, Type::TLSA);
-      add(origin, tlsa_rr);
-
-      remove(origin, tlsa_name, Class::IN, Type::AAAA);
-      add_fragmented(origin, tlsa_name, tlsa_rr);
-
-      // CAA RR for node
-      remove(origin, name, Class::IN, Type::CAA);
-      add_caa_records(origin, name, configuration.service_ca.name, rr.contact);
+        verify_service_definition(
+          ccf::crypto::b64_from_raw(host_data.h.data(), host_data.h.size()),
+          service_definition(service_name));
+      }
+      catch (const std::exception& e)
+      {
+        throw std::runtime_error(
+          fmt::format("ADNS: Failed to register with error {}", e.what()));
+      }
     }
 
-    add_attestation_records(origin, service_name, rr.node_information);
-
-    if (protocol_port_same_forall)
-    {
-      // TLSA RR for service
-      std::string prolow = service_protocol;
-      std::transform(prolow.begin(), prolow.end(), prolow.begin(), ::tolower);
-      auto service_tlsa_name = Name("_" + std::to_string(service_port)) +
-        Name(std::string("_") + prolow) + service_name;
-
-      auto tlsa_rr = mk_rr(
-        service_tlsa_name,
-        Type::TLSA,
-        Class::IN,
-        configuration.default_ttl,
-        TLSA(
-          CertificateUsage::DANE_EE,
-          Selector::SPKI,
-          MatchingType::Full,
-          public_key_sv));
-
-      remove(origin, service_tlsa_name, Class::IN, Type::TLSA);
-      add(origin, tlsa_rr);
-
-      // Fragmented version
-      remove(origin, service_tlsa_name, Class::IN, Type::AAAA);
-      add_fragmented(origin, service_tlsa_name, tlsa_rr);
-    }
-
-    // CAA RR for service
-    remove(origin, service_name, Class::IN, Type::CAA);
-    add_caa_records(
-      origin, service_name, configuration.service_ca.name, rr.contact);
-
-    sign(origin);
-
-    // TODO save endorsements
-
-    // TODO: the code below should be modified to include both branches,
-    // depending on which type of service (frontend/backend) is being
-    // registered.
-    // TODO: for frontend service, we need to return an array of two
-    // certificates.
-
-    // flow for aDNS as root CA
-    CCF_APP_INFO("ADNS: Going to generate a leaf cert\n");
-    generate_leaf_certificate(service_name, rr.csr);
-
-    // flow for ACME-based CA
-    //  start_service_acme(origin, service_name, rr.csr, rr.contact);
-  }
-
-  void Resolver::install_acme_response(
-    const Name& origin,
-    const Name& name,
-    const std::vector<Name>& alternative_names,
-    const std::string& key_authorization)
-  {
     auto configuration = get_configuration();
 
-    if (!origin_exists(origin))
-      throw std::runtime_error("invalid origin");
+    const auto& name = service_name.terminated();
 
-    if (!name.ends_with(origin))
-      throw std::runtime_error("name outside of zone");
+    if (!name.ends_with(service_name))
+      throw std::runtime_error(fmt::format(
+        "node name '{}' outside of service sub-zone '{}'",
+        std::string(name),
+        std::string(service_name)));
 
     add(
       origin,
       mk_rr(
-        Name("_acme-challenge") + name,
-        Type::TXT,
+        name,
+        Type::A,
         Class::IN,
-        60,
-        TXT(key_authorization)));
+        configuration.default_ttl,
+        RFC1035::A(phdr.cwt.svi.ipv4)));
 
-    for (const auto& n : alternative_names)
-      if (n != name)
-        add(
-          origin,
-          mk_rr(
-            Name("_acme-challenge") + n,
-            Type::TXT,
-            Class::IN,
-            60,
-            TXT(key_authorization)));
+    add(
+      origin,
+      mk_rr(
+        service_name,
+        Type::A,
+        Class::IN,
+        configuration.default_ttl,
+        RFC1035::A(phdr.cwt.svi.ipv4)));
 
-    sign(origin);
-  }
+    std::string prolow = phdr.cwt.svi.protocol;
+    ccf::nonstd::to_lower(prolow);
 
-  void Resolver::remove_acme_response(const Name& origin, const Name& name)
-  {
-    if (!origin_exists(origin))
-      throw std::runtime_error("invalid origin");
+    auto tlsa_name =
+      Name("_" + phdr.cwt.svi.port) + Name(std::string("_") + prolow) + name;
 
-    if (!name.ends_with(origin))
-      throw std::runtime_error("name outside of zone");
+    small_vector<uint16_t> public_key_sv(
+      public_key_digest.size(), public_key_digest.data());
+    ResourceRecord tlsa_rr = mk_rr(
+      tlsa_name,
+      Type::TLSA,
+      Class::IN,
+      configuration.default_ttl,
+      TLSA(
+        CertificateUsage::DANE_EE,
+        Selector::SPKI,
+        MatchingType::SHA2_256,
+        public_key_sv));
 
-    remove(origin, Name("_acme-challenge") + name, Class::IN, Type::TXT);
-  }
-
-  void Resolver::register_delegation(const DelegationRequest& dr)
-  {
-    auto cfg = get_configuration();
-
-    // TODO dr.subdomain must be exactly one (relative) label
-    // hence origin = cfg.origin
-
-    auto origin =
-      find_zone(dr.subdomain); // how does it return the new subzone??
-
-    ccf::crypto::OpenSSL::Unique_BIO mem(dr.csr.data(), dr.csr.size());
-    ccf::crypto::OpenSSL::Unique_X509_REQ_DER req(mem);
-
-    auto public_key = X509_REQ_get0_pubkey(req);
-    ccf::crypto::OpenSSL::CHECK1(X509_REQ_verify(req, public_key));
-
-    auto subject_name = X509_REQ_get_subject_name(req);
-    ccf::crypto::OpenSSL::CHECKNULL(subject_name);
-    auto common_name = get_common_name(subject_name);
-
-    Name service_name(common_name);
-
-    Name name(common_name);
-    // this is the delegate DNS name
-
-    if (!name.is_absolute())
-      name += std::vector<Label>{Label()};
-
-    // TODO name must be exactly subdomain.origin
-    // currently it could be for a sibling!
-
-    CCF_APP_INFO(
-      "ADNS: Register delegation {} in {}",
-      std::string(name),
-      std::string(origin));
-
-    save_delegation_request(name, dr);
-
-    if (!name.ends_with(origin))
-      throw std::runtime_error("name outside of origin");
-
-    bool policy_ok = false;
-
-    // TODO attestation check
-    policy_ok = true;
-
-    if (!policy_ok)
-      throw std::runtime_error(
-        "delegation registration policy evaluation failed");
-
-    remove(origin, dr.subdomain, Class::IN, Type::NS);
-
-    for (const auto& [id, info] : dr.node_information)
-    {
-      add(
-        origin,
-        mk_rr(
-          dr.subdomain,
-          Type::NS,
-          Class::IN,
-          cfg.default_ttl,
-          NS(info.address.name)));
-    }
-
-    for (const auto& dnskey_rr : dr.dnskey_records)
-      remove(origin, dnskey_rr.name, Class::IN, Type::DS);
-
-    for (const auto& dnskey_rr : dr.dnskey_records)
-    {
-      if (!dnskey_rr.name.ends_with(origin))
-        throw std::runtime_error("DNSKEY record name not within the zone");
-
-      RFC4034::DNSKEY dnskey(dnskey_rr.rdata);
-      auto key_tag = get_key_tag(dnskey);
-
-      add(
-        origin,
-        RFC4034::DSRR(
-          dnskey_rr.name,
-          static_cast<RFC1035::Class>(dnskey_rr.class_),
-          dnskey_rr.ttl,
-          key_tag,
-          dnskey.algorithm,
-          cfg.digest_type,
-          dnskey_rr.rdata));
-    }
-
-    add_attestation_records(dr.subdomain, dr.subdomain, dr.node_information);
+    remove(origin, tlsa_name, Class::IN, Type::TLSA);
+    add(origin, tlsa_rr);
 
     sign(origin);
-
-    // TODO them being unsigned should be an intrinsic property, not something
-    // relying on the ordering of signing vs adding.
-    // TODO the NS records above should probably not be signed either.
-
-    // Glue records are not signed
-    // (https://datatracker.ietf.org/doc/html/rfc4035#section-2.2)
-    // Note: we shouldn't answer direct queries for glue records, so we put
-    // them into a special origin.
-
-    for (const auto& [id, info] : dr.node_information)
-      remove(origin + Name("glue."), info.address.name, Class::IN, Type::A);
-
-    for (const auto& [id, info] : dr.node_information)
-    {
-      add(
-        origin + Name("glue."),
-        mk_rr(
-          info.address.name,
-          Type::A,
-          Class::IN,
-          cfg.default_ttl,
-          RFC1035::A(info.address.ip)));
-    }
-
-    // TODO save endorsements
   }
 
   const std::map<uint16_t, Type>& Resolver::get_supported_types() const

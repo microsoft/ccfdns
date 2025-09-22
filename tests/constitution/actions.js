@@ -330,30 +330,18 @@ function updateServiceConfig(new_config) {
   }
 }
 
-function setRegistrationPolicy(new_policy) {
-  ccf.kv["public:ccf.gov.ccfdns.service_registration_policy"].set(
+function setServiceDefinitionAuth(new_policy) {
+  ccf.kv["public:ccf.gov.ccfdns.service_definition_auth"].set(
     getSingletonKvKey(),
     ccf.jsonCompatibleToBuf(new_policy),
   );
 }
 
-// Governance enables updates to the local part of the delegation policy, whereas the parent policies must be set programmatically by the service and then become immutable.
-function setDelegationPolicy(new_policy) {
-  const rawPolicies =
-    ccf.kv["public:ccf.gov.ccfdns.delegation_policy"].get(getSingletonKvKey());
-  if (rawPolicies === undefined) {
-    ccf.kv["public:ccf.gov.ccfdns.delegation_policy"].set(
-      getSingletonKvKey(),
-      ccf.jsonCompatibleToBuf([new_policy]),
-    );
-  } else {
-    const policies = ccf.bufToJsonCompatible(rawPolicies);
-    policies[policies.length - 1] = new_policy;
-    ccf.kv["public:ccf.gov.ccfdns.delegation_policy"].set(
-      getSingletonKvKey(),
-      ccf.jsonCompatibleToBuf(policies),
-    );
-  }
+function setPlatformDefinitionAuth(new_policy) {
+  ccf.kv["public:ccf.gov.ccfdns.platform_definition_auth"].set(
+    getSingletonKvKey(),
+    ccf.jsonCompatibleToBuf(new_policy),
+  );
 }
 
 const actions = new Map([
@@ -1395,24 +1383,24 @@ const actions = new Map([
     ),
   ],
   [
-    "set_registration_policy",
+    "set_service_definition_auth",
     new Action(
       function (args) {
         checkType(args.new_policy, "string", "new_policy");
       },
       function (args) {
-        setRegistrationPolicy(args.new_policy);
+        setServiceDefinitionAuth(args.new_policy);
       },
     ),
   ],
   [
-    "set_delegation_policy",
+    "set_platform_definition_auth",
     new Action(
       function (args) {
         checkType(args.new_policy, "string", "new_policy");
       },
       function (args) {
-        setDelegationPolicy(args.new_policy);
+        setPlatformDefinitionAuth(args.new_policy);
       },
     ),
   ],

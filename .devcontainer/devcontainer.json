@@ -1,17 +1,37 @@
 {
-  "name": "Development Container for CCF C++ Apps",
-  "dockerFile": "Dockerfile",
+  "name": "Attested DNS Development Environment",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": "."
+  },
+  "runArgs": [],
   "customizations": {
     "vscode": {
-      "extensions": ["ms-vscode.cpptools", "vsls-contrib.codetour"]
+      "extensions": [
+        "eamodio.gitlens",
+        "waderyan.gitblame",
+        "esbenp.prettier-vscode",
+        "github.vscode-github-actions",
+        "ms-python.black-formatter",
+        "ms-python.python",
+        "ms-vscode.cpptools",
+        "github.copilot",
+        "ms-vscode.cmake-tools",
+        "xaver.clang-format"
+      ]
+    },
+    "settings": {
+      "python.defaultInterpreterPath": "python3",
+      "[python]": {
+        "editor.defaultFormatter": "ms-python.black-formatter"
+      },
+      "python.formatting.provider": "none",
+      "editor.defaultFormatter": "esbenp.prettier-vscode",
+      "editor.formatOnSave": true,
+      "editor.codeActionsOnSave": {
+        "source.fixAll": true
+      }
     }
   },
-  "features": {
-    "ghcr.io/devcontainers/features/docker-from-docker:1": {
-      "version": "20.10.8"
-    },
-    "ghcr.io/devcontainers/features/python:1": {}
-  },
-  "privileged": true,
-  "runArgs": ["--network", "host"]
+  "postCreateCommand": "./.devcontainer/post_create_setup.sh"
 }

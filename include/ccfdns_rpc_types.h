@@ -8,6 +8,7 @@
 
 #include <ccf/crypto/pem.h>
 #include <ccf/ds/json.h>
+#include <ccf/ds/quote_info.h>
 #include <cstdint>
 
 namespace ccfdns
@@ -33,28 +34,6 @@ namespace ccfdns
 
   typedef AddRecord RemoveRecord;
 
-  struct InstallACMEResponse
-  {
-    struct In
-    {
-      aDNS::Name origin;
-      aDNS::Name name;
-      std::vector<aDNS::Name> alternative_names;
-      std::string key_authorization;
-    };
-    using Out = void;
-  };
-
-  struct RemoveACMEToken
-  {
-    struct In
-    {
-      aDNS::Name origin;
-      aDNS::Name name;
-    };
-    using Out = void;
-  };
-
   struct RemoveAll
   {
     struct In
@@ -67,45 +46,33 @@ namespace ccfdns
     using Out = void;
   };
 
-  struct RegisterService
-  {
-    using In = aDNS::Resolver::RegistrationRequest;
-    using Out = void;
-  };
-
-  struct RegisterDelegation
-  {
-    using In = aDNS::Resolver::DelegationRequest;
-    using Out = void;
-  };
-
-  struct SetCertificate
-  {
-    struct In
-    {
-      std::string service_dns_name;
-      std::string certificate;
-    };
-    using Out = void;
-  };
-
-  struct GetCertificate
-  {
-    struct In
-    {
-      std::string service_dns_name;
-    };
-    struct Out
-    {
-      std::string certificate;
-    };
-  };
-
   struct Resign
   {
     struct In
     {
       std::string origin;
+    };
+    using Out = void;
+  };
+
+  struct SetServiceDefinition
+  {
+    struct In
+    {
+      std::string service_name;
+      std::string policy;
+      std::string attestation;
+    };
+    using Out = void;
+  };
+
+  struct SetPlatformDefinition
+  {
+    struct In
+    {
+      ccf::QuoteFormat platform;
+      std::string policy;
+      std::string attestation;
     };
     using Out = void;
   };

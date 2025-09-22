@@ -2,17 +2,16 @@
 // Licensed under the Apache 2.0 License.
 #pragma once
 
-#include "adns_types.h"
 #include "rfc1035.h"
 #include "rfc3596.h"
 #include "rfc4034.h"
 #include "rfc5155.h"
 #include "rfc6891.h"
 #include "rfc7671.h"
-#include "rfc8659.h"
 
 #include <ccf/crypto/key_pair.h>
 #include <ccf/crypto/pem.h>
+#include <ccf/ds/quote_info.h>
 #include <functional>
 #include <memory>
 #include <stdexcept>
@@ -41,9 +40,6 @@ namespace aDNS
     NSEC3PARAM = static_cast<uint16_t>(RFC5155::Type::NSEC3PARAM),
     TLSA = static_cast<uint16_t>(RFC7671::Type::TLSA),
     OPT = static_cast<uint16_t>(RFC6891::Type::OPT),
-    CAA = static_cast<uint16_t>(RFC8659::Type::CAA),
-    // TLSKEY = static_cast<uint16_t>(aDNS::Types::Type::TLSKEY),
-    ATTEST = static_cast<uint16_t>(aDNS::Types::Type::ATTEST),
   };
 
   enum class QType : uint16_t
@@ -63,10 +59,6 @@ namespace aDNS
     NSEC3PARAM = static_cast<uint16_t>(RFC5155::Type::NSEC3PARAM),
     TLSA = static_cast<uint16_t>(RFC7671::Type::TLSA),
     OPT = static_cast<uint16_t>(RFC6891::Type::OPT),
-    CAA = static_cast<uint16_t>(RFC8659::Type::CAA),
-    // TLSKEY = static_cast<uint16_t>(aDNS::Types::Type::TLSKEY),
-    ATTEST = static_cast<uint16_t>(aDNS::Types::Type::ATTEST),
-
     ASTERISK = static_cast<uint16_t>(RFC1035::QType::ASTERISK),
   };
 
@@ -119,6 +111,7 @@ namespace aDNS
     {
       NodeAddress address;
       std::string attestation;
+      ccf::QuoteFormat attestation_type;
     };
 
     struct Configuration
@@ -127,12 +120,6 @@ namespace aDNS
       std::string soa; // serialized SOA record data for the zone
 
       std::optional<std::vector<Name>> alternative_names;
-
-      // this field is set when the origin is delegated from a larger attested
-      // zone why an URL?
-      std::optional<std::string> parent_base_url;
-
-      std::vector<std::string> contact;
 
       uint32_t default_ttl = 86400;
       RFC4034::Algorithm signing_algorithm =
@@ -145,8 +132,6 @@ namespace aDNS
         RFC5155::HashAlgorithm::SHA1;
       uint16_t nsec3_hash_iterations = 3;
       uint8_t nsec3_salt_length = 8;
-
-      std::optional<std::string> fixed_zsk; // TODO: Debug-only?
 
       struct ServiceCA
       {
@@ -168,27 +153,6 @@ namespace aDNS
       std::map<std::string, NodeInfo> node_information;
       std::optional<std::vector<aDNS::ResourceRecord>>
         dnskey_records; // to be recorded as DS at the parent
-    };
-
-    struct RegistrationRequest
-    {
-      std::vector<uint8_t> csr;
-      std::vector<std::string> contact;
-      std::map<std::string, NodeInfo> node_information;
-      std::optional<std::string> configuration_receipt;
-    };
-
-    struct DelegationRequest
-    {
-      Name subdomain; // must be a direct subdomain of the parent zone; subzone
-                      // a better name?
-      std::vector<uint8_t> csr; // used to run ACME (?)
-      std::vector<std::string> contact; // isn't it part of the configuration?
-      std::map<std::string, NodeInfo>
-        node_information; // used to create NS and glue records
-      std::vector<aDNS::ResourceRecord>
-        dnskey_records; // used to produce DS records
-      std::optional<std::string> configuration_receipt;
     };
 
     struct Resolution
@@ -256,8 +220,6 @@ namespace aDNS
 
     virtual bool origin_exists(const Name& name) const = 0;
 
-    virtual bool is_delegated(const Name& origin, const Name& name) const = 0;
-
     virtual void sign(const Name& origin);
 
     virtual void add(const Name& origin, const ResourceRecord& rr) = 0;
@@ -281,50 +243,36 @@ namespace aDNS
       const ccf::crypto::Pem& pem,
       bool key_signing) = 0;
 
-    virtual void generate_leaf_certificate(
-      const Name& name, const std::vector<uint8_t>& csr = {}) = 0;
+    virtual void register_service(const std::vector<uint8_t>& req);
 
-    virtual void install_acme_response(
-      const Name& origin,
-      const Name& name,
-      const std::vector<Name>& alternative_names,
-      const std::string& key_authorization);
+    virtual std::string service_definition_auth() const = 0;
 
-    virtual void remove_acme_response(const Name& origin, const Name& name);
+    virtual void set_service_definition_auth(const std::string& new_policy) = 0;
 
-    virtual void register_service(const RegistrationRequest& req);
+    virtual std::string platform_definition_auth() const = 0;
 
-    virtual std::string service_registration_policy() const = 0;
-
-    virtual void set_service_registration_policy(
+    virtual void set_platform_definition_auth(
       const std::string& new_policy) = 0;
 
-    virtual bool evaluate_service_registration_policy(
-      const std::string& data) const = 0;
+    virtual std::string service_definition(
+      const std::string& service_name) const = 0;
 
-    virtual void register_delegation(const DelegationRequest& req);
+    virtual void set_service_definition(
+      const std::string& service_name, const std::string& new_policy) = 0;
 
-    virtual std::vector<std::string> delegation_policy() const = 0;
-    virtual void set_delegation_policy(const std::string& new_policy) = 0;
-    virtual bool evaluate_delegation_policy(const std::string& data) const = 0;
+    virtual std::string platform_definition(
+      const std::string& platform) const = 0;
+
+    virtual void set_platform_definition(
+      const std::string& platform, const std::string& new_policy) = 0;
 
     virtual Configuration get_configuration() const = 0;
     virtual void set_configuration(const Configuration& cfg) = 0;
 
     virtual uint32_t get_fresh_time() = 0;
 
-    virtual void set_service_certificate(
-      const std::string& service_dns_name,
-      const std::string& certificate_pem) = 0;
-
-    virtual std::string get_service_certificate(
-      const std::string& service_dns_name) = 0;
-
     virtual void save_service_registration_request(
-      const Name& name, const RegistrationRequest& rr) = 0;
-
-    virtual void save_delegation_request(
-      const Name& name, const DelegationRequest& rr) = 0;
+      const Name& name, const std::vector<uint8_t>& rr) = 0;
 
     virtual std::map<std::string, NodeInfo> get_node_information() = 0;
 
@@ -373,7 +321,7 @@ namespace aDNS
       const Name& origin, const Name& name, QClass c, QType t) const;
 
     typedef std::pair<std::shared_ptr<ccf::crypto::KeyPair>, uint16_t>
-      KeyAndTag; // TODO: Should use OpenSSL type instead of KeyPair
+      KeyAndTag;
 
     KeyAndTag get_signing_key(
       const Name& origin, Class class_, bool key_signing);
@@ -441,12 +389,6 @@ namespace aDNS
 
     Name find_zone(const Name& name);
 
-    void add_caa_records(
-      const Name& origin,
-      const Name& name,
-      const std::string& ca_name,
-      const std::vector<std::string>& contact);
-
     size_t sign_rrset(
       const Name& origin,
       QClass c,
@@ -456,11 +398,6 @@ namespace aDNS
       std::shared_ptr<ccf::crypto::KeyPair> key,
       uint16_t key_tag,
       RFC4034::Algorithm signing_algorithm);
-
-    void add_attestation_records(
-      const Name& origin,
-      const Name& service_name,
-      const std::map<std::string, NodeInfo>& node_info);
   };
 
   uint16_t get_key_tag(const RFC4034::DNSKEY& dnskey_rdata);

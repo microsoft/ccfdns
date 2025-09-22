@@ -155,7 +155,6 @@ namespace aDNS
     Resolver::Configuration,
     origin,
     soa,
-    contact,
     default_ttl,
     signing_algorithm,
     digest_type,
@@ -164,33 +163,14 @@ namespace aDNS
     nsec3_hash_algorithm,
     nsec3_hash_iterations,
     nsec3_salt_length,
-    service_ca,
     node_addresses);
-  DECLARE_JSON_OPTIONAL_FIELDS(
-    Resolver::Configuration, alternative_names, parent_base_url, fixed_zsk);
+  DECLARE_JSON_OPTIONAL_FIELDS(Resolver::Configuration, alternative_names);
 
   DECLARE_JSON_TYPE_WITH_OPTIONAL_FIELDS(Resolver::RegistrationInformation);
   DECLARE_JSON_REQUIRED_FIELDS(
     Resolver::RegistrationInformation, public_key, csr, node_information);
   DECLARE_JSON_OPTIONAL_FIELDS(
     Resolver::RegistrationInformation, dnskey_records);
-
-  DECLARE_JSON_TYPE_WITH_OPTIONAL_FIELDS(Resolver::RegistrationRequest);
-  DECLARE_JSON_REQUIRED_FIELDS(
-    Resolver::RegistrationRequest, csr, contact, node_information);
-  DECLARE_JSON_OPTIONAL_FIELDS(
-    Resolver::RegistrationRequest, configuration_receipt);
-
-  DECLARE_JSON_TYPE_WITH_OPTIONAL_FIELDS(Resolver::DelegationRequest);
-  DECLARE_JSON_REQUIRED_FIELDS(
-    Resolver::DelegationRequest,
-    subdomain,
-    csr,
-    contact,
-    dnskey_records,
-    node_information);
-  DECLARE_JSON_OPTIONAL_FIELDS(
-    Resolver::DelegationRequest, configuration_receipt);
 }
 
 namespace ccfdns
@@ -198,10 +178,6 @@ namespace ccfdns
   DECLARE_JSON_TYPE(ZoneKeyInfo);
   DECLARE_JSON_REQUIRED_FIELDS(
     ZoneKeyInfo, key_signing_keys, zone_signing_keys);
-
-  DECLARE_JSON_TYPE(EATPublicKeyRecord);
-  DECLARE_JSON_REQUIRED_FIELDS(
-    EATPublicKeyRecord, jwk, can_sign_after, can_retire_after);
 
   DECLARE_JSON_TYPE(Configure::Out);
   DECLARE_JSON_REQUIRED_FIELDS(Configure::Out, registration_info);
@@ -212,26 +188,14 @@ namespace ccfdns
   DECLARE_JSON_TYPE(RemoveAll::In);
   DECLARE_JSON_REQUIRED_FIELDS(RemoveAll::In, origin, name, class_, type);
 
-  DECLARE_JSON_TYPE(InstallACMEResponse::In);
-  DECLARE_JSON_REQUIRED_FIELDS(
-    InstallACMEResponse::In,
-    origin,
-    name,
-    alternative_names,
-    key_authorization);
-
-  DECLARE_JSON_TYPE(RemoveACMEToken::In);
-  DECLARE_JSON_REQUIRED_FIELDS(RemoveACMEToken::In, origin, name);
-
-  DECLARE_JSON_TYPE(SetCertificate::In);
-  DECLARE_JSON_REQUIRED_FIELDS(
-    SetCertificate::In, service_dns_name, certificate);
-
-  DECLARE_JSON_TYPE(GetCertificate::In);
-  DECLARE_JSON_REQUIRED_FIELDS(GetCertificate::In, service_dns_name);
-  DECLARE_JSON_TYPE(GetCertificate::Out);
-  DECLARE_JSON_REQUIRED_FIELDS(GetCertificate::Out, certificate);
-
   DECLARE_JSON_TYPE(Resign::In);
   DECLARE_JSON_REQUIRED_FIELDS(Resign::In, origin);
+
+  DECLARE_JSON_TYPE(SetServiceDefinition::In);
+  DECLARE_JSON_REQUIRED_FIELDS(
+    SetServiceDefinition::In, service_name, policy, attestation);
+
+  DECLARE_JSON_TYPE(SetPlatformDefinition::In);
+  DECLARE_JSON_REQUIRED_FIELDS(
+    SetPlatformDefinition::In, platform, policy, attestation);
 }
