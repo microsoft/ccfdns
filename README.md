@@ -15,8 +15,6 @@ ninja
 
 # Run sandbox:
 
-(May depend on your version of CCF)
-
 ```
 /opt/ccf_virtual/bin/sandbox.sh -p libccfdns.virtual.so
 ```
@@ -25,7 +23,7 @@ ninja
 
 For an example of how to run an aDNS server/service, see [adns_service.py](tests/adns_service.py). Most of this is a simple application of the CCF infrastructure scripts. The [CCF documentation](https://microsoft.github.io/CCF/main/index.html) describes all of the components.
 
-Note that for a complete service, your server(s) or VM(s) must be SEV-SNP-enabled and registered with at least a traditional, DNSSEC-enabled DNS server. Of course, that server may also be another aDNS server.
+Note that for a complete service, you must run the network in SEV-SNP Confidential Containers and register with at least a traditional, DNSSEC-enabled DNS server. Of course, that server may also be another aDNS server.
 
 Additionally, you may have to
 
