@@ -1298,8 +1298,7 @@ namespace aDNS
         r));
   }
 
-  Resolver::RegistrationInformation Resolver::configure(
-    const Configuration& cfg)
+  void Resolver::configure(const Configuration& cfg)
   {
     set_configuration(cfg);
 
@@ -1317,9 +1316,6 @@ namespace aDNS
     auto tls_key = get_tls_key();
 
     RegistrationInformation out;
-
-    out.public_key = tls_key->public_key_pem().str();
-    out.node_information = get_node_information();
 
     remove(cfg.origin, cfg.origin, Class::IN, Type::SOA);
     add(cfg.origin, mk_rr(cfg.origin, Type::SOA, Class::IN, 60, SOA(cfg.soa)));
@@ -1351,49 +1347,6 @@ namespace aDNS
     // signs initial records; this triggers the creation of fresh DNSKEY
     // records.
     sign(cfg.origin);
-
-    std::string cn;
-    std::vector<ccf::crypto::SubjectAltName> sans;
-
-    cn = cfg.origin.unterminated();
-    sans.push_back({cn, false});
-    for (const auto& [id, addr] : cfg.node_addresses)
-      sans.push_back({addr.name.unterminated(), false});
-
-    if (cfg.alternative_names)
-      for (const auto& san : *cfg.alternative_names)
-        sans.push_back({san, false});
-
-    CCF_APP_INFO("CCFDNS: Resolver::configure(): CSR");
-    out.csr =
-      tls_key->create_csr_der("CN=" + cn, sans, tls_key->public_key_pem());
-
-    // get_signing_key(cfg.origin, Class::IN, cfg.use_key_signing_key);
-
-    CCF_APP_INFO("CCFDNS: Resolver::configure(): Resolve DNSKEY");
-    auto dnskeys = resolve(cfg.origin, QType::DNSKEY, QClass::IN);
-
-    if (dnskeys.answers.size() > 0)
-    {
-      out.dnskey_records = std::vector<ResourceRecord>();
-      for (const auto& keyrr : dnskeys.answers)
-        if (keyrr.type == static_cast<uint16_t>(Type::DNSKEY))
-        {
-          if (cfg.use_key_signing_key)
-          {
-            RFC4034::DNSKEY rd(keyrr.rdata);
-            if (rd.is_key_signing_key())
-              out.dnskey_records->push_back(keyrr);
-          }
-          else
-            out.dnskey_records->push_back(keyrr);
-        }
-    }
-    CCF_APP_INFO(
-      "CCFDNS: Resolver::configure(): Added {} records",
-      dnskeys.answers.size());
-
-    return out;
   }
 
   void Resolver::add_fragmented(

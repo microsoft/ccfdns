@@ -739,7 +739,7 @@ def run(args):
 
     test_attestation(args)
 
-    adns_nw, _ = adns_service.run(
+    adns_nw = adns_service.run(
         args,
         tcp_port=53,
         udp_port=53,

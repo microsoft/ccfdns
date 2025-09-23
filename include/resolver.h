@@ -170,7 +170,7 @@ namespace aDNS
 
     virtual ~Resolver();
 
-    virtual RegistrationInformation configure(const Configuration& cfg);
+    virtual void configure(const Configuration& cfg);
 
     struct Reply
     {

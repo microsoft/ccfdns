@@ -71,48 +71,30 @@ class aDNSConfig(dict):
         self.nsec3_salt_length = nsec3_salt_length
 
 
-def configure(base_url, cabundle, config, client_cert=None, num_retries=1):
-    """Configure an aDNS service"""
+def configure(base_url, cabundle, config, client_cert=None, num_retries=10):
+    def success(r):
+        return (
+            r.status_code == http.HTTPStatus.OK
+            or r.status_code == http.HTTPStatus.NO_CONTENT
+        )
 
-    while num_retries > 0:
-        try:
-            url = base_url + "/app/configure"
+    for _ in range(num_retries):
+        r = requests.post(
+            base_url + "/app/configure",
+            json.dumps(config),
+            timeout=60,
+            verify=cabundle,
+            headers={"Content-Type": "application/json"},
+            cert=client_cert,
+        )
 
+        if not success(r):
             LOG.info(
-                "Calling /app/configure with config:" + json.dumps(config, indent=2)
+                f"Configuring failed with status code {r.status_code}: {r.text}, retrying..."
             )
+            time.sleep(1)
 
-            r = requests.post(
-                url,
-                json.dumps(config),
-                timeout=60,
-                verify=cabundle,
-                headers={"Content-Type": "application/json"},
-                cert=client_cert,
-            )
-
-            LOG.info("Resonse:" + json.dumps(r.json(), indent=2))
-            ok = (
-                r.status_code == http.HTTPStatus.OK
-                or r.status_code == http.HTTPStatus.NO_CONTENT
-            )
-            if not ok:
-                LOG.info(r.text)
-            assert ok
-            reginfo = r.json()["registration_info"]
-            assert "x-ms-ccf-transaction-id" in r.headers
-
-            return reginfo
-        except Exception as ex:
-            logging.exception("caught exception")
-            num_retries = num_retries - 1
-            if num_retries == 0:
-                raise ex
-            else:
-                n = 10
-                LOG.error(f"Configuration failed; retrying in {n} seconds.")
-                time.sleep(n)
-    return None
+    assert success(r), r.text
 
 
 def set_policy(network, proposal_name, policy):
@@ -214,9 +196,9 @@ def run(args, tcp_port=None, udp_port=None):
             os.path.join(network.common_dir, "user0_privk.pem"),
         )
 
-        reginfo = configure(base_url, network.cert_path, args.adns, client_cert)
+        configure(base_url, network.cert_path, args.adns, client_cert)
 
-        return network, reginfo
+        return network
 
     except Exception:
         logging.exception("caught exception")

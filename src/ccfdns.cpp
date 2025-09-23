@@ -135,21 +135,13 @@ namespace ccfdns
   class CCFDNS : public Resolver
   {
   public:
-    CCFDNS(
-      const std::string& node_id,
-      std::shared_ptr<ccf::NetworkIdentitySubsystemInterface> nwid_ss,
-      std::shared_ptr<ccf::NodeConfigurationInterface> nci_ss,
-      std::shared_ptr<ccf::CustomProtocolSubsystemInterface> cp_ss) :
+    CCFDNS(std::shared_ptr<ccf::CustomProtocolSubsystemInterface> cp_ss) :
       Resolver(),
-      node_id(node_id),
-      nwid_ss(nwid_ss),
-      nci_ss(nci_ss),
       cp_ss(cp_ss)
     {}
 
     virtual ~CCFDNS() {}
 
-    std::string node_id;
     std::string my_name; // Certifiable FQDN for this node of the DNS service
 
     using TConfigurationTable =
@@ -767,48 +759,11 @@ namespace ccfdns
       return r;
     }
 
-    virtual RegistrationInformation configure(const Configuration& cfg) override
+    virtual void configure(const Configuration& cfg) override
     {
       check_context();
-      auto reginfo = Resolver::configure(cfg);
 
-      if (reginfo.dnskey_records)
-      {
-        CCF_APP_INFO("CCFDNS: : Our DNSKEY records: ");
-        for (const auto& dnskey_rr : *reginfo.dnskey_records)
-          CCF_APP_INFO(
-            "CCFDNS: : - {}", string_from_resource_record(dnskey_rr));
-
-        CCF_APP_INFO("CCFDNS: : Our proposed DS records: ");
-        for (const auto& dnskey_rr : *reginfo.dnskey_records)
-        {
-          auto key_tag = get_key_tag(dnskey_rr.rdata);
-          RFC4034::DNSKEY dnskey_rdata(dnskey_rr.rdata);
-
-          RFC4034::DSRR ds(
-            dnskey_rr.name,
-            static_cast<RFC1035::Class>(dnskey_rr.class_),
-            dnskey_rr.ttl,
-            key_tag,
-            dnskey_rdata.algorithm,
-            cfg.digest_type,
-            dnskey_rdata);
-
-          CCF_APP_INFO("CCFDNS: : - {}", string_from_resource_record(ds));
-        }
-      }
-
-      if (my_name.empty())
-      {
-        auto it = cfg.node_addresses.find(node_id);
-        if (it == cfg.node_addresses.end())
-          throw std::runtime_error("bug: own node address not found");
-        my_name = it->second.name;
-        while (my_name.back() == '.')
-          my_name.pop_back();
-      }
-
-      return reginfo;
+      Resolver::configure(cfg);
     }
 
     virtual void save_service_registration_request(
@@ -830,8 +785,6 @@ namespace ccfdns
     bool ctx_writable = false;
     std::mutex reply_mtx;
 
-    std::shared_ptr<ccf::NetworkIdentitySubsystemInterface> nwid_ss;
-    std::shared_ptr<ccf::NodeConfigurationInterface> nci_ss;
     std::shared_ptr<ccf::CustomProtocolSubsystemInterface> cp_ss;
 
     std::string names_table_name(const Name& origin) const
@@ -1296,15 +1249,10 @@ namespace ccfdns
         "This application implements an attested DNS-over-HTTPS server.";
       openapi_info.document_version = "0.0.0";
 
-      node_id = context.get_node_id();
-
-      auto nwid_ss =
-        context.get_subsystem<ccf::NetworkIdentitySubsystemInterface>();
-      auto nci_ss = context.get_subsystem<ccf::NodeConfigurationInterface>();
       auto cp_ss =
         context.get_subsystem<ccf::CustomProtocolSubsystemInterface>();
 
-      ccfdns = std::make_shared<CCFDNS>(node_id, nwid_ss, nci_ss, cp_ss);
+      ccfdns = std::make_shared<CCFDNS>(cp_ss);
 
       auto is_tx_committed =
         [this](ccf::View view, ccf::SeqNo seqno, std::string& error_reason) {
@@ -1318,16 +1266,11 @@ namespace ccfdns
         {
           ContextContext cc(ccfdns, ctx);
           const auto in = params.get<Configure::In>();
-          CCF_APP_INFO(
-            "CCFDNS: Configuration request size: {}",
-            ctx.rpc_ctx->get_request_body().size());
-          Configure::Out out = {.registration_info = ccfdns->configure(in)};
-
-          return ccf::make_success(out);
+          ccfdns->configure(in);
+          return ccf::make_success();
         }
         catch (std::exception& ex)
         {
-          CCF_APP_INFO("CCFDNS: Configure exception {}", ex.what());
           return ccf::make_error(
             HTTP_STATUS_BAD_REQUEST, ccf::errors::InternalError, ex.what());
         }
@@ -1338,7 +1281,7 @@ namespace ccfdns
         HTTP_POST,
         ccf::json_adapter(configure),
         {std::make_shared<ccf::UserCertAuthnPolicy>()})
-        .set_auto_schema<Configure::In, Configure::Out>()
+        .set_auto_schema<Configure::In, void>()
         .set_forwarding_required(ccf::endpoints::ForwardingRequired::Always)
         .install();
 
