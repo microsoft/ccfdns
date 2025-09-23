@@ -336,6 +336,25 @@ def get_keys(host, port, ca, origin):
     return keys
 
 
+def extract_ksk_digest(keys, dns_name):
+    bitmask = 257
+    ksk = next((k for k in keys[dns_name].items.keys() if k.flags == bitmask), None)
+    assert ksk is not None, "No KSK (flag 257) found in DNSKEY records"
+    assert ksk.algorithm == 14, f"Expected P-384 algorithm (14), got {ksk.algorithm}"
+    assert len(ksk.key) == 96, f"Expected 96 bytes for P-384 key, got {len(ksk.key)}"
+
+    # Convert P-384 key to DER format and hash
+    x = int.from_bytes(ksk.key[:48], "big")
+    y = int.from_bytes(ksk.key[48:], "big")
+    pk = ec.EllipticCurvePublicNumbers(x, y, ec.SECP384R1()).public_key(
+        default_backend()
+    )
+    der = pk.public_bytes(
+        serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo
+    )
+    return sha256(der).hexdigest()
+
+
 def ARecord(s):
     """Parse an A record"""
     return dns.rdata.from_text(rdc.IN, rdt.A, s)
@@ -672,6 +691,25 @@ def test_policy_registration(network, args):
     )
 
 
+def test_ksk_receipt(network, args):
+    primary, _ = network.find_primary()
+    with primary.client(identity="member0") as client:
+        dns_name = dns.name.from_text("acidns10.attested.name.")
+        keys = get_keys(
+            host=primary.get_public_rpc_host(),
+            port=primary.get_public_rpc_port(),
+            ca=primary.session_ca()["ca"],
+            origin=dns_name,
+        )
+        receipt = client.get(
+            "/app/ksk-receipt", body='{"zone": "acidns10.attested.name."}'
+        )
+
+        ksk_digest = extract_ksk_digest(keys, dns_name)
+        claims = receipt.body.json()["leaf_components"]["claims_digest"]
+        assert claims == ksk_digest, f"{ksk_digest} != {claims}"
+
+
 def test_attestation(args):
     """
     Exercise attestation generation, and produce a sample attestation to be
@@ -697,6 +735,7 @@ def run(args):
     if not adns_nw:
         raise Exception("Failed to start aDNS network")
 
+    test_ksk_receipt(adns_nw, args)
     test_service_registration(adns_nw, args)
 
     if args.enclave_platform != "virtual":
