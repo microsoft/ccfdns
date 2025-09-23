@@ -691,6 +691,14 @@ def test_policy_registration(network, args):
     )
 
 
+def poll_receipt(cb, num_retries=10):
+    r = cb()
+    while r.status_code != http.HTTPStatus.OK:
+        r = cb()
+    assert r.status_code == http.HTTPStatus.OK
+    return r.body.json()
+
+
 def test_ksk_receipt(network, args):
     primary, _ = network.find_primary()
     with primary.client(identity="member0") as client:
@@ -701,12 +709,15 @@ def test_ksk_receipt(network, args):
             ca=primary.session_ca()["ca"],
             origin=dns_name,
         )
-        receipt = client.get(
-            "/app/ksk-receipt", body='{"zone": "acidns10.attested.name."}'
-        )
 
+        def request():
+            return client.get(
+                "/app/ksk-receipt", body='{"zone": "acidns10.attested.name."}'
+            )
+
+        receipt = poll_receipt(request)
         ksk_digest = extract_ksk_digest(keys, dns_name)
-        claims = receipt.body.json()["leaf_components"]["claims_digest"]
+        claims = receipt["leaf_components"]["claims_digest"]
         assert claims == ksk_digest, f"{ksk_digest} != {claims}"
 
 
