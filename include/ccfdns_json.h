@@ -140,10 +140,6 @@ namespace RFC5155
 
 namespace aDNS
 {
-  DECLARE_JSON_TYPE(Resolver::Configuration::ServiceCA);
-  DECLARE_JSON_REQUIRED_FIELDS(
-    Resolver::Configuration::ServiceCA, name, directory, ca_certificates);
-
   DECLARE_JSON_TYPE(Resolver::NodeAddress);
   DECLARE_JSON_REQUIRED_FIELDS(Resolver::NodeAddress, name, ip, protocol, port);
 
@@ -165,30 +161,12 @@ namespace aDNS
     nsec3_salt_length,
     node_addresses);
   DECLARE_JSON_OPTIONAL_FIELDS(Resolver::Configuration, alternative_names);
-
-  DECLARE_JSON_TYPE_WITH_OPTIONAL_FIELDS(Resolver::RegistrationInformation);
-  DECLARE_JSON_REQUIRED_FIELDS(
-    Resolver::RegistrationInformation, public_key, csr, node_information);
-  DECLARE_JSON_OPTIONAL_FIELDS(
-    Resolver::RegistrationInformation, dnskey_records);
 }
 
 namespace ccfdns
 {
   DECLARE_JSON_TYPE(KeyInfo);
   DECLARE_JSON_REQUIRED_FIELDS(KeyInfo, tag, key);
-
-  DECLARE_JSON_TYPE(Configure::Out);
-  DECLARE_JSON_REQUIRED_FIELDS(Configure::Out, registration_info);
-
-  DECLARE_JSON_TYPE(AddRecord::In);
-  DECLARE_JSON_REQUIRED_FIELDS(AddRecord::In, origin, record);
-
-  DECLARE_JSON_TYPE(RemoveAll::In);
-  DECLARE_JSON_REQUIRED_FIELDS(RemoveAll::In, origin, name, class_, type);
-
-  DECLARE_JSON_TYPE(Resign::In);
-  DECLARE_JSON_REQUIRED_FIELDS(Resign::In, origin);
 
   DECLARE_JSON_TYPE(SetServiceDefinition::In);
   DECLARE_JSON_REQUIRED_FIELDS(

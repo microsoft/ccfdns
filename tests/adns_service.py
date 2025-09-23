@@ -1,11 +1,9 @@
 # Copyright (c) Microsoft Corporation. All rights reserved.
 # Licensed under the Apache 2.0 License.
 
-import os
 import http
 import time
 import json
-import logging
 import requests
 import infra.network
 from infra.interfaces import (
@@ -115,6 +113,24 @@ def set_policy(network, proposal_name, policy):
     )
 
 
+def set_configuration(network, config):
+    primary, _ = network.find_primary()
+
+    proposal_body, careful_vote = network.consortium.make_proposal(
+        "set_configuration", new_config=config
+    )
+
+    proposal = network.consortium.get_any_active_member().propose(
+        primary, proposal_body
+    )
+
+    network.consortium.vote_using_majority(
+        primary,
+        proposal,
+        careful_vote,
+    )
+
+
 def assign_node_addresses(network, addr, add_node_id=True):
     """Assign shortened node IDs as node names"""
     node_addresses = {}
@@ -137,70 +153,61 @@ def assign_node_addresses(network, addr, add_node_id=True):
 def run(args, tcp_port=None, udp_port=None):
     """Start an aDNS server network"""
 
-    try:
-        nodes = []
-        for internal, external, ext_name, _ in args.node_addresses:
-            host_spec: dict[str, RPCInterface] = {}
-            int_if = RPCInterface()
-            int_if.parse_from_str(internal)
-            int_if.forwarding_timeout_ms = 10000
-            host_spec[PRIMARY_RPC_INTERFACE] = int_if
+    nodes = []
+    for internal, external, ext_name, _ in args.node_addresses:
+        host_spec: dict[str, RPCInterface] = {}
+        int_if = RPCInterface()
+        int_if.parse_from_str(internal)
+        int_if.forwarding_timeout_ms = 10000
+        host_spec[PRIMARY_RPC_INTERFACE] = int_if
 
-            ext_if = RPCInterface()
-            ext_if.parse_from_str(external)
-            ext_if.forwarding_timeout_ms = 10000
-            ext_if.public_host = ext_name
-            ext_if.public_port = ext_if.port
+        ext_if = RPCInterface()
+        ext_if.parse_from_str(external)
+        ext_if.forwarding_timeout_ms = 10000
+        ext_if.public_host = ext_name
+        ext_if.public_port = ext_if.port
 
-            host_spec["ext_if"] = ext_if
+        host_spec["ext_if"] = ext_if
 
-            if tcp_port:
-                tcp_dns_if = RPCInterface(
-                    host=ext_if.host,
-                    port=tcp_port,
-                    transport="tcp",
-                    endorsement=Endorsement(authority=EndorsementAuthority.Unsecured),
-                    app_protocol="DNSTCP",
-                )
-                host_spec["tcp_dns_if"] = tcp_dns_if
-            if udp_port:
-                udp_dns_if = RPCInterface(
-                    host=ext_if.host,
-                    port=udp_port,
-                    transport="udp",
-                    endorsement=Endorsement(authority=EndorsementAuthority.Unsecured),
-                    app_protocol="DNSUDP",
-                )
-                host_spec["udp_dns_if"] = udp_dns_if
+        if tcp_port:
+            tcp_dns_if = RPCInterface(
+                host=ext_if.host,
+                port=tcp_port,
+                transport="tcp",
+                endorsement=Endorsement(authority=EndorsementAuthority.Unsecured),
+                app_protocol="DNSTCP",
+            )
+            host_spec["tcp_dns_if"] = tcp_dns_if
+        if udp_port:
+            udp_dns_if = RPCInterface(
+                host=ext_if.host,
+                port=udp_port,
+                transport="udp",
+                endorsement=Endorsement(authority=EndorsementAuthority.Unsecured),
+                app_protocol="DNSUDP",
+            )
+            host_spec["udp_dns_if"] = udp_dns_if
 
-            nodes += [HostSpec(rpc_interfaces=host_spec)]
+        nodes += [HostSpec(rpc_interfaces=host_spec)]
 
-        network = infra.network.Network(
-            nodes,
-            args.binary_dir,
-            args.debug_nodes,
-            args.perf_nodes,
-            library_dir=args.library_dir,
-        )
-        network.start_and_open(args)
+    network = infra.network.Network(
+        nodes,
+        args.binary_dir,
+        args.debug_nodes,
+        args.perf_nodes,
+        library_dir=args.library_dir,
+    )
+    network.start_and_open(args)
 
-        args.adns.node_addresses = args.adns["node_addresses"] = assign_node_addresses(
-            network, args.node_addresses, False
-        )
+    args.adns.node_addresses = args.adns["node_addresses"] = assign_node_addresses(
+        network, args.node_addresses, False
+    )
 
-        pif0 = nodes[0].rpc_interfaces[PRIMARY_RPC_INTERFACE]
-        base_url = "https://" + pif0.host + ":" + str(pif0.port)
+    set_configuration(network, json.dumps(args.adns))
 
-        client_cert = (
-            os.path.join(network.common_dir, "user0_cert.pem"),
-            os.path.join(network.common_dir, "user0_privk.pem"),
-        )
+    primary, _ = network.find_primary()
+    with primary.client(identity="member0") as client:
+        r = client.post("/app/configure")
+        assert r.status_code == http.HTTPStatus.OK, r
 
-        configure(base_url, network.cert_path, args.adns, client_cert)
-
-        return network
-
-    except Exception:
-        logging.exception("caught exception")
-
-    return None, None
+    return network

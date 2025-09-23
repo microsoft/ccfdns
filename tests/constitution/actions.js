@@ -344,6 +344,13 @@ function setPlatformDefinitionAuth(new_policy) {
   );
 }
 
+function setConfiguration(new_config) {
+  ccf.kv["public:ccf.gov.ccfdns.adns_configuration"].set(
+    getSingletonKvKey(),
+    ccf.strToBuf(new_config),
+  );
+}
+
 const actions = new Map([
   [
     "set_constitution",
@@ -1401,6 +1408,17 @@ const actions = new Map([
       },
       function (args) {
         setPlatformDefinitionAuth(args.new_policy);
+      },
+    ),
+  ],
+  [
+    "set_configuration",
+    new Action(
+      function (args) {
+        checkType(args.new_config, "string", "new_config");
+      },
+      function (args) {
+        setConfiguration(args.new_config);
       },
     ),
   ],

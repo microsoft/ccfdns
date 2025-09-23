@@ -146,7 +146,8 @@ namespace ccfdns
 
     using TConfigurationTable =
       ccf::ServiceValue<aDNS::Resolver::Configuration>;
-    const std::string configuration_table_name = "public:adns_configuration";
+    const std::string configuration_table_name =
+      "public:ccf.gov.ccfdns.adns_configuration";
 
     using TTimeTable = ccf::ServiceValue<uint32_t>;
     const std::string time_table_name = "public:ccfdns.time";
@@ -759,11 +760,11 @@ namespace ccfdns
       return r;
     }
 
-    virtual void configure(const Configuration& cfg) override
+    virtual void configure() override
     {
       check_context();
 
-      Resolver::configure(cfg);
+      Resolver::configure();
     }
 
     virtual void save_service_registration_request(
@@ -1260,28 +1261,23 @@ namespace ccfdns
             consensus, view, seqno, error_reason);
         };
 
-      auto configure = [this](auto& ctx, nlohmann::json&& params) {
+      auto configure = [this](auto& ctx) {
         CCF_APP_TRACE("CCFDNS: call /configure");
         try
         {
           ContextContext cc(ccfdns, ctx);
-          const auto in = params.get<Configure::In>();
-          ccfdns->configure(in);
-          return ccf::make_success();
+          ccfdns->configure();
+          ctx.rpc_ctx->set_response_status(HTTP_STATUS_OK);
         }
         catch (std::exception& ex)
         {
-          return ccf::make_error(
-            HTTP_STATUS_BAD_REQUEST, ccf::errors::InternalError, ex.what());
+          ctx.rpc_ctx->set_response_body(ex.what());
+          ctx.rpc_ctx->set_response_status(HTTP_STATUS_INTERNAL_SERVER_ERROR);
         }
       };
 
-      make_endpoint(
-        "/configure",
-        HTTP_POST,
-        ccf::json_adapter(configure),
-        {std::make_shared<ccf::UserCertAuthnPolicy>()})
-        .set_auto_schema<Configure::In, void>()
+      make_endpoint("/configure", HTTP_POST, configure, ccf::no_auth_required)
+        .set_auto_schema<void, void>()
         .set_forwarding_required(ccf::endpoints::ForwardingRequired::Always)
         .install();
 

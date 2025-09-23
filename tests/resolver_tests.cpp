@@ -948,7 +948,8 @@ TEST_CASE("Service registration")
        .ip = "127.0.0.1",
        .protocol = "tcp",
        .port = 53}}};
-  s.configure(cfg);
+  s.set_configuration(cfg);
+  s.configure();
 
   Name service_name("service42.example.com.");
 

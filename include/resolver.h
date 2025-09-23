@@ -118,41 +118,19 @@ namespace aDNS
     {
       Name origin; // domain name suffix of the zone served by this resolver
       std::string soa; // serialized SOA record data for the zone
-
       std::optional<std::vector<Name>> alternative_names;
-
       uint32_t default_ttl = 86400;
       RFC4034::Algorithm signing_algorithm =
         RFC4034::Algorithm::ECDSAP384SHA384;
       RFC4034::DigestType digest_type = RFC4034::DigestType::SHA384;
       bool use_key_signing_key = true;
-
       bool use_nsec3 = true;
       RFC5155::HashAlgorithm nsec3_hash_algorithm =
         RFC5155::HashAlgorithm::SHA1;
       uint16_t nsec3_hash_iterations = 3;
       uint8_t nsec3_salt_length = 8;
-
-      struct ServiceCA
-      {
-        std::string name;
-        std::string directory;
-        std::vector<std::string> ca_certificates;
-      };
-
-      ServiceCA service_ca;
-
       // DNS hosts, indexed by CCF node IDs
       std::map<std::string, NodeAddress> node_addresses;
-    };
-
-    struct RegistrationInformation
-    {
-      std::string public_key;
-      std::vector<uint8_t> csr;
-      std::map<std::string, NodeInfo> node_information;
-      std::optional<std::vector<aDNS::ResourceRecord>>
-        dnskey_records; // to be recorded as DS at the parent
     };
 
     struct Resolution
@@ -170,7 +148,7 @@ namespace aDNS
 
     virtual ~Resolver();
 
-    virtual void configure(const Configuration& cfg);
+    virtual void configure();
 
     struct Reply
     {

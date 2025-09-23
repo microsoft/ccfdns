@@ -1298,9 +1298,9 @@ namespace aDNS
         r));
   }
 
-  void Resolver::configure(const Configuration& cfg)
+  void Resolver::configure()
   {
-    set_configuration(cfg);
+    auto cfg = get_configuration();
 
     update_nsec3_param(
       cfg.origin,
@@ -1314,8 +1314,6 @@ namespace aDNS
       throw std::runtime_error("missing node information");
 
     auto tls_key = get_tls_key();
-
-    RegistrationInformation out;
 
     remove(cfg.origin, cfg.origin, Class::IN, Type::SOA);
     add(cfg.origin, mk_rr(cfg.origin, Type::SOA, Class::IN, 60, SOA(cfg.soa)));
