@@ -1553,7 +1553,7 @@ namespace ccfdns
           auto receipt = ccf::describe_receipt_v1(*historical_state->receipt);
           ctx.rpc_ctx->set_response_body(receipt.dump());
         }
-        catch (std::exception& ex)
+        catch (const std::exception& ex)
         {
           ctx.rpc_ctx->set_response_body(ex.what());
           ctx.rpc_ctx->set_response_status(HTTP_STATUS_BAD_REQUEST);
