@@ -9,6 +9,7 @@ import requests
 import json
 import infra.e2e_args
 import os
+import time
 import subprocess
 import adns_service
 import dns
@@ -694,6 +695,7 @@ def test_policy_registration(network, args):
 def poll_receipt(cb, num_retries=10):
     r = cb()
     while r.status_code != http.HTTPStatus.OK:
+        time.sleep(1)
         r = cb()
     assert r.status_code == http.HTTPStatus.OK
     return r.body.json()
