@@ -231,15 +231,15 @@ default allow := true
   virtual void on_new_signing_key(
     const Name& origin,
     uint16_t tag,
-    const ccf::crypto::Pem& pem,
+    const ccf::crypto::KeyPairPtr& kp,
     bool key_signing) override
   {
     auto conf = get_configuration();
 
     if (conf.use_key_signing_key && key_signing)
-      key_signing_keys[origin] = pem;
+      key_signing_keys[origin] = kp->private_key_pem();
     else
-      zone_signing_keys[origin] = pem;
+      zone_signing_keys[origin] = kp->private_key_pem();
   }
 
   virtual void show(const Name& origin) const

@@ -24,35 +24,6 @@ class NoReceiptException(Exception):
     pass
 
 
-def poll_for_receipt(base_url, cabundle, txid):
-    """Poll for a receipt of a transaction"""
-
-    receipt_url = f"{base_url}/app/receipt?transaction_id={txid}"
-    r = requests.get(receipt_url, timeout=10, verify=cabundle)
-    while (
-        r.status_code == http.HTTPStatus.ACCEPTED
-        or r.status_code == http.HTTPStatus.NOT_FOUND
-    ):
-        if r.status_code == http.HTTPStatus.NOT_FOUND:
-            b = r.json()
-            if (
-                "error" in b
-                and "code" in b["error"]
-                and b["error"]["code"] != "TransactionPendingOrUnknown"
-            ):
-                LOG.error(b)
-                raise NoReceiptException()
-        d = int(r.headers["retry-after"] if "retry-after" in r.headers else 3)
-        LOG.info(f"waiting {d} seconds before retrying...")
-        time.sleep(d)
-        r = requests.get(receipt_url, timeout=10, verify=cabundle)
-    assert (
-        r.status_code == http.HTTPStatus.OK
-        or r.status_code == http.HTTPStatus.NO_CONTENT
-    )
-    return r.json()
-
-
 class aDNSConfig(dict):
     """aDNS arguments"""
 
@@ -131,9 +102,6 @@ def configure(base_url, cabundle, config, client_cert=None, num_retries=1):
             reginfo = r.json()["registration_info"]
             assert "x-ms-ccf-transaction-id" in r.headers
 
-            reginfo["configuration_receipt"] = poll_for_receipt(
-                base_url, cabundle, r.headers["x-ms-ccf-transaction-id"]
-            )
             return reginfo
         except Exception as ex:
             logging.exception("caught exception")

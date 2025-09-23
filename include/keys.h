@@ -15,12 +15,14 @@ namespace ccfdns
   // transparency, and share the corresponding private signing keys using
   // encrypted CCF tables.
 
-  struct ZoneKeyInfo
+  struct KeyInfo
   {
-    std::map<uint16_t, std::vector<ccf::crypto::Pem>> key_signing_keys;
-    std::map<uint16_t, std::vector<ccf::crypto::Pem>> zone_signing_keys;
+    uint16_t tag{};
+    ccf::crypto::Pem key{};
   };
 
-  using PrivateDNSKeys = ccf::ServiceMap<RFC1035::Name, ZoneKeyInfo>;
-  const std::string private_dnskey_table_name = "private:dnskey_table_name";
+  using PrivateDNSKey = ccf::ServiceMap<RFC1035::Name, KeyInfo>;
+
+  const std::string key_signing_key_table = "private:key_signing_keys";
+  const std::string zone_signing_key_table = "private:zone_signing_keys";
 }

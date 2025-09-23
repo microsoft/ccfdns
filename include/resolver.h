@@ -240,7 +240,7 @@ namespace aDNS
     virtual void on_new_signing_key(
       const Name& origin,
       uint16_t tag,
-      const ccf::crypto::Pem& pem,
+      const ccf::crypto::KeyPairPtr& pem,
       bool key_signing) = 0;
 
     virtual void register_service(const std::vector<uint8_t>& req);
@@ -279,15 +279,6 @@ namespace aDNS
     const std::map<uint16_t, Type>& get_supported_types() const;
 
     const std::map<uint16_t, Class>& get_supported_classes() const;
-
-    virtual void save_endorsements(
-      const Name& service_name, const std::vector<uint8_t>& endorsements)
-    {}
-
-    virtual std::vector<uint8_t> get_endorsements(const Name& service_name)
-    {
-      return {};
-    }
 
     static Name find_preceding(
       const Names& ns, const Name& origin, const Name& sname);
