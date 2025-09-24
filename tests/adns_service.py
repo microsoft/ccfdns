@@ -2,9 +2,7 @@
 # Licensed under the Apache 2.0 License.
 
 import http
-import time
 import json
-import requests
 import infra.network
 from infra.interfaces import (
     RPCInterface,
@@ -13,9 +11,7 @@ from infra.interfaces import (
     HostSpec,
     PRIMARY_RPC_INTERFACE,
 )
-from loguru import logger as LOG
 
-DEFAULT_NODES = ["local://127.0.0.1:8080"]
 
 AUTH_POLICY_ALLOW_ALL = """
 package policy
@@ -72,32 +68,6 @@ class aDNSConfig(dict):
         self.nsec3_hash_algorithm = nsec3_hash_algorithm
         self.nsec3_hash_iterations = nsec3_hash_iterations
         self.nsec3_salt_length = nsec3_salt_length
-
-
-def configure(base_url, cabundle, config, client_cert=None, num_retries=10):
-    def success(r):
-        return (
-            r.status_code == http.HTTPStatus.OK
-            or r.status_code == http.HTTPStatus.NO_CONTENT
-        )
-
-    for _ in range(num_retries):
-        r = requests.post(
-            base_url + "/app/configure",
-            json.dumps(config),
-            timeout=60,
-            verify=cabundle,
-            headers={"Content-Type": "application/json"},
-            cert=client_cert,
-        )
-
-        if not success(r):
-            LOG.info(
-                f"Configuring failed with status code {r.status_code}: {r.text}, retrying..."
-            )
-            time.sleep(1)
-
-    assert success(r), r.text
 
 
 def set_policy(network, proposal_name, policy):
