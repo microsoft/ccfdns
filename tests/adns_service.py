@@ -17,6 +17,11 @@ from loguru import logger as LOG
 
 DEFAULT_NODES = ["local://127.0.0.1:8080"]
 
+AUTH_POLICY_ALLOW_ALL = """
+package policy
+default allow := true
+"""
+
 
 class NoReceiptException(Exception):
     pass
@@ -131,6 +136,29 @@ def set_configuration(network, config):
     )
 
 
+def set_auth_policy(network, key, policy):
+    primary, _ = network.find_primary()
+
+    proposal_body, careful_vote = network.consortium.make_proposal(
+        key, new_policy=policy
+    )
+
+    proposal = network.consortium.get_any_active_member().propose(
+        primary, proposal_body
+    )
+
+    network.consortium.vote_using_majority(
+        primary,
+        proposal,
+        careful_vote,
+    )
+
+
+def set_initial_auth(network):
+    set_auth_policy(network, "set_service_definition_auth", AUTH_POLICY_ALLOW_ALL)
+    set_auth_policy(network, "set_platform_definition_auth", AUTH_POLICY_ALLOW_ALL)
+
+
 def assign_node_addresses(network, addr, add_node_id=True):
     """Assign shortened node IDs as node names"""
     node_addresses = {}
@@ -204,6 +232,7 @@ def run(args, tcp_port=None, udp_port=None):
     )
 
     set_configuration(network, json.dumps(args.adns))
+    set_initial_auth(network)
 
     primary, _ = network.find_primary()
     with primary.client(identity="member0") as client:

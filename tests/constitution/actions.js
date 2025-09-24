@@ -331,6 +331,13 @@ function updateServiceConfig(new_config) {
 }
 
 function setServiceDefinitionAuth(new_policy) {
+  let current =
+    ccf.kv["public:ccf.gov.ccfdns.service_definition_auth"].get(
+      getSingletonKvKey(),
+    );
+  if (current != undefined) {
+    throw new Error("Cannot overwrite service definition auth policy");
+  }
   ccf.kv["public:ccf.gov.ccfdns.service_definition_auth"].set(
     getSingletonKvKey(),
     ccf.jsonCompatibleToBuf(new_policy),
@@ -338,6 +345,13 @@ function setServiceDefinitionAuth(new_policy) {
 }
 
 function setPlatformDefinitionAuth(new_policy) {
+  let current =
+    ccf.kv["public:ccf.gov.ccfdns.platform_definition_auth"].get(
+      getSingletonKvKey(),
+    );
+  if (current != undefined) {
+    throw new Error("Cannot overwrite platform definition auth policy");
+  }
   ccf.kv["public:ccf.gov.ccfdns.platform_definition_auth"].set(
     getSingletonKvKey(),
     ccf.jsonCompatibleToBuf(new_policy),

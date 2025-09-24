@@ -21,23 +21,13 @@ from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from hashlib import sha256
-from adns_service import aDNSConfig, set_policy
+from adns_service import aDNSConfig
 from pycose.messages import Sign1Message  # type: ignore
 import cbor2
 from cwt import COSE, COSEKey
 
 rdc = dns.rdataclass
 rdt = dns.rdatatype
-
-SERVICE_REGISTRATION_AUTH_ALLOW_ALL = """
-package policy
-default allow := true
-"""
-
-PLATFORM_DEFINITION_AUTH_ALLOW_ALL = """
-package policy
-default allow := true
-"""
 
 
 def get_container_group_snp_endorsements_base64():
@@ -437,76 +427,6 @@ def register_failed(with_error, *args, **kwargs):
         )
 
 
-def create_service_definition_auth(network, permissive=True):
-    did, feed, svn = get_uvm_endorsements(network)
-    if not permissive:
-        svn = int(svn) + 1
-
-    return f"""
-package policy
-
-default allow := false
-
-allow_iss if {{
-    input.iss == "{did}"
-}}
-
-allow_sub if {{
-    input.sub == "{feed}"
-}}
-
-allow_svn if {{
-    input.svn
-    input.svn >= {svn}
-}}
-
-allow if {{
-    allow_iss
-    allow_sub
-    allow_svn
-}}
-"""
-
-
-def create_platform_definition_auth(network, permissive=True):
-    did, feed, svn = get_uvm_endorsements(network)
-    if not permissive:
-        svn = int(svn) + 1
-
-    return f"""
-package policy
-
-default allow := false
-
-allow_iss if {{
-    input.iss == "{did}"
-}}
-
-allow_sub if {{
-    input.sub == "{feed}"
-}}
-
-allow_svn if {{
-    input.svn
-    input.svn >= {svn}
-}}
-
-allow if {{
-    allow_iss
-    allow_sub
-    allow_svn
-}}
-"""
-
-
-def set_service_definition_auth(network, policy):
-    set_policy(network, "set_service_definition_auth", policy)
-
-
-def set_platform_definition_auth(network, policy):
-    set_policy(network, "set_platform_definition_auth", policy)
-
-
 def set_service_definition(network, enclave, service_name, permissive=True):
     policy = get_service_definition(enclave=enclave, permissive=permissive)
     primary, _ = network.find_primary()
@@ -588,9 +508,6 @@ def test_service_registration(network, args):
     enclave = args.enclave_platform
     service_key = ec.generate_private_key(ec.SECP256R1(), default_backend())
 
-    set_service_definition_auth(network, SERVICE_REGISTRATION_AUTH_ALLOW_ALL)
-    set_platform_definition_auth(network, PLATFORM_DEFINITION_AUTH_ALLOW_ALL)
-
     set_service_definition_successfully(
         network, enclave, service_name="test.acidns10.attested.name.", permissive=True
     )
@@ -648,55 +565,13 @@ def test_service_registration(network, args):
     )
 
 
-def test_policy_registration(network, args):
-    # Test with a proper service registration policy which checks UVM endorsements.
-    set_service_definition_auth(
-        network, create_service_definition_auth(network, permissive=True)
-    )
-    set_service_definition_successfully(
-        network,
-        enclave=args.enclave_platform,
-        service_name="test.acidns10.attested.name.",
-    )
-
-    # Test with incremented SVN to ensure current UVM endorsements are not accepted when setting new relying party policy.
-    set_service_definition_auth(
-        network, create_service_definition_auth(network, permissive=False)
-    )
-    set_service_definition_failed(
-        "Policy not satisfied",
-        network,
-        enclave=args.enclave_platform,
-        service_name="test.acidns10.attested.name.",
-    )
-
-    # Same for platform relying party policy.
-    set_platform_definition_auth(
-        network, create_platform_definition_auth(network, permissive=True)
-    )
-
-    set_platform_definition_successfully(
-        network,
-        enclave=args.enclave_platform,
-        platform=get_attestation_format(args.enclave_platform),
-    )
-
-    set_platform_definition_auth(
-        network, create_platform_definition_auth(network, permissive=False)
-    )
-    set_platform_definition_failed(
-        "Policy not satisfied",
-        network,
-        enclave=args.enclave_platform,
-        platform=get_attestation_format(args.enclave_platform),
-    )
-
-
 def poll_receipt(cb, num_retries=10):
     r = cb()
-    while r.status_code != http.HTTPStatus.OK:
+    while r.status_code != http.HTTPStatus.OK and num_retries > 0:
         time.sleep(1)
+        num_retries -= 1
         r = cb()
+
     assert r.status_code == http.HTTPStatus.OK
     return r.body.json()
 
@@ -750,9 +625,6 @@ def run(args):
 
     test_ksk_receipt(adns_nw, args)
     test_service_registration(adns_nw, args)
-
-    if args.enclave_platform != "virtual":
-        test_policy_registration(adns_nw, args)
 
 
 def main():
