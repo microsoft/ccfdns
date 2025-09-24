@@ -427,7 +427,7 @@ default allow := true
 
     QCBOREncode_AddInt64ToMapN(&cbor_encode, 1, sign_ctx.cose_algorithm_id);
 
-    QCBOREncode_OpenMapInMapN(&cbor_encode, CWT_CLAIMS_LABEL); // > phdr.cwt
+    QCBOREncode_OpenMapInMapN(&cbor_encode, COSE_CWT_LABEL); // > phdr.cwt
 
     QCBOREncode_AddTextToMapN(
       &cbor_encode, CWT_ISS_LABEL, from_string(cwt_claims.iss));

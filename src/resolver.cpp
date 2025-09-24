@@ -1547,7 +1547,7 @@ namespace aDNS
     {
       try
       {
-        auto platform = nlohmann::json(phdr.cwt.att).dump();
+        auto platform = nlohmann::json(phdr.cwt.att).get<std::string>();
         verify_platform_definition(
           ccf::ds::to_hex(measurement.data), platform_definition(platform));
 

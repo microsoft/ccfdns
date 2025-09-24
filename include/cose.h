@@ -24,7 +24,8 @@ namespace aDNS
     // COSE/CWT constants
     static constexpr int64_t COSE_ALG_LABEL = 1;
     static constexpr int64_t COSE_ALG_ES256 = -7;
-    static constexpr int64_t CWT_CLAIMS_LABEL = 15;
+    static constexpr int64_t COSE_CWT_LABEL = 15;
+    static constexpr int64_t COSE_X5C_LABEL = 33;
     static constexpr int64_t CWT_ISS_LABEL = 1;
     static constexpr int64_t CWT_SUB_LABEL = 2;
     static constexpr int64_t CWT_CNF_LABEL = 8;
@@ -77,6 +78,7 @@ namespace aDNS
     {
       int64_t alg{};
       CwtClaim cwt{};
+      std::vector<std::vector<uint8_t>> x5chain{};
     };
 
     struct CoseRequest
@@ -118,6 +120,57 @@ namespace aDNS
     inline std::string_view as_string(UsefulBufC buf)
     {
       return {static_cast<const char*>(buf.ptr), buf.len};
+    }
+
+    inline std::vector<std::vector<uint8_t>> decode_x5chain(
+      QCBORDecodeContext& ctx, const QCBORItem& x5chain)
+    {
+      std::vector<std::vector<uint8_t>> parsed;
+
+      if (x5chain.uDataType == QCBOR_TYPE_ARRAY)
+      {
+        QCBORDecode_EnterArrayFromMapN(&ctx, COSE_X5C_LABEL);
+        while (true)
+        {
+          QCBORItem item;
+          auto result = QCBORDecode_GetNext(&ctx, &item);
+          if (result == QCBOR_ERR_NO_MORE_ITEMS)
+          {
+            break;
+          }
+          if (result != QCBOR_SUCCESS)
+          {
+            throw std::runtime_error("Item in x5chain is not well-formed.");
+          }
+          if (item.uDataType == QCBOR_TYPE_BYTE_STRING)
+          {
+            parsed.push_back(as_vector(item.val.string));
+          }
+          else
+          {
+            throw std::runtime_error(
+              "Next item in x5chain was not of type byte string.");
+          }
+        }
+        QCBORDecode_ExitArray(&ctx);
+        if (parsed.empty())
+        {
+          throw std::runtime_error(
+            "x5chain array length was 0 in COSE header.");
+        }
+      }
+      else if (x5chain.uDataType == QCBOR_TYPE_BYTE_STRING)
+      {
+        parsed.push_back(as_vector(x5chain.val.string));
+      }
+      else
+      {
+        throw std::runtime_error(
+          "Value type of x5chain in COSE header is not array or byte "
+          "string.");
+      }
+
+      return parsed;
     }
 
     // COSE parsing function implementations
@@ -262,7 +315,7 @@ namespace aDNS
 
     inline CwtClaim parse_cwt_claims(QCBORDecodeContext& ctx)
     {
-      QCBORDecode_EnterMapFromMapN(&ctx, CWT_CLAIMS_LABEL);
+      QCBORDecode_EnterMapFromMapN(&ctx, COSE_CWT_LABEL);
       auto decode_error = QCBORDecode_GetError(&ctx);
       if (decode_error != QCBOR_SUCCESS)
       {
@@ -350,6 +403,7 @@ namespace aDNS
       {
         ALG_INDEX,
         CWT_CLAIMS_INDEX,
+        X5CHAIN_INDEX,
         END_INDEX,
       };
       QCBORItem header_items[END_INDEX + 1];
@@ -358,9 +412,13 @@ namespace aDNS
       header_items[ALG_INDEX].uLabelType = QCBOR_TYPE_INT64;
       header_items[ALG_INDEX].uDataType = QCBOR_TYPE_INT64;
 
-      header_items[CWT_CLAIMS_INDEX].label.int64 = CWT_CLAIMS_LABEL;
+      header_items[CWT_CLAIMS_INDEX].label.int64 = COSE_CWT_LABEL;
       header_items[CWT_CLAIMS_INDEX].uLabelType = QCBOR_TYPE_INT64;
       header_items[CWT_CLAIMS_INDEX].uDataType = QCBOR_TYPE_MAP;
+
+      header_items[X5CHAIN_INDEX].label.int64 = COSE_X5C_LABEL;
+      header_items[X5CHAIN_INDEX].uLabelType = QCBOR_TYPE_INT64;
+      header_items[X5CHAIN_INDEX].uDataType = QCBOR_TYPE_ANY;
 
       header_items[END_INDEX].uLabelType = QCBOR_TYPE_NONE;
 
@@ -384,6 +442,11 @@ namespace aDNS
       if (header_items[CWT_CLAIMS_INDEX].uDataType != QCBOR_TYPE_NONE)
       {
         phdr.cwt = parse_cwt_claims(ctx);
+      }
+
+      if (header_items[X5CHAIN_INDEX].uDataType != QCBOR_TYPE_NONE)
+      {
+        phdr.x5chain = decode_x5chain(ctx, header_items[X5CHAIN_INDEX]);
       }
 
       return phdr;
