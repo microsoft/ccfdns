@@ -966,7 +966,11 @@ TEST_CASE("Service registration")
   cose::ServiceInfo svi{.port = "443", .protocol = "tcp", .ipv4 = address};
 
   cose::CwtClaim cwt_claims{
-    .iss = url_name, .cnf = cnf, .att = get_attestation_type(), .svi = svi};
+    .iss = url_name,
+    .sub = {},
+    .cnf = cnf,
+    .att = get_attestation_type(),
+    .svi = svi};
 
   auto rr = s.create_cose_sign1(cwt_claims, s.get_service_key());
   s.register_service(rr);
