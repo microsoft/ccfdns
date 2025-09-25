@@ -136,7 +136,7 @@ namespace
     std::string_view policy, const cose::ProtectedHeader& phdr)
   {
     nlohmann::json rego_input;
-    rego_input["iss"] = phdr.cwt.iss;
+    rego_input["phdr"]["cwt"]["iss"] = phdr.cwt.iss;
 
     rego::Interpreter interpreter(true /* v1 compatible */);
     auto rv = interpreter.add_module("policy", std::string(policy));

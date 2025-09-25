@@ -113,7 +113,7 @@ package policy
 default allow := false
 
 allowed_issuer if {{
-    input.iss == "{did}"
+    input.phdr.cwt.iss == "{did}"
 }}
 
 allow if {{
