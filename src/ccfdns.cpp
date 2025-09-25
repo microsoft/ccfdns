@@ -1494,7 +1494,7 @@ namespace ccfdns
           const auto& platform = as_cose.protected_header.cwt.sub;
           if (platform.empty())
           {
-            throw std::runtime_error("Missing service name (sub)");
+            throw std::runtime_error("Missing platform name (sub)");
           }
 
           ccfdns->set_platform_definition(platform, new_policy);
