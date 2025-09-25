@@ -92,7 +92,7 @@ def set_configuration(network, config):
     primary, _ = network.find_primary()
 
     proposal_body, careful_vote = network.consortium.make_proposal(
-        "set_configuration", new_config=config
+        "set_adns_configuration", new_config=config
     )
 
     proposal = network.consortium.get_any_active_member().propose(

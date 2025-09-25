@@ -336,7 +336,9 @@ function setServiceDefinitionAuth(new_policy) {
       getSingletonKvKey(),
     );
   if (current != undefined) {
-    throw new Error("Cannot overwrite service definition auth policy");
+    throw new Error(
+      "Governance can only be used to set initial service definition auth, subsequent updates must take place through /set-service-definition-auth",
+    );
   }
   ccf.kv["public:ccf.gov.ccfdns.service_definition_auth"].set(
     getSingletonKvKey(),
@@ -350,7 +352,9 @@ function setPlatformDefinitionAuth(new_policy) {
       getSingletonKvKey(),
     );
   if (current != undefined) {
-    throw new Error("Cannot overwrite platform definition auth policy");
+    throw new Error(
+      "Governance can only be used to set initial platform definition auth, subsequent updates must take place through /set-platform-definition-auth",
+    );
   }
   ccf.kv["public:ccf.gov.ccfdns.platform_definition_auth"].set(
     getSingletonKvKey(),
@@ -358,7 +362,7 @@ function setPlatformDefinitionAuth(new_policy) {
   );
 }
 
-function setConfiguration(new_config) {
+function setADNSConfiguration(new_config) {
   ccf.kv["public:ccf.gov.ccfdns.adns_configuration"].set(
     getSingletonKvKey(),
     ccf.strToBuf(new_config),
@@ -1426,13 +1430,13 @@ const actions = new Map([
     ),
   ],
   [
-    "set_configuration",
+    "set_adns_configuration",
     new Action(
       function (args) {
         checkType(args.new_config, "string", "new_config");
       },
       function (args) {
-        setConfiguration(args.new_config);
+        setADNSConfiguration(args.new_config);
       },
     ),
   ],

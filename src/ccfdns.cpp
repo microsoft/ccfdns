@@ -133,12 +133,10 @@ namespace
   }
 
   void verify_against_auth_policy(
-    std::string_view policy, const std::string& verified_did)
+    std::string_view policy, const cose::ProtectedHeader& phdr)
   {
-    CCF_APP_INFO("Verifying DID {} against policy {}", verified_did, policy);
-
     nlohmann::json rego_input;
-    rego_input["iss"] = verified_did;
+    rego_input["iss"] = phdr.cwt.iss;
 
     rego::Interpreter interpreter(true /* v1 compatible */);
     auto rv = interpreter.add_module("policy", std::string(policy));
@@ -168,7 +166,7 @@ namespace
     }
   }
 
-  std::string get_verified_did(const cose::CoseRequest& as_cose)
+  void verify_did(const cose::CoseRequest& as_cose)
   {
     std::string pem_chain;
     for (auto const& c : as_cose.protected_header.x5chain)
@@ -176,15 +174,12 @@ namespace
       pem_chain += ccf::crypto::cert_der_to_pem(c).str();
     }
 
-    auto did_document_str = didx509::resolve(
+    // Throws in can't verify against the chain.
+    // Consider using resolve_jwk once upgraded to newer CCF.
+    std::ignore = didx509::resolve(
       pem_chain,
       as_cose.protected_header.cwt.iss,
       true /* Do not validate time */);
-
-    CCF_APP_INFO("Resolved DID document: {}", did_document_str);
-
-    auto as_json = nlohmann::json::parse(did_document_str);
-    return as_json["verificationMethod"][0]["controller"];
   }
 
   cose::CoseRequest get_verified_cose(const std::vector<uint8_t>& body)
@@ -1442,15 +1437,16 @@ namespace ccfdns
           const auto& body = ctx.rpc_ctx->get_request_body();
 
           auto as_cose = cose::decode_cose_request(body);
-          auto did = get_verified_did(as_cose);
-          auto policy = ccfdns->service_definition_auth();
+          verify_did(as_cose);
 
-          verify_against_auth_policy(policy, did);
+          auto policy = ccfdns->service_definition_auth();
+          verify_against_auth_policy(policy, as_cose.protected_header);
 
           const auto& service_name = as_cose.protected_header.cwt.sub;
           if (service_name.empty())
           {
-            throw std::runtime_error("Missing service name (sub)");
+            throw std::runtime_error(
+              "Missing sub in CWT Claims (should contain service name)");
           }
 
           auto new_policy =
@@ -1482,10 +1478,10 @@ namespace ccfdns
           const auto& body = ctx.rpc_ctx->get_request_body();
 
           auto as_cose = cose::decode_cose_request(body);
-          auto did = get_verified_did(as_cose);
-          auto policy = ccfdns->platform_definition_auth();
+          verify_did(as_cose);
 
-          verify_against_auth_policy(policy, did);
+          auto policy = ccfdns->platform_definition_auth();
+          verify_against_auth_policy(policy, as_cose.protected_header);
 
           auto new_policy =
             std::string(as_cose.payload.begin(), as_cose.payload.end());
@@ -1494,10 +1490,13 @@ namespace ccfdns
           const auto& platform = as_cose.protected_header.cwt.sub;
           if (platform.empty())
           {
-            throw std::runtime_error("Missing platform name (sub)");
+            throw std::runtime_error(
+              "Missing sub in CWT Claims (should contain platform name)");
           }
 
-          ccfdns->set_platform_definition(platform, new_policy);
+          auto verified_platform = nlohmann::json(platform).get<std::string>();
+
+          ccfdns->set_platform_definition(verified_platform, new_policy);
           ctx.rpc_ctx->set_response_status(HTTP_STATUS_OK);
         }
         catch (std::exception& ex)
@@ -1522,10 +1521,10 @@ namespace ccfdns
           const auto& body = ctx.rpc_ctx->get_request_body();
 
           auto as_cose = cose::decode_cose_request(body);
-          auto did = get_verified_did(as_cose);
-          auto policy = ccfdns->service_definition_auth();
+          verify_did(as_cose);
 
-          verify_against_auth_policy(policy, did);
+          auto policy = ccfdns->service_definition_auth();
+          verify_against_auth_policy(policy, as_cose.protected_header);
 
           auto new_policy =
             std::string(as_cose.payload.begin(), as_cose.payload.end());
@@ -1556,10 +1555,10 @@ namespace ccfdns
           const auto& body = ctx.rpc_ctx->get_request_body();
 
           auto as_cose = cose::decode_cose_request(body);
-          auto did = get_verified_did(as_cose);
-          auto policy = ccfdns->platform_definition_auth();
+          verify_did(as_cose);
 
-          verify_against_auth_policy(policy, did);
+          auto policy = ccfdns->platform_definition_auth();
+          verify_against_auth_policy(policy, as_cose.protected_header);
 
           auto new_policy =
             std::string(as_cose.payload.begin(), as_cose.payload.end());

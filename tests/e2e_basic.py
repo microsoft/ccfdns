@@ -490,7 +490,6 @@ def register_failed(with_error, *args, **kwargs):
 def set_service_definition(network, enclave, issuer, service_name, permissive=True):
     primary, _ = network.find_primary()
 
-    # Let's hash policy as report data for now.
     policy = get_service_definition(enclave=enclave, permissive=permissive).encode()
     reg_request = create_cose_with_x5chain(issuer, policy, service_name)
 
@@ -568,7 +567,6 @@ def set_service_definition_auth_failed(with_error, *args, **kwargs):
 def set_platform_definition(network, enclave, issuer, platform, permissive=True):
     primary, _ = network.find_primary()
 
-    # Let's hash policy as report data for now.
     policy = get_platform_definition(enclave=enclave, permissive=permissive).encode()
     reg_request = create_cose_with_x5chain(issuer, policy, platform)
 
