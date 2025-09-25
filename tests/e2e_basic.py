@@ -7,11 +7,12 @@ import base64
 import socket
 import requests
 import json
-import infra.e2e_args
+import infra.e2e_args  # type: ignore
 import os
 import time
 import subprocess
 import adns_service
+from did_utils import create_issuer
 import dns
 import dns.message
 import dns.query
@@ -21,23 +22,13 @@ from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from hashlib import sha256
-from adns_service import aDNSConfig, set_policy
+from adns_service import aDNSConfig
 from pycose.messages import Sign1Message  # type: ignore
 import cbor2
 from cwt import COSE, COSEKey
 
 rdc = dns.rdataclass
 rdt = dns.rdatatype
-
-SERVICE_REGISTRATION_AUTH_ALLOW_ALL = """
-package policy
-default allow := true
-"""
-
-PLATFORM_DEFINITION_AUTH_ALLOW_ALL = """
-package policy
-default allow := true
-"""
 
 
 def get_container_group_snp_endorsements_base64():
@@ -113,6 +104,22 @@ def get_attestation(report_data, enclave, as_json=True):
             "uvm": uvm_endorsements,
         }
     )
+
+
+def get_policy_for_issuer(did):
+    return f"""
+package policy
+
+default allow := false
+
+allowed_issuer if {{
+    input.phdr.cwt.iss == "{did}"
+}}
+
+allow if {{
+    allowed_issuer
+}}
+"""
 
 
 def get_security_policy(enclave):
@@ -237,6 +244,49 @@ def cose_register_service_request(
     cose = COSE.new()
     return cose.encode_and_sign(
         protected=phdr, unprotected={}, payload=attestation, key=cose_key
+    )
+
+
+def create_cose_with_x5chain(issuer, payload, sub=None):
+    """Create COSE Sign1 message with X.509 certificate chain and issuer"""
+
+    # COSE header constants
+    PHDR_X5CHAIN = 33  # x5chain header parameter
+
+    # Build protected headers with full certificate chain (DER encoding for COSE)
+    cert_chain_der = []
+    for i, cert in enumerate(issuer.certs):
+        try:
+            der_bytes = cert.public_bytes(serialization.Encoding.DER)
+            cert_chain_der.append(der_bytes)
+            print(f"Certificate {i} DER length: {len(der_bytes)} bytes")
+        except Exception as e:
+            print(f"Error encoding certificate {i} to DER: {e}")
+            raise
+
+    phdr = {
+        PHDR_ALG: ALG_ES256,  # ES256 algorithm
+        PHDR_X5CHAIN: cert_chain_der,
+        PHDR_CWT: {
+            CWT_ISS: issuer.did,  # DID issuer (based on root cert fingerprint)
+        },
+    }
+
+    if sub:
+        phdr[PHDR_CWT][CWT_SUB] = sub
+
+    # Convert leaf private key to COSE key format (for signing)
+    pem_key = issuer.private_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.TraditionalOpenSSL,
+        encryption_algorithm=serialization.NoEncryption(),
+    ).decode()
+    cose_key = COSEKey.from_pem(pem_key)
+
+    # Create and sign COSE message
+    cose = COSE.new()
+    return cose.encode_and_sign(
+        protected=phdr, unprotected={}, payload=payload, key=cose_key
     )
 
 
@@ -437,116 +487,96 @@ def register_failed(with_error, *args, **kwargs):
         )
 
 
-def create_service_definition_auth(network, permissive=True):
-    did, feed, svn = get_uvm_endorsements(network)
-    if not permissive:
-        svn = int(svn) + 1
-
-    return f"""
-package policy
-
-default allow := false
-
-allow_iss if {{
-    input.iss == "{did}"
-}}
-
-allow_sub if {{
-    input.sub == "{feed}"
-}}
-
-allow_svn if {{
-    input.svn
-    input.svn >= {svn}
-}}
-
-allow if {{
-    allow_iss
-    allow_sub
-    allow_svn
-}}
-"""
-
-
-def create_platform_definition_auth(network, permissive=True):
-    did, feed, svn = get_uvm_endorsements(network)
-    if not permissive:
-        svn = int(svn) + 1
-
-    return f"""
-package policy
-
-default allow := false
-
-allow_iss if {{
-    input.iss == "{did}"
-}}
-
-allow_sub if {{
-    input.sub == "{feed}"
-}}
-
-allow_svn if {{
-    input.svn
-    input.svn >= {svn}
-}}
-
-allow if {{
-    allow_iss
-    allow_sub
-    allow_svn
-}}
-"""
-
-
-def set_service_definition_auth(network, policy):
-    set_policy(network, "set_service_definition_auth", policy)
-
-
-def set_platform_definition_auth(network, policy):
-    set_policy(network, "set_platform_definition_auth", policy)
-
-
-def set_service_definition(network, enclave, service_name, permissive=True):
-    policy = get_service_definition(enclave=enclave, permissive=permissive)
+def set_service_definition(network, enclave, issuer, service_name, permissive=True):
     primary, _ = network.find_primary()
 
-    # Let's hash policy as report data for now.
-    report_data = sha256(policy.encode()).digest()
+    policy = get_service_definition(enclave=enclave, permissive=permissive).encode()
+    reg_request = create_cose_with_x5chain(issuer, policy, service_name)
 
     with primary.client(identity="member0") as client:
         r = client.post(
             "/app/set-service-definition",
-            {
-                "service_name": service_name,
-                "policy": policy,
-                "attestation": get_attestation(
-                    report_data=report_data, enclave=enclave
-                ),
-            },
+            body=reg_request,
+            headers={"Content-Type": "application/cose"},
         )
-        assert r.status_code == http.HTTPStatus.NO_CONTENT, r
+        assert r.status_code == http.HTTPStatus.OK, r
 
 
-def set_platform_definition(network, enclave, platform, permissive=True):
-    policy = get_platform_definition(enclave=enclave, permissive=permissive)
+def set_platform_definition_auth(network, issuer, platform):
     primary, _ = network.find_primary()
 
-    # Let's hash policy as report data for now.
-    report_data = sha256(policy.encode()).digest()
+    payload = get_policy_for_issuer(issuer.did).encode()
+    reg_request = create_cose_with_x5chain(issuer, payload, platform)
+
+    with primary.client(identity="member0") as client:
+        r = client.post(
+            "/app/set-platform-definition-auth",
+            body=reg_request,
+            headers={"Content-Type": "application/cose"},
+        )
+        assert r.status_code == http.HTTPStatus.OK, r
+
+
+def set_platform_definition_auth_successfully(*args, **kwargs):
+    set_platform_definition_auth(*args, **kwargs)
+
+
+def set_platform_definition_auth_failed(with_error, *args, **kwargs):
+    try:
+        set_platform_definition_auth(*args, **kwargs)
+    except Exception as e:
+        if with_error not in str(e):
+            raise AssertionError(f"Expected error '{with_error}' but got: {e}")
+    else:
+        raise AssertionError(
+            f"Expected failure with error '{with_error}' but succeeded"
+        )
+
+
+def set_service_definition_auth(network, issuer, service_name):
+    primary, _ = network.find_primary()
+
+    payload = get_policy_for_issuer(issuer.did).encode()
+    reg_request = create_cose_with_x5chain(issuer, payload, service_name)
+
+    with primary.client(identity="member0") as client:
+        r = client.post(
+            "/app/set-service-definition-auth",
+            body=reg_request,
+            headers={"Content-Type": "application/cose"},
+        )
+        assert r.status_code == http.HTTPStatus.OK, r
+
+
+def set_service_definition_auth_successfully(*args, **kwargs):
+    set_service_definition_auth(*args, **kwargs)
+
+
+def set_service_definition_auth_failed(with_error, *args, **kwargs):
+    try:
+        set_service_definition_auth(*args, **kwargs)
+    except Exception as e:
+        if with_error not in str(e):
+            raise AssertionError(f"Expected error '{with_error}' but got: {e}")
+    else:
+        raise AssertionError(
+            f"Expected failure with error '{with_error}' but succeeded"
+        )
+
+
+def set_platform_definition(network, enclave, issuer, platform, permissive=True):
+    primary, _ = network.find_primary()
+
+    policy = get_platform_definition(enclave=enclave, permissive=permissive).encode()
+    reg_request = create_cose_with_x5chain(issuer, policy, platform)
 
     with primary.client(identity="member0") as client:
         r = client.post(
             "/app/set-platform-definition",
-            {
-                "platform": platform,
-                "policy": policy,
-                "attestation": get_attestation(
-                    report_data=report_data, enclave=enclave
-                ),
-            },
+            body=reg_request,
+            headers={"Content-Type": "application/cose"},
         )
-        assert r.status_code == http.HTTPStatus.NO_CONTENT, r
+        assert r.status_code == http.HTTPStatus.OK, r
 
 
 def set_service_definition_successfully(*args, **kwargs):
@@ -588,14 +618,28 @@ def test_service_registration(network, args):
     enclave = args.enclave_platform
     service_key = ec.generate_private_key(ec.SECP256R1(), default_backend())
 
-    set_service_definition_auth(network, SERVICE_REGISTRATION_AUTH_ALLOW_ALL)
-    set_platform_definition_auth(network, PLATFORM_DEFINITION_AUTH_ALLOW_ALL)
+    issuer = create_issuer()
+
+    set_service_definition_auth_successfully(
+        network, issuer, "test.acidns10.attested.name."
+    )
+    set_platform_definition_auth_successfully(
+        network, issuer, get_attestation_format(enclave)
+    )
 
     set_service_definition_successfully(
-        network, enclave, service_name="test.acidns10.attested.name.", permissive=True
+        network,
+        enclave,
+        issuer,
+        service_name="test.acidns10.attested.name.",
+        permissive=True,
     )
     set_platform_definition_successfully(
-        network, enclave, platform=get_attestation_format(enclave), permissive=True
+        network,
+        enclave,
+        issuer,
+        platform=get_attestation_format(enclave),
+        permissive=True,
     )
 
     register_successfully(
@@ -610,7 +654,7 @@ def test_service_registration(network, args):
 
     # Different service name should fail, no policy for it.
     register_failed(
-        "no service relying party policy",
+        "no service definition",
         primary,
         enclave=enclave,
         service_name="another.acidns10.attested.name.",
@@ -619,10 +663,18 @@ def test_service_registration(network, args):
 
     # Register under wrong service registration policy (modified host data, aka security policy).
     set_service_definition_successfully(
-        network, enclave, service_name="test.acidns10.attested.name.", permissive=False
+        network,
+        enclave,
+        issuer,
+        service_name="test.acidns10.attested.name.",
+        permissive=False,
     )
     set_platform_definition_successfully(
-        network, enclave, platform=get_attestation_format(enclave), permissive=True
+        network,
+        enclave,
+        issuer,
+        platform=get_attestation_format(enclave),
+        permissive=True,
     )
     register_failed(
         "Policy not satisfied",
@@ -634,10 +686,18 @@ def test_service_registration(network, args):
 
     # Register under wrong platform registration policy (modified host data, aka security policy).
     set_service_definition_successfully(
-        network, enclave, service_name="test.acidns10.attested.name.", permissive=True
+        network,
+        enclave,
+        issuer,
+        service_name="test.acidns10.attested.name.",
+        permissive=True,
     )
     set_platform_definition_successfully(
-        network, enclave, platform=get_attestation_format(enclave), permissive=False
+        network,
+        enclave,
+        issuer,
+        platform=get_attestation_format(enclave),
+        permissive=False,
     )
     register_failed(
         "Policy not satisfied",
@@ -648,55 +708,13 @@ def test_service_registration(network, args):
     )
 
 
-def test_policy_registration(network, args):
-    # Test with a proper service registration policy which checks UVM endorsements.
-    set_service_definition_auth(
-        network, create_service_definition_auth(network, permissive=True)
-    )
-    set_service_definition_successfully(
-        network,
-        enclave=args.enclave_platform,
-        service_name="test.acidns10.attested.name.",
-    )
-
-    # Test with incremented SVN to ensure current UVM endorsements are not accepted when setting new relying party policy.
-    set_service_definition_auth(
-        network, create_service_definition_auth(network, permissive=False)
-    )
-    set_service_definition_failed(
-        "Policy not satisfied",
-        network,
-        enclave=args.enclave_platform,
-        service_name="test.acidns10.attested.name.",
-    )
-
-    # Same for platform relying party policy.
-    set_platform_definition_auth(
-        network, create_platform_definition_auth(network, permissive=True)
-    )
-
-    set_platform_definition_successfully(
-        network,
-        enclave=args.enclave_platform,
-        platform=get_attestation_format(args.enclave_platform),
-    )
-
-    set_platform_definition_auth(
-        network, create_platform_definition_auth(network, permissive=False)
-    )
-    set_platform_definition_failed(
-        "Policy not satisfied",
-        network,
-        enclave=args.enclave_platform,
-        platform=get_attestation_format(args.enclave_platform),
-    )
-
-
 def poll_receipt(cb, num_retries=10):
     r = cb()
-    while r.status_code != http.HTTPStatus.OK:
+    while r.status_code != http.HTTPStatus.OK and num_retries > 0:
         time.sleep(1)
+        num_retries -= 1
         r = cb()
+
     assert r.status_code == http.HTTPStatus.OK
     return r.body.json()
 
@@ -739,7 +757,7 @@ def run(args):
 
     test_attestation(args)
 
-    adns_nw, _ = adns_service.run(
+    adns_nw = adns_service.run(
         args,
         tcp_port=53,
         udp_port=53,
@@ -750,9 +768,6 @@ def run(args):
 
     test_ksk_receipt(adns_nw, args)
     test_service_registration(adns_nw, args)
-
-    if args.enclave_platform != "virtual":
-        test_policy_registration(adns_nw, args)
 
 
 def main():

@@ -251,7 +251,7 @@ def set_policies(network, args):
 def run(args):
     """Run tests"""
 
-    adns_nw, _ = adns_service.run(
+    adns_nw = adns_service.run(
         args,
         tcp_port=5353,
         udp_port=5353,

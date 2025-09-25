@@ -331,6 +331,15 @@ function updateServiceConfig(new_config) {
 }
 
 function setServiceDefinitionAuth(new_policy) {
+  let current =
+    ccf.kv["public:ccf.gov.ccfdns.service_definition_auth"].get(
+      getSingletonKvKey(),
+    );
+  if (current != undefined) {
+    throw new Error(
+      "Governance can only be used to set initial service definition auth, subsequent updates must take place through /set-service-definition-auth",
+    );
+  }
   ccf.kv["public:ccf.gov.ccfdns.service_definition_auth"].set(
     getSingletonKvKey(),
     ccf.jsonCompatibleToBuf(new_policy),
@@ -338,9 +347,25 @@ function setServiceDefinitionAuth(new_policy) {
 }
 
 function setPlatformDefinitionAuth(new_policy) {
+  let current =
+    ccf.kv["public:ccf.gov.ccfdns.platform_definition_auth"].get(
+      getSingletonKvKey(),
+    );
+  if (current != undefined) {
+    throw new Error(
+      "Governance can only be used to set initial platform definition auth, subsequent updates must take place through /set-platform-definition-auth",
+    );
+  }
   ccf.kv["public:ccf.gov.ccfdns.platform_definition_auth"].set(
     getSingletonKvKey(),
     ccf.jsonCompatibleToBuf(new_policy),
+  );
+}
+
+function setADNSConfiguration(new_config) {
+  ccf.kv["public:ccf.gov.ccfdns.adns_configuration"].set(
+    getSingletonKvKey(),
+    ccf.strToBuf(new_config),
   );
 }
 
@@ -1401,6 +1426,17 @@ const actions = new Map([
       },
       function (args) {
         setPlatformDefinitionAuth(args.new_policy);
+      },
+    ),
+  ],
+  [
+    "set_adns_configuration",
+    new Action(
+      function (args) {
+        checkType(args.new_config, "string", "new_config");
+      },
+      function (args) {
+        setADNSConfiguration(args.new_config);
       },
     ),
   ],

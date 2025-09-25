@@ -1,12 +1,8 @@
 # Copyright (c) Microsoft Corporation. All rights reserved.
 # Licensed under the Apache 2.0 License.
 
-import os
 import http
-import time
 import json
-import logging
-import requests
 import infra.network
 from infra.interfaces import (
     RPCInterface,
@@ -15,9 +11,12 @@ from infra.interfaces import (
     HostSpec,
     PRIMARY_RPC_INTERFACE,
 )
-from loguru import logger as LOG
 
-DEFAULT_NODES = ["local://127.0.0.1:8080"]
+
+AUTH_POLICY_ALLOW_ALL = """
+package policy
+default allow := true
+"""
 
 
 class NoReceiptException(Exception):
@@ -71,50 +70,6 @@ class aDNSConfig(dict):
         self.nsec3_salt_length = nsec3_salt_length
 
 
-def configure(base_url, cabundle, config, client_cert=None, num_retries=1):
-    """Configure an aDNS service"""
-
-    while num_retries > 0:
-        try:
-            url = base_url + "/app/configure"
-
-            LOG.info(
-                "Calling /app/configure with config:" + json.dumps(config, indent=2)
-            )
-
-            r = requests.post(
-                url,
-                json.dumps(config),
-                timeout=60,
-                verify=cabundle,
-                headers={"Content-Type": "application/json"},
-                cert=client_cert,
-            )
-
-            LOG.info("Resonse:" + json.dumps(r.json(), indent=2))
-            ok = (
-                r.status_code == http.HTTPStatus.OK
-                or r.status_code == http.HTTPStatus.NO_CONTENT
-            )
-            if not ok:
-                LOG.info(r.text)
-            assert ok
-            reginfo = r.json()["registration_info"]
-            assert "x-ms-ccf-transaction-id" in r.headers
-
-            return reginfo
-        except Exception as ex:
-            logging.exception("caught exception")
-            num_retries = num_retries - 1
-            if num_retries == 0:
-                raise ex
-            else:
-                n = 10
-                LOG.error(f"Configuration failed; retrying in {n} seconds.")
-                time.sleep(n)
-    return None
-
-
 def set_policy(network, proposal_name, policy):
     primary, _ = network.find_primary()
 
@@ -131,6 +86,47 @@ def set_policy(network, proposal_name, policy):
         proposal,
         careful_vote,
     )
+
+
+def set_configuration(network, config):
+    primary, _ = network.find_primary()
+
+    proposal_body, careful_vote = network.consortium.make_proposal(
+        "set_adns_configuration", new_config=config
+    )
+
+    proposal = network.consortium.get_any_active_member().propose(
+        primary, proposal_body
+    )
+
+    network.consortium.vote_using_majority(
+        primary,
+        proposal,
+        careful_vote,
+    )
+
+
+def set_auth_policy(network, key, policy):
+    primary, _ = network.find_primary()
+
+    proposal_body, careful_vote = network.consortium.make_proposal(
+        key, new_policy=policy
+    )
+
+    proposal = network.consortium.get_any_active_member().propose(
+        primary, proposal_body
+    )
+
+    network.consortium.vote_using_majority(
+        primary,
+        proposal,
+        careful_vote,
+    )
+
+
+def set_initial_auth(network):
+    set_auth_policy(network, "set_service_definition_auth", AUTH_POLICY_ALLOW_ALL)
+    set_auth_policy(network, "set_platform_definition_auth", AUTH_POLICY_ALLOW_ALL)
 
 
 def assign_node_addresses(network, addr, add_node_id=True):
@@ -155,70 +151,62 @@ def assign_node_addresses(network, addr, add_node_id=True):
 def run(args, tcp_port=None, udp_port=None):
     """Start an aDNS server network"""
 
-    try:
-        nodes = []
-        for internal, external, ext_name, _ in args.node_addresses:
-            host_spec: dict[str, RPCInterface] = {}
-            int_if = RPCInterface()
-            int_if.parse_from_str(internal)
-            int_if.forwarding_timeout_ms = 10000
-            host_spec[PRIMARY_RPC_INTERFACE] = int_if
+    nodes = []
+    for internal, external, ext_name, _ in args.node_addresses:
+        host_spec: dict[str, RPCInterface] = {}
+        int_if = RPCInterface()
+        int_if.parse_from_str(internal)
+        int_if.forwarding_timeout_ms = 10000
+        host_spec[PRIMARY_RPC_INTERFACE] = int_if
 
-            ext_if = RPCInterface()
-            ext_if.parse_from_str(external)
-            ext_if.forwarding_timeout_ms = 10000
-            ext_if.public_host = ext_name
-            ext_if.public_port = ext_if.port
+        ext_if = RPCInterface()
+        ext_if.parse_from_str(external)
+        ext_if.forwarding_timeout_ms = 10000
+        ext_if.public_host = ext_name
+        ext_if.public_port = ext_if.port
 
-            host_spec["ext_if"] = ext_if
+        host_spec["ext_if"] = ext_if
 
-            if tcp_port:
-                tcp_dns_if = RPCInterface(
-                    host=ext_if.host,
-                    port=tcp_port,
-                    transport="tcp",
-                    endorsement=Endorsement(authority=EndorsementAuthority.Unsecured),
-                    app_protocol="DNSTCP",
-                )
-                host_spec["tcp_dns_if"] = tcp_dns_if
-            if udp_port:
-                udp_dns_if = RPCInterface(
-                    host=ext_if.host,
-                    port=udp_port,
-                    transport="udp",
-                    endorsement=Endorsement(authority=EndorsementAuthority.Unsecured),
-                    app_protocol="DNSUDP",
-                )
-                host_spec["udp_dns_if"] = udp_dns_if
+        if tcp_port:
+            tcp_dns_if = RPCInterface(
+                host=ext_if.host,
+                port=tcp_port,
+                transport="tcp",
+                endorsement=Endorsement(authority=EndorsementAuthority.Unsecured),
+                app_protocol="DNSTCP",
+            )
+            host_spec["tcp_dns_if"] = tcp_dns_if
+        if udp_port:
+            udp_dns_if = RPCInterface(
+                host=ext_if.host,
+                port=udp_port,
+                transport="udp",
+                endorsement=Endorsement(authority=EndorsementAuthority.Unsecured),
+                app_protocol="DNSUDP",
+            )
+            host_spec["udp_dns_if"] = udp_dns_if
 
-            nodes += [HostSpec(rpc_interfaces=host_spec)]
+        nodes += [HostSpec(rpc_interfaces=host_spec)]
 
-        network = infra.network.Network(
-            nodes,
-            args.binary_dir,
-            args.debug_nodes,
-            args.perf_nodes,
-            library_dir=args.library_dir,
-        )
-        network.start_and_open(args)
+    network = infra.network.Network(
+        nodes,
+        args.binary_dir,
+        args.debug_nodes,
+        args.perf_nodes,
+        library_dir=args.library_dir,
+    )
+    network.start_and_open(args)
 
-        args.adns.node_addresses = args.adns["node_addresses"] = assign_node_addresses(
-            network, args.node_addresses, False
-        )
+    args.adns.node_addresses = args.adns["node_addresses"] = assign_node_addresses(
+        network, args.node_addresses, False
+    )
 
-        pif0 = nodes[0].rpc_interfaces[PRIMARY_RPC_INTERFACE]
-        base_url = "https://" + pif0.host + ":" + str(pif0.port)
+    set_configuration(network, json.dumps(args.adns))
+    set_initial_auth(network)
 
-        client_cert = (
-            os.path.join(network.common_dir, "user0_cert.pem"),
-            os.path.join(network.common_dir, "user0_privk.pem"),
-        )
+    primary, _ = network.find_primary()
+    with primary.client(identity="member0") as client:
+        r = client.post("/app/configure")
+        assert r.status_code == http.HTTPStatus.OK, r
 
-        reginfo = configure(base_url, network.cert_path, args.adns, client_cert)
-
-        return network, reginfo
-
-    except Exception:
-        logging.exception("caught exception")
-
-    return None, None
+    return network
