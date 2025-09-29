@@ -38,7 +38,7 @@ def submit_service_registration(
     )
 
     if r.status_code != http.HTTPStatus.OK:
-        raise Exception(f"Failed to register service {name}: {r.status_code} {r.body}")
+        raise Exception(f"Failed to register service {name}: {r.status_code} {r.text}")
 
     return r
 
