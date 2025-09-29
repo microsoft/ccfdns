@@ -9,27 +9,20 @@ The build depends on a local installation of [CCF](https://github.com/microsoft/
 ```
 mkdir build
 cd build
-cmake -GNinja -DVIRTUAL=ON ..
+cmake -GNinja -DCOMPILE_TARGET=virtual ..
 ninja
 ```
 
-# Run sandbox:
+# Run sandbox
 
 ```
+cd build
 /opt/ccf_virtual/bin/sandbox.sh -p libccfdns.virtual.so
 ```
 
-# Run aDNS server/service
+# Run end-to-end demo
 
-For an example of how to run an aDNS server/service, see [adns_service.py](tests/adns_service.py). Most of this is a simple application of the CCF infrastructure scripts. The [CCF documentation](https://microsoft.github.io/CCF/main/index.html) describes all of the components.
-
-Note that for a complete service, you must run the network in SEV-SNP Confidential Containers and register with at least a traditional, DNSSEC-enabled DNS server. Of course, that server may also be another aDNS server.
-
-Additionally, you may have to
-
-- Add inbound rules to your network security group/firewall to allow inbound traffic on port 53
-- Disable the service `systemd-resolved` (which uses also uses port 53) and manually add a well-known DNS server to `/etc/resolve.conf`.
-- If you are using docker to run the service, then use the host network
+Make sure you're running in the container (devcontainer setup is suitable). Check out [demo](./demo/README.md) for details.
 
 ## Contributing
 

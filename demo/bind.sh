@@ -2,6 +2,22 @@
 
 set -x
 
+# Backup original resolv.conf
+if [ -f /etc/resolv.conf ]; then
+    cp /etc/resolv.conf /etc/resolv.conf.backup
+fi
+
+# Restore function
+restore_resolv() {
+    if [ -f /etc/resolv.conf.backup ]; then
+        cp /etc/resolv.conf.backup /etc/resolv.conf
+        rm /etc/resolv.conf.backup
+    fi
+}
+
+# Set trap to restore on exit
+trap restore_resolv EXIT INT TERM
+
 # Set bind as only resolver.
 cat > /etc/resolv.conf << EOF
 nameserver 127.0.0.1
@@ -30,6 +46,7 @@ options {
 EOF
 
 # Prepare config.
+mkdir -p /usr/etc
 cp named.conf /usr/etc/named.conf
 
 # Start

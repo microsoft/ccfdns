@@ -20,6 +20,6 @@ export VENV_DIR="$VENV_DIR"
 # Enable https://github.com/Qix-/better-exceptions
 export BETTER_EXCEPTIONS=1
 
-export PYTHONPATH=$PYTHONPATH:/opt/ccf_virtual/bin
+export PYTHONPATH=$PYTHONPATH:/opt/ccf_virtual/bin:../tests
 
 python3 service.py --dns-name test.e2e.acidns10.attested.name --port 443 --adns 127.0.0.1:1443

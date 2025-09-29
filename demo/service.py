@@ -12,9 +12,34 @@ from hashlib import sha256
 from cryptography import x509
 from cryptography.x509.oid import NameOID
 from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives.asymmetric import ec
 from http.server import BaseHTTPRequestHandler
 import socketserver
+
+from e2e_basic import get_attestation, cose_register_service_request
+
+
+def submit_service_registration(
+    adns_url, name, address, port, protocol, service_key, enclave_platform, attestation
+):
+    """Submit a service registration request"""
+
+    reg_request = cose_register_service_request(
+        name, address, port, protocol, service_key, enclave_platform, attestation
+    )
+
+    r = requests.post(
+        f"https://{adns_url}/app/register-service",
+        data=reg_request,
+        headers={"Content-Type": "application/cose"},
+        verify=False,  # Skip SSL verification for self-signed certs
+    )
+
+    if r.status_code != http.HTTPStatus.OK:
+        raise Exception(f"Failed to register service {name}: {r.status_code} {r.text}")
+
+    return r
 
 
 class HTTPSHandler(BaseHTTPRequestHandler):
@@ -56,10 +81,7 @@ class ThreadedHTTPSServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
 def generate_self_signed_cert(name):
     """Generate a self-signed certificate and private key"""
     # Generate private key
-    private_key = rsa.generate_private_key(
-        public_exponent=65537,
-        key_size=2048,
-    )
+    private_key = ec.generate_private_key(ec.SECP256R1(), default_backend())
 
     # Create certificate
     subject = issuer = x509.Name(
@@ -118,55 +140,6 @@ def create_https_server(host, port, cert_path, key_path):
             os.unlink(key_path)
         except:
             pass
-
-
-def gen_csr(domain, key):
-    """Generate CSR for registration request"""
-    csr = (
-        x509.CertificateSigningRequestBuilder()
-        .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, domain)]))
-        .add_extension(
-            x509.SubjectAlternativeName(
-                [
-                    x509.DNSName(domain),
-                ]
-            ),
-            critical=False,
-        )
-        .sign(key, hashes.SHA256())
-    )
-    return csr
-
-
-def get_dummy_attestation(report_data):
-    """Generate dummy attestation for virtual enclave"""
-    measurement = base64.b64encode(
-        b"Insecure hard-coded virtual measurement v1"
-    ).decode()
-    attestation = {
-        "measurement": measurement,
-        "report_data": base64.b64encode(report_data).decode(),
-    }
-    return base64.b64encode(json.dumps(attestation).encode()).decode()
-
-
-def get_attestation(report_data, enclave="virtual"):
-    """Get attestation data for the given enclave type"""
-    if enclave == "virtual":
-        attestation = get_dummy_attestation(report_data)
-        endorsements = ""
-        uvm_endorsements = ""
-    else:
-        raise ValueError(f"Unknown enclave platform: {enclave}")
-
-    attestation_format = "Insecure_Virtual" if enclave == "virtual" else "Unknown"
-    dummy_attestation = {
-        "format": attestation_format,
-        "quote": attestation,
-        "endorsements": endorsements,
-        "uvm_endorsements": uvm_endorsements,
-    }
-    return json.dumps(dummy_attestation)
 
 
 def main():
@@ -240,42 +213,20 @@ def main():
         # Disable SSL warnings for self-signed certs
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-        # Submit service registration
-        attestation = get_attestation(report_data, enclave="virtual")
-
-        # Prepare registration data
-        csr = gen_csr(args.dns_name, service_key)
-        registration_data = {
-            "csr": base64.b64encode(
-                csr.public_bytes(serialization.Encoding.DER)
-            ).decode(),
-            "node_information": {
-                # Possible to register multiple instances in one call
-                "default": {
-                    "address": {
-                        "name": args.dns_name,
-                        "ip": "127.0.0.1",
-                        "protocol": "tcp",
-                        "port": args.port,
-                    },
-                    "attestation": attestation,
-                }
-            },
-        }
-
-        # Make direct HTTPS request
-        response = requests.post(
-            f"https://{args.adns}/app/register-service",
-            json=registration_data,
-            verify=False,  # Skip SSL verification for self-signed certs
+        enclave = "virtual"
+        attestation = get_attestation(
+            report_data=report_data, enclave=enclave, as_json=False
         )
-
-        if response.status_code == http.HTTPStatus.NO_CONTENT:
-            print(f"Service registration successful: {response.status_code}")
-        else:
-            print(
-                f"Service registration failed: {response.status_code} {response.text}"
-            )
+        submit_service_registration(
+            adns_url=args.adns,
+            name=args.dns_name,
+            address="127.0.0.1",
+            port=args.port,
+            protocol="tcp",
+            service_key=service_key,
+            enclave_platform=enclave,
+            attestation=attestation,
+        )
 
     except Exception as e:
         print(f"Service registration failed: {e}")

@@ -11,8 +11,6 @@ cd demo
 ./setup.sh
 ```
 
-Nit. Setup contains openssl cloning+building, may need manual intervention if run multiple times.
-
 In separate terminals, run
 
 ```
@@ -21,3 +19,11 @@ In separate terminals, run
 ./service.sh
 ./resolve.sh
 ```
+
+Check the scripts out for details. TL;DR:
+
+- ADNS is run
+- KSK is read from ADNS and pinned in BIND
+- BIND set as local resolver
+- Simple python backend server registers itself in ADNS
+- Resolving the service using curl is the actual result demo aims to prove

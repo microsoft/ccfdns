@@ -11,15 +11,20 @@ import os
 import subprocess
 import adns_service
 import dns
-import dns.message
-import dns.query
-import dns.dnssec
+from e2e_basic import (
+    create_issuer,
+    get_attestation_format,
+    set_service_definition_auth_successfully,
+    set_platform_definition_auth_successfully,
+    set_service_definition_successfully,
+    set_platform_definition_successfully,
+)
 import dns.rdtypes.ANY.SOA as SOA
 from cryptography import x509
 from cryptography.x509.oid import NameOID
 from cryptography.hazmat.primitives import hashes
 from hashlib import sha256
-from adns_service import aDNSConfig, set_policy
+from adns_service import aDNSConfig
 from pycose.messages import Sign1Message  # type: ignore
 
 rdc = dns.rdataclass
@@ -184,14 +189,6 @@ allow if {{
 """
 
 
-def set_service_definition_auth(network, policy):
-    set_policy(network, "set_service_definition_auth", policy)
-
-
-def set_platform_definition_auth(network, policy):
-    set_policy(network, "set_platform_definition_auth", policy)
-
-
 def set_service_definition(network, enclave, service_name, permissive=True):
     policy = get_service_definition(enclave=enclave, permissive=permissive)
     primary, _ = network.find_primary()
@@ -237,14 +234,28 @@ def set_platform_definition(network, enclave, platform, permissive=True):
 def set_policies(network, args):
     enclave = args.enclave_platform
 
-    set_service_definition_auth(network, SERVICE_REGISTRATION_AUTH_ALLOW_ALL)
-    set_platform_definition_auth(network, PLATFORM_DEFINITION_AUTH_ALLOW_ALL)
+    issuer = create_issuer()
 
-    set_service_definition(
-        network, enclave, service_name="test.acidns10.attested.name.", permissive=True
+    set_service_definition_auth_successfully(
+        network, issuer, "test.e2e.acidns10.attested.name."
     )
-    set_platform_definition(
-        network, enclave, platform=SEV_SNP_CONTAINERPLAT_AMD_UVM, permissive=True
+    set_platform_definition_auth_successfully(
+        network, issuer, get_attestation_format(enclave)
+    )
+
+    set_service_definition_successfully(
+        network,
+        enclave,
+        issuer,
+        service_name="test.e2e.acidns10.attested.name.",
+        permissive=True,
+    )
+    set_platform_definition_successfully(
+        network,
+        enclave,
+        issuer,
+        platform=get_attestation_format(enclave),
+        permissive=True,
     )
 
 
