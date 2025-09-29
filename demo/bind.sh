@@ -2,21 +2,21 @@
 
 set -x
 
-# Backup original config
-if [ -f /usr/etc/named.conf ]; then
-    cp /usr/etc/named.conf /usr/etc/named.conf.backup
+# Backup original resolv.conf
+if [ -f /etc/resolv.conf ]; then
+    cp /etc/resolv.conf /etc/resolv.conf.backup
 fi
 
 # Restore function
-restore_config() {
-    if [ -f /usr/etc/named.conf.backup ]; then
-        cp /usr/etc/named.conf.backup /usr/etc/named.conf
-        rm /usr/etc/named.conf.backup
+restore_resolv() {
+    if [ -f /etc/resolv.conf.backup ]; then
+        cp /etc/resolv.conf.backup /etc/resolv.conf
+        rm /etc/resolv.conf.backup
     fi
 }
 
 # Set trap to restore on exit
-trap restore_config EXIT INT TERM
+trap restore_resolv EXIT INT TERM
 
 # Set bind as only resolver.
 cat > /etc/resolv.conf << EOF
@@ -46,6 +46,7 @@ options {
 EOF
 
 # Prepare config.
+mkdir -p /usr/etc
 cp named.conf /usr/etc/named.conf
 
 # Start
