@@ -2,6 +2,22 @@
 
 set -x
 
+# Backup original config
+if [ -f /usr/etc/named.conf ]; then
+    cp /usr/etc/named.conf /usr/etc/named.conf.backup
+fi
+
+# Restore function
+restore_config() {
+    if [ -f /usr/etc/named.conf.backup ]; then
+        cp /usr/etc/named.conf.backup /usr/etc/named.conf
+        rm /usr/etc/named.conf.backup
+    fi
+}
+
+# Set trap to restore on exit
+trap restore_config EXIT INT TERM
+
 # Set bind as only resolver.
 cat > /etc/resolv.conf << EOF
 nameserver 127.0.0.1

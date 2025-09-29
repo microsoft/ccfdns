@@ -439,7 +439,7 @@ def register_and_ensure(
         port = primary.get_public_rpc_port()
         ca = primary.session_ca()["ca"]
 
-        origin = dns.name.from_text("acidns10.attested.name.")
+        origin = dns.name.from_text(service_name)
         print("Getting DNSSEC key")
         keys = get_keys(host, port, ca, origin)
 
