@@ -22,7 +22,7 @@ cd build
 
 # Run end-to-end demo
 
-Make sure you're running in the container (devcontainer setup is suitable). Check out demo/README.md for details.
+Make sure you're running in the container (devcontainer setup is suitable). Check out [demo](./demo/README.md) for details.
 
 ## Contributing
 
