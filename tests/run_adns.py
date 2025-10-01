@@ -319,6 +319,7 @@ def main():
     ]
     targs.constitution = glob.glob("../tests/constitution/*")
     targs.package = "libccfdns"
+    targs.enclave_platform = "snp" if glob.glob("/security-context-*") else "virtual"
     targs.acme_config_name = "custom"
 
     targs.http2 = False

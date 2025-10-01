@@ -16,8 +16,10 @@ pyasn1
 Jinja2
 httpx == 0.23.*
 locust
-pyOpenSSL
 dnspython[doh,dnssec]
 dnsstamps
 requests
 cwt>3.1
+regopy
+didx509 @ git+https://github.com/maxtropets/did-x509.git#egg=f48437259a5037a1faee0f90314a8144d05fcd19
+snp-pytools @ git+https://github.com/TEE-Attestation/snp_pytools.git#egg=f3422d9e06ed0dc091a075e5878b2631be464a79

@@ -25,5 +25,6 @@ export VENV_DIR="$VENV_DIR"
 export BETTER_EXCEPTIONS=1
 
 export PYTHONPATH=$PYTHONPATH:$(grep ccf_.*_DIR CMakeCache.txt | cut -d = -f 2)/../bin
+export PYTHONPATH=$PYTHONPATH:..
 
 ctest -VV "$@"

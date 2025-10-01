@@ -29,6 +29,7 @@ export VENV_DIR="$VENV_DIR"
 # Enable https://github.com/Qix-/better-exceptions
 export BETTER_EXCEPTIONS=1
 
-export PYTHONPATH=$PYTHONPATH:/opt/ccf_virtual/bin
+CCF_DIR="/opt/$(ls /opt | grep ccf_ | head -1)"
+export PYTHONPATH=$PYTHONPATH:$CCF_DIR/bin
 
-python3 ../tests/run_adns.py -b "/opt/ccf_virtual/bin" --library-dir ../build
+python3 ../tests/run_adns.py -b "$CCF_DIR/bin" --library-dir ../build
