@@ -4,7 +4,7 @@ set -e
 
 tdnf -y install ca-certificates  \
     perl patch \
-    net-tools bind-utils
+    net-tools bind bind-utils
 
 curl -L https://github.com/microsoft/CCF/releases/download/ccf-6.0.3/ccf_virtual_devel_6.0.3_x86_64.rpm -o ccf-devel.rpm  \
     && tdnf -y install ./ccf-devel.rpm

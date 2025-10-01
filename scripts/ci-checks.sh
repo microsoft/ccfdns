@@ -73,9 +73,9 @@ endgroup
 
 group "Python format"
 if [ $FIX -ne 0 ]; then
-  git ls-files tests/ python/ scripts/ tools/ | grep -e '\.py$' | xargs black
+  git ls-files tests/ python/ scripts/ tools/ demo/ | grep -e '\.py$' | xargs black
 else
-  git ls-files tests/ python/ scripts/ tools/ | grep -e '\.py$' | xargs black --check
+  git ls-files tests/ python/ scripts/ tools/ demo/ | grep -e '\.py$' | xargs black --check
 fi
 endgroup
 
