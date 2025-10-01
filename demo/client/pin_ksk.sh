@@ -1,5 +1,7 @@
 set -ex
 
+ADNS_URL=$1
+
 echo "Setting up Python environment..."
 if [ ! -f "env/bin/activate" ]
     then
@@ -9,7 +11,7 @@ fi
 source env/bin/activate
 pip install -U -q pip
 pip install -U -q ccf
-pip install -q -U -r ../tests/requirements.txt
+pip install -q -U -r ../../tests/requirements.txt
 echo "Python environment successfully setup"
 
 # Export where the VENV has been set, so tests running
@@ -20,6 +22,7 @@ export VENV_DIR="$VENV_DIR"
 # Enable https://github.com/Qix-/better-exceptions
 export BETTER_EXCEPTIONS=1
 
-export PYTHONPATH=$PYTHONPATH:/opt/ccf_virtual/bin:../tests
+CCF_DIR="$(ls /opt | grep ccf_ | head -1)"
+export PYTHONPATH=$PYTHONPATH:$CCF_DIR/bin:../../
 
-python3 service.py --dns-name test.e2e.acidns10.attested.name --port 443 --adns 127.0.0.1:1443
+python3 pin_trusted_ksk.py --adns $ADNS_URL

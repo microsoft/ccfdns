@@ -1,6 +1,8 @@
 # Copyright (c) Microsoft Corporation. All rights reserved.
 # Licensed under the Apache 2.0 License.
 
+# To be run purely by demo/adns/adns.sh. Placed here for dependecies sake.
+
 import glob
 import http
 import base64
@@ -317,7 +319,7 @@ def main():
             "20.160.110.47",  # public IP
         )
     ]
-    targs.constitution = glob.glob("../tests/constitution/*")
+    targs.constitution = glob.glob("../../tests/constitution/*")
     targs.package = "libccfdns"
     targs.enclave_platform = "snp" if glob.glob("/security-context-*") else "virtual"
     targs.acme_config_name = "custom"

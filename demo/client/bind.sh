@@ -2,6 +2,8 @@
 
 set -x
 
+ADNS_URL=$1
+
 # Backup original resolv.conf
 if [ -f /etc/resolv.conf ]; then
     cp /etc/resolv.conf /etc/resolv.conf.backup
@@ -25,7 +27,7 @@ search .
 EOF
 
 # Get DNSKEY and extract KSK (257)
-KSK_DIG=$(dig @127.0.0.1 -p 5353 acidns10.attested.name DNSKEY +short | grep "257 3 14" | sed 's/.*14 //' | tr -d ' ')
+KSK_DIG=$(dig @$ADNS_URL -p 5353 acidns10.attested.name DNSKEY +short | grep "257 3 14" | sed 's/.*14 //' | tr -d ' ')
 KSK_PINNED=$(cat ksk.pinned)
 echo "KSK from dig: $KSK_DIG"
 echo "KSK from file: $KSK_PINNED"

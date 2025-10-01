@@ -1,5 +1,14 @@
 set -ex
 
+# Function to cleanup
+cleanup() {
+    echo "Cleaning up ADNS processes..."
+    jobs -p | xargs -r kill 2>/dev/null || true
+    exit 0
+}
+
+trap cleanup SIGINT SIGTERM EXIT
+
 echo "Setting up Python environment..."
 if [ ! -f "env/bin/activate" ]
     then
@@ -9,7 +18,7 @@ fi
 source env/bin/activate
 pip install -U -q pip
 pip install -U -q ccf
-pip install -q -U -r ../tests/requirements.txt
+pip install -q -U -r ../../tests/requirements.txt
 echo "Python environment successfully setup"
 
 # Export where the VENV has been set, so tests running
@@ -21,6 +30,6 @@ export VENV_DIR="$VENV_DIR"
 export BETTER_EXCEPTIONS=1
 
 CCF_DIR="/opt/$(ls /opt | grep ccf_ | head -1)"
-export PYTHONPATH=$PYTHONPATH:$CCF_DIR/bin:../
+export PYTHONPATH=$PYTHONPATH:$CCF_DIR/bin
 
-python3 pin_trusted_ksk.py --adns 127.0.0.1:1443
+python3 ../../tests/run_adns.py -b "$CCF_DIR/bin" --library-dir ../../build

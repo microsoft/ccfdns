@@ -1,13 +1,6 @@
 set -ex
 
-# Function to cleanup
-cleanup() {
-    echo "Cleaning up ADNS processes..."
-    jobs -p | xargs -r kill 2>/dev/null || true
-    exit 0
-}
-
-trap cleanup SIGINT SIGTERM EXIT
+ADNS_URL=$1
 
 echo "Setting up Python environment..."
 if [ ! -f "env/bin/activate" ]
@@ -18,7 +11,7 @@ fi
 source env/bin/activate
 pip install -U -q pip
 pip install -U -q ccf
-pip install -q -U -r ../tests/requirements.txt
+pip install -q -U -r ../../tests/requirements.txt
 echo "Python environment successfully setup"
 
 # Export where the VENV has been set, so tests running
@@ -29,7 +22,7 @@ export VENV_DIR="$VENV_DIR"
 # Enable https://github.com/Qix-/better-exceptions
 export BETTER_EXCEPTIONS=1
 
-CCF_DIR="/opt/$(ls /opt | grep ccf_ | head -1)"
-export PYTHONPATH=$PYTHONPATH:$CCF_DIR/bin
+CCF_DIR="$(ls /opt | grep ccf_ | head -1)"
+export PYTHONPATH=$PYTHONPATH:/opt/$CCF_DIR/bin:../../tests
 
-python3 ../tests/run_adns.py -b "$CCF_DIR/bin" --library-dir ../build
+python3 service.py --dns-name test.e2e.acidns10.attested.name --port 443 --adns $ADNS_URL
