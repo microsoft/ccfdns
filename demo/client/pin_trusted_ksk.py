@@ -127,7 +127,7 @@ def get_server_cert(url):
 
 
 def fetch_adns_ksk_receipt(adns_url):
-    # To provide freshness, using the server TLS certificate when polling the receipt.
+    # To ensure freshness, establish a TLS session with the server using a key we can correlate to the receipt
     server_cert_pem = get_server_cert(adns_url)
     server_cert = x509.load_pem_x509_certificate(server_cert_pem.encode())
     tls_key_digest = sha256(
