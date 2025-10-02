@@ -8,8 +8,14 @@ from tools.attestation import verify_snp_attestation
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography import x509
 from hashlib import sha256
 import dns
+from regopy import Interpreter
+import struct
+import subprocess
+from ccf.receipt import root as recompile_root
+from ccf.receipt import verify as verify_receipt_ccf
 
 
 def poll_ksk_dns(host, dns_name):
@@ -73,9 +79,34 @@ def extract_ksk_digest(keys):
     return sha256(der).hexdigest()
 
 
-def fetch_adns_ksk_from_receipt(adns_url):
-    import subprocess
+def verify_receipt(receipt, attested_node_key_digest):
+    node_cert = x509.load_pem_x509_certificate(receipt["cert"].encode())
+    node_key = node_cert.public_key().public_bytes(
+        serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo
+    )
+    node_key_digest = sha256(node_key).hexdigest()
 
+    assert (
+        node_key_digest == attested_node_key_digest
+    ), f"Node key mismatch: {node_key_digest} != {attested_node_key_digest}"
+
+    claims = bytes.fromhex(receipt["leaf_components"]["claims_digest"])
+    ce_digest = sha256(receipt["leaf_components"]["commit_evidence"].encode()).digest()
+    leaf = (
+        sha256(
+            bytes.fromhex(receipt["leaf_components"]["write_set_digest"])
+            + ce_digest
+            + claims
+        )
+        .digest()
+        .hex()
+    )
+
+    root = recompile_root(leaf, receipt["proof"])
+    verify_receipt_ccf(root, receipt["signature"], node_cert)
+
+
+def fetch_adns_ksk_receipt(adns_url):
     def request():
         result = subprocess.run(
             [
@@ -101,8 +132,7 @@ def fetch_adns_ksk_from_receipt(adns_url):
         return MockResponse(int(result.stdout[-3:]), result.stdout[:-3])
 
     receipt = poll_receipt(request)
-    ksk_digest = receipt["leaf_components"]["claims_digest"]
-    return ksk_digest
+    return receipt
 
 
 def poll_ksk_from_adns(adns_url, dns_name):
@@ -131,6 +161,71 @@ def convert_inputs(attestation, endorsements, uvm_endorsements):
     return attestation, endorsements, uvm_endorsements
 
 
+PLATFORM_POLICY = """
+    package policy
+    default allow := false
+
+    product_name_valid if {
+        input.attestation.product_name == "Milan"
+    }
+    reported_tcb_valid if {
+        input.attestation.reported_tcb.hexstring == "04000000000018db"
+    }
+    amd_tcb_valid if {
+        product_name_valid
+        reported_tcb_valid
+    }
+
+    uvm_did_valid if {
+        input.attestation.uvm_endorsements.did == "did:x509:0:sha256:I__iuL25oXEVFdTP_aBLx_eT1RPHbCQ_ECBQfYZpt9s::eku:1.3.6.1.4.1.311.76.59.1.2"
+    }
+    uvm_feed_valid if {
+        input.attestation.uvm_endorsements.feed == "ContainerPlat-AMD-UVM"
+    }
+    uvm_svn_valid if {
+        input.attestation.uvm_endorsements.svn >= "101"
+    }
+    uvm_valid if {
+        uvm_did_valid
+        uvm_feed_valid
+        uvm_svn_valid
+    }
+
+    allow if {
+        amd_tcb_valid
+        uvm_valid
+    }
+"""
+
+
+SERVICE_POLICY = """
+    package policy
+    default allow := false
+
+    host_data_valid if {
+        input.attestation.host_data == "4f4448c67f3c8dfc8de8a5e37125d807dadcc41f06cf23f615dbd52eec777d10"
+    }
+
+    allow if {
+        host_data_valid
+    }
+"""
+
+
+def pack_tcb(tcb):
+    return struct.pack(
+        "<BB4sBB", tcb.bootloader, tcb.tee, tcb._reserved, tcb.snp, tcb.microcode
+    )
+
+
+def check_policy(policy, policy_input):
+    rego = Interpreter(v1_compatible=True)
+    rego.add_module("policy", policy)
+    rego.set_input(policy_input)
+    allow = rego.query("data.policy.allow")
+    assert allow.results[0].expressions[0]
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -140,20 +235,50 @@ def main():
     )
     args = parser.parse_args()
 
-    # KSK from ADNS point of view
-    ksk_dns = poll_ksk_from_adns(args.adns, "acidns10.attested.name.")
-
-    # KSK signed by CCF node (TX receipt)
-    ksk_ccf = fetch_adns_ksk_from_receipt(args.adns)
-
-    # They have to match
-    assert ksk_dns == ksk_ccf, f"KSK mismatch: {ksk_dns} != {ksk_ccf}"
-
     # Signing node attestation
     attestation, endorsements, uvm_endorsements = convert_inputs(
         *fetch_adns_attestation(args.adns)
     )
-    verify_snp_attestation(attestation, endorsements, uvm_endorsements)
+    product_name, report, did, feed, svn = verify_snp_attestation(
+        attestation, endorsements, uvm_endorsements
+    )
+
+    # KSK from ADNS point of view
+    ksk_dns = poll_ksk_from_adns(args.adns, "acidns10.attested.name.")
+
+    # KSK signed by CCF node (TX receipt)
+    receipt = fetch_adns_ksk_receipt(args.adns)
+    ksk_digest = receipt["leaf_components"]["claims_digest"]
+
+    # They have to match
+    assert ksk_dns == ksk_digest, f"KSK mismatch: {ksk_dns} != {ksk_digest}"
+
+    # And be signed by the attested node
+    attested_node_key_digest = report.report_data[0:32]
+    verify_receipt(receipt, attested_node_key_digest.hex())
+
+    service_policy_input = {
+        "attestation": {
+            "host_data": report.host_data.hex(),
+        }
+    }
+
+    platform_policy_input = {
+        "attestation": {
+            "product_name": product_name,
+            "reported_tcb": {
+                "hexstring": pack_tcb(report.reported_tcb).hex(),
+            },
+            "uvm_endorsements": {
+                "did": did["id"],
+                "feed": feed,
+                "svn": svn,
+            },
+        }
+    }
+
+    check_policy(PLATFORM_POLICY, platform_policy_input)
+    check_policy(SERVICE_POLICY, service_policy_input)
 
     print("Verified aDNS KSK and attestation")
 

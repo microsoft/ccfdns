@@ -48,19 +48,16 @@ PLATFORM_POLICY = """
 
 
 SERVICE_POLICY = """
-package policy
-default allow := false
+    package policy
+    default allow := false
 
-host_data_valid if {
-    input.attestation.host_data == "4f4448c67f3c8dfc8de8a5e37125d807dadcc41f06cf23f615dbd52eec777d10"
-}
+    host_data_valid if {
+        input.attestation.host_data == "4f4448c67f3c8dfc8de8a5e37125d807dadcc41f06cf23f615dbd52eec777d10"
+    }
 
-allow if {
-    host_data_valid
-}
-
-errors["Invalid host data"] if { not host_data_valid }
-errors["Invalid issuer"] if { not issuer_valid }
+    allow if {
+        host_data_valid
+    }
 """
 
 
@@ -68,6 +65,14 @@ def pack_tcb(tcb):
     return struct.pack(
         "<BB4sBB", tcb.bootloader, tcb.tee, tcb._reserved, tcb.snp, tcb.microcode
     )
+
+
+def check_policy(policy, policy_input):
+    rego = Interpreter(v1_compatible=True)
+    rego.add_module("policy", policy)
+    rego.set_input(policy_input)
+    allow = rego.query("data.policy.allow")
+    assert allow.results[0].expressions[0]
 
 
 if __name__ == "__main__":
@@ -101,5 +106,12 @@ if __name__ == "__main__":
         }
     }
 
-    rego = Interpreter()
-    # Policy verification here
+    # Disabled until rego v1 compatibility is fixed. To manually enable, patch
+    # local rego with
+    #     def __init__(self, v1_compatible=False):
+    #         """Initializer."""
+    #         import ctypes
+    #         self._impl = rego_new_v1(ctypes.c_char_p(0)) if v1_compatible else rego_new()
+
+    # check_policy(PLATFORM_POLICY, platform_policy_input)
+    # check_policy(SERVICE_POLICY, service_policy_input)
