@@ -159,7 +159,10 @@ def run(args, tcp_port=None, udp_port=None):
         int_if.forwarding_timeout_ms = 10000
         host_spec[PRIMARY_RPC_INTERFACE] = int_if
 
-        ext_if = RPCInterface()
+        # To be able to use node cert as CA cert for the demo.
+        ext_if = RPCInterface(
+            endorsement=Endorsement(authority=EndorsementAuthority.Node)
+        )
         ext_if.parse_from_str(external)
         ext_if.forwarding_timeout_ms = 10000
         ext_if.public_host = ext_name

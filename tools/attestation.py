@@ -9,26 +9,26 @@ from cryptography import x509
 from cryptography.x509.oid import NameOID
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization
-from hashlib import sha256
 from cwt import COSE, COSEKey
-
 from didx509.didx509 import resolve_did
 
 
 def get_issuer_cn(cert):
     try:
-        # Get the issuer's Common Name
         issuer_cn = cert.issuer.get_attributes_for_oid(NameOID.COMMON_NAME)[0].value
         return issuer_cn
     except (IndexError, AttributeError):
         return None
 
 
-def assert_supported_platform(*certs):
+def get_platform(*certs):
+    platform = None
     for cert in certs:
-        assert "Milan" in get_issuer_cn(cert)
+        cert_platform = get_issuer_cn(cert).split("-")[1]
+        platform = platform or cert_platform
+        assert platform == cert_platform
 
-    return "Milan"
+    return platform
 
 
 def check_signing_root(ark):
@@ -49,12 +49,31 @@ pCCoMNit2uLo9M18fHz10lOMT8nWAUvRZFzteXCm+7PHdYPlmQwUw3LvenJ/ILXo
 QPHfbkH0CyPfhl1jWhJFZasCAwEAAQ==
 -----END PUBLIC KEY-----"""
 
+    amd_genoa_root_trusted = """-----BEGIN PUBLIC KEY-----
+MIICIjANBgkqhkiG9w0BAQEFAAOCAg8AMIICCgKCAgEA3Cd95S/uFOuRIskW9vz9
+VDBF69NDQF79oRhL/L2PVQGhK3YdfEBgpF/JiwWFBsT/fXDhzA01p3LkcT/7Ldjc
+RfKXjHl+0Qq/M4dZkh6QDoUeKzNBLDcBKDDGWo3v35NyrxbA1DnkYwUKU5AAk4P9
+4tKXLp80oxt84ahyHoLmc/LqsGsp+oq1Bz4PPsYLwTG4iMKVaaT90/oZ4I8oibSr
+u92vJhlqWO27d/Rxc3iUMyhNeGToOvgx/iUo4gGpG61NDpkEUvIzuKcaMx8IdTpW
+g2DF6SwF0IgVMffnvtJmA68BwJNWo1E4PLJdaPfBifcJpuBFwNVQIPQEVX3aP89H
+JSp8YbY9lySS6PlVEqTBBtaQmi4ATGmMR+n2K/e+JAhU2Gj7jIpJhOkdH9firQDn
+mlA2SFfJ/Cc0mGNzW9RmIhyOUnNFoclmkRhl3/AQU5Ys9Qsan1jT/EiyT+pCpmnA
++y9edvhDCbOG8F2oxHGRdTBkylungrkXJGYiwGrR8kaiqv7NN8QhOBMqYjcbrkEr
+0f8QMKklIS5ruOfqlLMCBw8JLB3LkjpWgtD7OpxkzSsohN47Uom86RY6lp72g8eX
+HP1qYrnvhzaG1S70vw6OkbaaC9EjiH/uHgAJQGxon7u0Q7xgoREWA/e7JcBQwLg8
+0Hq/sbRuqesxz7wBWSY254cCAwEAAQ==
+-----END PUBLIC KEY-----"""
+
     pkey = ark.public_key().public_bytes(
         encoding=serialization.Encoding.PEM,
         format=serialization.PublicFormat.SubjectPublicKeyInfo,
     )
 
-    assert pkey.decode().strip() == amd_milan_root_trusted.strip()
+    for pkey_candidate in [amd_milan_root_trusted, amd_genoa_root_trusted]:
+        if pkey.decode().strip() == pkey_candidate.strip():
+            return
+
+    assert False, "Unrecognized ARK root key"
 
 
 def get_verified_descriptor(uvm_endorsements):
@@ -97,7 +116,7 @@ def verify_snp_attestation(attestation, endorsements, uvm_endorsements):
         cert_chain["vcekCert"].encode(), default_backend()
     )
 
-    product_name = assert_supported_platform(ark, ask, vcek)
+    product_name = get_platform(ark, ask, vcek)
 
     certificates = {"ark": ark, "ask": ask, "vcek": vcek}
     report, _, _ = snp_pytools.verify_attestation_bytes(

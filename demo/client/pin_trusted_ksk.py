@@ -3,6 +3,7 @@ import requests
 import base64
 import time
 import json
+import tempfile
 from http import HTTPStatus
 from tools.attestation import verify_snp_attestation
 from cryptography.hazmat.backends import default_backend
@@ -106,12 +107,46 @@ def verify_receipt(receipt, attested_node_key_digest):
     verify_receipt_ccf(root, receipt["signature"], node_cert)
 
 
+def get_server_cert(url):
+    """Get server certificate using openssl s_client"""
+    import subprocess
+
+    cmd = ["openssl", "s_client", "-connect", url]
+
+    result = subprocess.run(cmd, input="", text=True, capture_output=True, timeout=10)
+
+    # Extract certificate from output
+    cert_start = result.stdout.find("-----BEGIN CERTIFICATE-----")
+    cert_end = result.stdout.find("-----END CERTIFICATE-----") + len(
+        "-----END CERTIFICATE-----"
+    )
+
+    if cert_start != -1 and cert_end > cert_start:
+        cert_pem = result.stdout[cert_start:cert_end]
+        return cert_pem
+
+
 def fetch_adns_ksk_receipt(adns_url):
+    # To provide freshness, using the server TLS certificate when polling the receipt.
+    server_cert_pem = get_server_cert(adns_url)
+    server_cert = x509.load_pem_x509_certificate(server_cert_pem.encode())
+    tls_key_digest = sha256(
+        server_cert.public_key().public_bytes(
+            serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo
+        )
+    ).hexdigest()
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".pem", delete=False) as f:
+        f.write(server_cert_pem)
+        cert_file = f.name
+
     def request():
         result = subprocess.run(
             [
                 "curl",
-                "-sk",
+                "-s",
+                "--cacert",
+                cert_file,
                 "-w%{http_code}",
                 "-XGET",
                 '-d{"zone": "acidns10.attested.name."}',
@@ -132,7 +167,7 @@ def fetch_adns_ksk_receipt(adns_url):
         return MockResponse(int(result.stdout[-3:]), result.stdout[:-3])
 
     receipt = poll_receipt(request)
-    return receipt
+    return receipt, tls_key_digest
 
 
 def poll_ksk_from_adns(adns_url, dns_name):
@@ -235,34 +270,14 @@ def main():
     )
     args = parser.parse_args()
 
-    # Signing node attestation
+    # 1. Check server is running on a valid platform
+
     attestation, endorsements, uvm_endorsements = convert_inputs(
         *fetch_adns_attestation(args.adns)
     )
     product_name, report, did, feed, svn = verify_snp_attestation(
         attestation, endorsements, uvm_endorsements
     )
-
-    # KSK from ADNS point of view
-    ksk_dns = poll_ksk_from_adns(args.adns, "acidns10.attested.name.")
-
-    # KSK signed by CCF node (TX receipt)
-    receipt = fetch_adns_ksk_receipt(args.adns)
-    ksk_digest = receipt["leaf_components"]["claims_digest"]
-
-    # They have to match
-    assert ksk_dns == ksk_digest, f"KSK mismatch: {ksk_dns} != {ksk_digest}"
-
-    # And be signed by the attested node
-    attested_node_key_digest = report.report_data[0:32]
-    verify_receipt(receipt, attested_node_key_digest.hex())
-
-    service_policy_input = {
-        "attestation": {
-            "host_data": report.host_data.hex(),
-        }
-    }
-
     platform_policy_input = {
         "attestation": {
             "product_name": product_name,
@@ -276,11 +291,33 @@ def main():
             },
         }
     }
-
     check_policy(PLATFORM_POLICY, platform_policy_input)
+
+    # 2. Check server is running a valid service code
+
+    service_policy_input = {
+        "attestation": {
+            "host_data": report.host_data.hex(),
+        }
+    }
     check_policy(SERVICE_POLICY, service_policy_input)
 
-    print("Verified aDNS KSK and attestation")
+    # 3. Fetch signed KSK from server and verify it against the attestation
+
+    receipt, tls_key_digest = fetch_adns_ksk_receipt(args.adns)
+    attested_node_key_digest = report.report_data[0:32]
+    assert tls_key_digest == tls_key_digest
+
+    verify_receipt(receipt, attested_node_key_digest.hex())
+
+    # 4. DNS-resolved KSK matches the attested KSK
+
+    ksk_dns = poll_ksk_from_adns(args.adns, "acidns10.attested.name.")
+    ksk_digest = receipt["leaf_components"]["claims_digest"]
+
+    assert ksk_dns == ksk_digest, f"KSK mismatch: {ksk_dns} != {ksk_digest}"
+
+    print("Verified zone KSK is created and owned by a valid ADNS instance")
 
 
 if __name__ == "__main__":
