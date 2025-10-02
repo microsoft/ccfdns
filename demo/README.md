@@ -8,15 +8,31 @@ Open VScode devcontainer with aDNS, then setup all dependencies, including custo
 
 ```bash
 cd demo
-./setup.sh
+./setup.sh virtual/snp  # choose one
 ```
 
-In separate terminals, run
+If same VM, run in separate terminals, otherwise run client/server/adns parts individually in order.
+
+ADNS itself.
 
 ```
+cd adns
 ./adns.sh
-./bind.sh # Depends on the previous, as it adds current aDNS KSK as a trusted-anchor
-./service.sh
+```
+
+Service, registers itself in aDNS.
+
+```
+cd server
+./service.sh 127.0.0.1:1443  # update if necessary
+```
+
+Client, want to resolve the server.
+
+```
+cd client
+./discover_and_verify_adns_ksk.sh 127.0.0.1:1443  # update if necessary
+./bind.sh 127.0.0.1:1443  # update if necessary
 ./resolve.sh
 ```
 
@@ -24,6 +40,7 @@ Check the scripts out for details. TL;DR:
 
 - ADNS is run
 - KSK is read from ADNS and pinned in BIND
+- KSK TX receipt it checked, and ADNS's attestation is verified
 - BIND set as local resolver
 - Simple python backend server registers itself in ADNS
 - Resolving the service using curl is the actual result demo aims to prove

@@ -1,8 +1,13 @@
-#!/bin/bash
-# Copyright (c) Microsoft Corporation. All rights reserved.
-# Licensed under the Apache 2.0 License.
+set -ex
 
-set -e
+# Function to cleanup
+cleanup() {
+    echo "Cleaning up ADNS processes..."
+    jobs -p | xargs -r kill 2>/dev/null || true
+    exit 0
+}
+
+trap cleanup SIGINT SIGTERM EXIT
 
 echo "Setting up Python environment..."
 if [ ! -f "env/bin/activate" ]
@@ -13,7 +18,7 @@ fi
 source env/bin/activate
 pip install -U -q pip
 pip install -U -q ccf
-pip install -q -U -r ../tests/requirements.txt
+pip install -q -U -r ../../tests/requirements.txt
 echo "Python environment successfully setup"
 
 # Export where the VENV has been set, so tests running
@@ -24,7 +29,7 @@ export VENV_DIR="$VENV_DIR"
 # Enable https://github.com/Qix-/better-exceptions
 export BETTER_EXCEPTIONS=1
 
-export PYTHONPATH=$PYTHONPATH:$(grep ccf_.*_DIR CMakeCache.txt | cut -d = -f 2)/../bin
-export PYTHONPATH=$PYTHONPATH:..
+CCF_DIR="/opt/$(ls /opt | grep ccf_ | head -1)"
+export PYTHONPATH=$PYTHONPATH:$CCF_DIR/bin
 
-ctest -VV "$@"
+python3 ../../tests/run_adns.py -b "$CCF_DIR/bin" --library-dir ../../build

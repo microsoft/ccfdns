@@ -1,6 +1,8 @@
 # Copyright (c) Microsoft Corporation. All rights reserved.
 # Licensed under the Apache 2.0 License.
 
+# To be run purely by demo/adns/adns.sh. Placed here for dependecies sake.
+
 import glob
 import http
 import base64
@@ -311,14 +313,15 @@ def main():
     targs.nodes = infra.e2e_args.min_nodes(targs, f=0)
     targs.node_addresses = [
         (
-            "local://0.0.0.0:1443",  # primary/internal
-            "local://0.0.0.0:8443",  # external/endorsed
+            "local://127.0.0.1:1443",  # primary/internal
+            "local://127.0.0.1:8443",  # external/endorsed
             "ns1.acidns10.attested.name",  # public name
             "20.160.110.47",  # public IP
         )
     ]
-    targs.constitution = glob.glob("../tests/constitution/*")
+    targs.constitution = glob.glob("../../tests/constitution/*")
     targs.package = "libccfdns"
+    targs.enclave_platform = "snp" if glob.glob("/security-context-*") else "virtual"
     targs.acme_config_name = "custom"
 
     targs.http2 = False
