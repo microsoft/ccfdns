@@ -25,4 +25,4 @@ export BETTER_EXCEPTIONS=1
 CCF_DIR="$(ls /opt | grep ccf_ | head -1)"
 export PYTHONPATH=$PYTHONPATH:$CCF_DIR/bin:../../
 
-python3 pin_trusted_ksk.py --adns $ADNS_URL
+python3 ksk.py --adns $ADNS_URL

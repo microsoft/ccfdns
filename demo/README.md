@@ -31,7 +31,7 @@ Client, want to resolve the server.
 
 ```
 cd client
-./pin_ksk.sh 127.0.0.1:1443  # update if necessary
+./discover_and_verify_adns_ksk.sh 127.0.0.1:1443  # update if necessary
 ./bind.sh 127.0.0.1:1443  # update if necessary
 ./resolve.sh
 ```

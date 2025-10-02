@@ -15,7 +15,7 @@ import dns
 from regopy import Interpreter
 import struct
 import subprocess
-from ccf.receipt import root as recompile_root
+from ccf.receipt import root as reconstruct_root
 from ccf.receipt import verify as verify_receipt_ccf
 
 
@@ -103,7 +103,7 @@ def verify_receipt(receipt, attested_node_key_digest):
         .hex()
     )
 
-    root = recompile_root(leaf, receipt["proof"])
+    root = reconstruct_root(leaf, receipt["proof"])
     verify_receipt_ccf(root, receipt["signature"], node_cert)
 
 
