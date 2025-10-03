@@ -4,7 +4,8 @@
 import sys
 import cbor2
 import base64
-from regopy import Interpreter
+import os
+import shutil
 from tools.attestation import verify_snp_attestation, pack_tcb
 
 
@@ -13,10 +14,10 @@ PLATFORM_POLICY = """
     default allow := false
 
     product_name_valid if {
-        input.attestation.product_name == "Milan"
+        input.attestation.product_name in ["Milan", "Genoa"]
     }
     reported_tcb_valid if {
-        input.attestation.reported_tcb.hexstring == "04000000000018db"
+        input.attestation.reported_tcb.hexstring in ["db18000000000004", "541700000000000a"]
     }
     amd_tcb_valid if {
         product_name_valid
@@ -30,7 +31,7 @@ PLATFORM_POLICY = """
         input.attestation.uvm_endorsements.feed == "ContainerPlat-AMD-UVM"
     }
     uvm_svn_valid if {
-        input.attestation.uvm_endorsements.svn == "101"
+        input.attestation.uvm_endorsements.svn >= "101"
     }
     uvm_valid if {
         uvm_did_valid
@@ -60,15 +61,23 @@ SERVICE_POLICY = """
 
 
 def check_policy(policy, policy_input):
-    rego = Interpreter(v1_compatible=True)
-    rego.add_module("policy", policy)
-    rego.set_input(policy_input)
-    allow = rego.query("data.policy.allow")
-    assert allow.results[0].expressions[0]
+    # Disabled until rego v1 compatibility is fixed. To manually enable, patch
+    # local rego with
+    #     def __init__(self, v1_compatible=False):
+    #         """Initializer."""
+    #         import ctypes
+    #         self._impl = rego_new_v1(ctypes.c_char_p(0)) if v1_compatible else rego_new()
+
+    # rego = Interpreter(v1_compatible=True)
+    # rego.add_module("policy", policy)
+    # rego.set_input(policy_input)
+    # allow = rego.query("data.policy.allow")
+    # assert allow.results[0].expressions[0]
+    pass
 
 
-if __name__ == "__main__":
-    with open(sys.argv[1], "rb") as f:
+def test_attestation(cbor_path):
+    with open(cbor_path, "rb") as f:
         attestation_cbor = cbor2.load(f)
 
     endorsements = base64.b64decode(attestation_cbor["eds"])
@@ -77,6 +86,11 @@ if __name__ == "__main__":
     product_name, report, did, feed, svn = verify_snp_attestation(
         attestation, endorsements, attestation_cbor["uvm"]
     )
+
+    # CRLs are pulled into local "ca" dir, but only if it's non existent, so
+    # after testing Milan it won't pull different CRLs for Genoa unless deleted.
+    if os.path.exists("ca"):
+        shutil.rmtree("ca")
 
     service_policy_input = {
         "attestation": {
@@ -98,12 +112,10 @@ if __name__ == "__main__":
         }
     }
 
-    # Disabled until rego v1 compatibility is fixed. To manually enable, patch
-    # local rego with
-    #     def __init__(self, v1_compatible=False):
-    #         """Initializer."""
-    #         import ctypes
-    #         self._impl = rego_new_v1(ctypes.c_char_p(0)) if v1_compatible else rego_new()
+    check_policy(PLATFORM_POLICY, platform_policy_input)
+    check_policy(SERVICE_POLICY, service_policy_input)
 
-    # check_policy(PLATFORM_POLICY, platform_policy_input)
-    # check_policy(SERVICE_POLICY, service_policy_input)
+
+if __name__ == "__main__":
+    for file in sys.argv[1].split(","):
+        test_attestation(file)

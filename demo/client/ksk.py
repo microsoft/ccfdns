@@ -200,10 +200,10 @@ PLATFORM_POLICY = """
     default allow := false
 
     product_name_valid if {
-        input.attestation.product_name == "Milan"
+        input.attestation.product_name in ["Milan", "Genoa"]
     }
     reported_tcb_valid if {
-        input.attestation.reported_tcb.hexstring == "db18000000000004"
+        input.attestation.reported_tcb.hexstring in ["db18000000000004", "541700000000000a"]
     }
     amd_tcb_valid if {
         product_name_valid
