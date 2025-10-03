@@ -1,13 +1,11 @@
 # Copyright (c) Microsoft Corporation. All rights reserved.
 # Licensed under the Apache 2.0 License.
 
-import struct
 import sys
 import cbor2
 import base64
 from regopy import Interpreter
-
-from tools.attestation import verify_snp_attestation
+from tools.attestation import verify_snp_attestation, pack_tcb
 
 
 PLATFORM_POLICY = """
@@ -59,12 +57,6 @@ SERVICE_POLICY = """
         host_data_valid
     }
 """
-
-
-def pack_tcb(tcb):
-    return struct.pack(
-        "<BB4sBB", tcb.bootloader, tcb.tee, tcb._reserved, tcb.snp, tcb.microcode
-    )
 
 
 def check_policy(policy, policy_input):

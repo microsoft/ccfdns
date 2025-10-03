@@ -5,7 +5,7 @@ import time
 import json
 import tempfile
 from http import HTTPStatus
-from tools.attestation import verify_snp_attestation
+from tools.attestation import verify_snp_attestation, pack_tcb
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
@@ -13,7 +13,6 @@ from cryptography import x509
 from hashlib import sha256
 import dns
 from regopy import Interpreter
-import struct
 import subprocess
 from ccf.receipt import root as reconstruct_root
 from ccf.receipt import verify as verify_receipt_ccf
@@ -204,7 +203,7 @@ PLATFORM_POLICY = """
         input.attestation.product_name == "Milan"
     }
     reported_tcb_valid if {
-        input.attestation.reported_tcb.hexstring == "04000000000018db"
+        input.attestation.reported_tcb.hexstring == "db18000000000004"
     }
     amd_tcb_valid if {
         product_name_valid
@@ -245,12 +244,6 @@ SERVICE_POLICY = """
         host_data_valid
     }
 """
-
-
-def pack_tcb(tcb):
-    return struct.pack(
-        "<BB4sBB", tcb.bootloader, tcb.tee, tcb._reserved, tcb.snp, tcb.microcode
-    )
 
 
 def check_policy(policy, policy_input):

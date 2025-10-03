@@ -22,6 +22,7 @@
 #include <ccf/crypto/sha256_hash.h>
 #include <ccf/crypto/verifier.h>
 #include <ccf/ds/logger.h>
+#include <ccf/pal/attestation_sev_snp.h>
 #include <cctype>
 #include <chrono>
 #include <map>
@@ -71,10 +72,22 @@ namespace
   }
 
   void verify_platform_definition(
-    const std::string& measurement, const std::string& policy)
+    const std::string& product_name,
+    const std::string& tcb_version,
+    const std::string& did,
+    const std::string& feed,
+    const std::string& svn,
+    const std::string& policy)
   {
+    auto attestation = nlohmann::json::object();
+    attestation["product_name"] = product_name;
+    attestation["reported_tcb"]["hexstring"] = tcb_version;
+    attestation["uvm_endorsements"]["did"] = did;
+    attestation["uvm_endorsements"]["feed"] = feed;
+    attestation["uvm_endorsements"]["svn"] = svn;
+
     nlohmann::json rego_input;
-    rego_input["measurement"] = measurement;
+    rego_input["attestation"] = attestation;
 
     rego::Interpreter interpreter(true /* v1 compatible */);
     auto rv = interpreter.add_module("policy", policy);
@@ -1547,9 +1560,22 @@ namespace aDNS
     {
       try
       {
+        const auto* snp_attestation =
+          reinterpret_cast<const ccf::pal::snp::Attestation*>(
+            attestation.quote.data());
+        auto reported_tcb = snp_attestation->reported_tcb;
+        auto product_name = ccf::pal::snp::get_sev_snp_product(
+          snp_attestation->cpuid_fam_id, snp_attestation->cpuid_mod_id);
+        auto tcb_policy = reported_tcb.to_policy(product_name);
         auto platform = nlohmann::json(phdr.cwt.att).get<std::string>();
+
         verify_platform_definition(
-          ccf::ds::to_hex(measurement.data), platform_definition(platform));
+          ccf::pal::snp::to_string(product_name),
+          tcb_policy.hexstring.value(),
+          uvm_endorsements_descriptor.did,
+          uvm_endorsements_descriptor.feed,
+          uvm_endorsements_descriptor.svn,
+          platform_definition(platform));
 
         verify_service_definition(
           ccf::crypto::b64_from_raw(host_data.h.data(), host_data.h.size()),

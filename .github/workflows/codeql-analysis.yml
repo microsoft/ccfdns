@@ -55,14 +55,14 @@ jobs:
       - uses: robinraju/release-downloader@v1
         with:
           repository: "microsoft/CCF"
-          tag: "ccf-6.0.3"
-          fileName: "ccf_virtual_devel_6.0.3_x86_64.rpm"
+          tag: "ccf-6.0.14"
+          fileName: "ccf_virtual_devel_6.0.14_x86_64.rpm"
 
       - name: "Install CCF with dependencies"
         shell: bash
         run: |
           set -ex
-          tdnf -y install ccf_virtual_devel_6.0.3_x86_64.rpm
+          tdnf -y install ccf_virtual_devel_6.0.14_x86_64.rpm
           ./scripts/setup-ci.sh
 
       - name: Build ADNS

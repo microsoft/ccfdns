@@ -11,7 +11,7 @@ tdnf -y install ca-certificates  \
 # Check if CCF is already installed under /opt
 if [ ! -d "/opt/ccf_${PLATFORM}" ]; then
     echo "CCF not found, downloading and installing..."
-    curl -L https://github.com/microsoft/CCF/releases/download/ccf-6.0.3/ccf_${PLATFORM}_devel_6.0.3_x86_64.rpm -o ccf-devel.rpm  \
+    curl -L https://github.com/microsoft/CCF/releases/download/ccf-6.0.14/ccf_${PLATFORM}_devel_6.0.14_x86_64.rpm -o ccf-devel.rpm  \
         && tdnf -y install ./ccf-devel.rpm
 else
     echo "CCF already installed at /opt/ccf_${PLATFORM}"

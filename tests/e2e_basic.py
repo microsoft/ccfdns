@@ -23,7 +23,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from hashlib import sha256
 from adns_service import aDNSConfig
-from pycose.messages import Sign1Message  # type: ignore
+from tools.attestation import verify_snp_attestation, pack_tcb
 import cbor2
 from cwt import COSE, COSEKey
 
@@ -108,17 +108,17 @@ def get_attestation(report_data, enclave, as_json=True):
 
 def get_policy_for_issuer(did):
     return f"""
-package policy
+        package policy
 
-default allow := false
+        default allow := false
 
-allowed_issuer if {{
-    input.phdr.cwt.iss == "{did}"
-}}
+        allowed_issuer if {{
+            input.phdr.cwt.iss == "{did}"
+        }}
 
-allow if {{
-    allowed_issuer
-}}
+        allow if {{
+            allowed_issuer
+        }}
 """
 
 
@@ -143,48 +143,72 @@ def get_service_definition(enclave, permissive):
         else corrupted(get_security_policy(enclave))
     )
     return f"""
-package policy
+        package policy
 
-default allow := false
+        default allow := false
 
-allowed_security_policy if {{
-    input.host_data == "{policy}"
-}}
+        allowed_security_policy if {{
+            input.host_data == "{policy}"
+        }}
 
-allow if {{
-    allowed_security_policy
-}}
+        allow if {{
+            allowed_security_policy
+        }}
 """
 
 
 def get_platform_definition(enclave, permissive):
-    if enclave == "snp":
-        uvm_endorsements = infra.snp.get_container_group_uvm_endorsements_base64()
-        cose_envelope = Sign1Message.decode(base64.b64decode(uvm_endorsements))
-        payload = cose_envelope.payload.decode()
-        allowed_measurement = json.loads(payload)["x-ms-sevsnpvm-launchmeasurement"]
-    elif enclave == "virtual":
-        allowed_measurement = "Insecure hard-coded virtual measurement v1"
-    else:
-        raise ValueError(f"Unexpected enclave platform: {enclave}")
+    if enclave == "virtual":
+        return """
+            package policy
+            default allow := true
+        """
+
+    sample = get_attestation(b"1234", enclave, as_json=False)
+    attestation_cbor = cbor2.loads(sample)
+    endorsements = base64.b64decode(attestation_cbor["eds"])
+    attestation = attestation_cbor["att"]
+    product_name, report, did, feed, svn = verify_snp_attestation(
+        attestation, endorsements, attestation_cbor["uvm"]
+    )
 
     if not permissive:
-        allowed_measurement = corrupted(allowed_measurement)
+        svn = "105"
 
     return f"""
-package policy
+        package policy
+        default allow := false
 
-default allow := false
+        product_name_valid if {{
+            input.attestation.product_name == "{product_name}"
+        }}
+        reported_tcb_valid if {{
+            input.attestation.reported_tcb.hexstring == "{pack_tcb(report.reported_tcb).hex()}"
+        }}
+        amd_tcb_valid if {{
+            product_name_valid
+            reported_tcb_valid
+        }}
 
-allowed_measurements := ["{allowed_measurement}"]
+        uvm_did_valid if {{
+            input.attestation.uvm_endorsements.did == "{did["id"]}"
+        }}
+        uvm_feed_valid if {{
+            input.attestation.uvm_endorsements.feed == "{feed}"
+        }}
+        uvm_svn_valid if {{
+            input.attestation.uvm_endorsements.svn >= "{svn}"
+        }}
+        uvm_valid if {{
+            uvm_did_valid
+            uvm_feed_valid
+            uvm_svn_valid
+        }}
 
-allowed_measurement if {{
-    input.measurement in allowed_measurements
-}}
-
-allow if {{
-    allowed_measurement
-}}
+        allow if {{
+            amd_tcb_valid
+            uvm_valid
+        }}
 """
 
 
