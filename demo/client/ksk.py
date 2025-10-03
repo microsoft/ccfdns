@@ -203,7 +203,7 @@ PLATFORM_POLICY = """
         input.attestation.product_name == "Milan"
     }
     reported_tcb_valid if {
-        input.attestation.reported_tcb.hexstring == "04000000000018db"
+        input.attestation.reported_tcb.hexstring == "db18000000000004"
     }
     amd_tcb_valid if {
         product_name_valid

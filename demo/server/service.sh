@@ -23,6 +23,6 @@ export VENV_DIR="$VENV_DIR"
 export BETTER_EXCEPTIONS=1
 
 CCF_DIR="$(ls /opt | grep ccf_ | head -1)"
-export PYTHONPATH=$PYTHONPATH:/opt/$CCF_DIR/bin:../../tests
+export PYTHONPATH=$PYTHONPATH:/opt/$CCF_DIR/bin:../../tests:../../
 
 python3 service.py --dns-name test.e2e.acidns10.attested.name --port 443 --adns $ADNS_URL

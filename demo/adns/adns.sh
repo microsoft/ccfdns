@@ -30,6 +30,7 @@ export VENV_DIR="$VENV_DIR"
 export BETTER_EXCEPTIONS=1
 
 CCF_DIR="/opt/$(ls /opt | grep ccf_ | head -1)"
-export PYTHONPATH=$PYTHONPATH:$CCF_DIR/bin
+export PYTHONPATH=$PYTHONPATH:$CCF_DIR/bin:../../
+export SNP_REPORT_BINARY=../../3rdparty/get-snp-report/bin/get-snp-report
 
 python3 ../../tests/run_adns.py -b "$CCF_DIR/bin" --library-dir ../../build

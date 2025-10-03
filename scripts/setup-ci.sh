@@ -12,3 +12,6 @@ tdnf -y install zlib-devel  \
     python-pip  \
     git  \
     npm
+
+# Temporary fixup. Find out why ccf 6.0.14 doesn't provide this deps
+tdnf -y install libuv-devel libcurl-devel
