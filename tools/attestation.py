@@ -11,6 +11,7 @@ from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization
 from cwt import COSE, COSEKey
 from didx509.didx509 import resolve_did
+import struct
 
 
 def get_issuer_cn(cert):
@@ -132,3 +133,14 @@ def verify_snp_attestation(attestation, endorsements, uvm_endorsements):
     assert report.measurement.hex() == measurement
 
     return product_name, report, did, feed, svn
+
+
+def pack_tcb(tcb):
+    return struct.pack(
+        "<BB4sBB",
+        tcb.microcode,
+        tcb.snp,
+        tcb._reserved,
+        tcb.tee,
+        tcb.bootloader,
+    )
