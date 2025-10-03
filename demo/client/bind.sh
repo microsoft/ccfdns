@@ -50,7 +50,7 @@ zone "acidns10.attested.name" {
     type forward;
     forward only;
     forwarders {
-        127.0.0.1 port 5353;
+        $ADNS_URL port 5353;
     };
 };
 trust-anchors {
