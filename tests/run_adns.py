@@ -313,12 +313,14 @@ def main():
     targs.nodes = infra.e2e_args.min_nodes(targs, f=0)
     targs.node_addresses = [
         (
-            "local://127.0.0.1:1443",  # primary/internal
-            "local://127.0.0.1:8443",  # external/endorsed
+            "local://0.0.0.0:1443",  # primary/internal
+            "local://0.0.0.0:8443",  # external/endorsed
             "ns1.acidns10.attested.name",  # public name
             "20.160.110.47",  # public IP
         )
     ]
+    # Localhost has to be replaced with the external IP for distributed demo.
+    targs.subject_alt_names = ["iPAddress:0.0.0.0", "iPAddress:127.0.0.1"]
     targs.constitution = glob.glob("../../tests/constitution/*")
     targs.package = "libccfdns"
     targs.enclave_platform = "snp" if glob.glob("/security-context-*") else "virtual"
