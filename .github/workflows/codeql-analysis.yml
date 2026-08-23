@@ -38,7 +38,7 @@ jobs:
           tdnf -y update
           tdnf -y install ca-certificates git tar
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
 
@@ -47,12 +47,12 @@ jobs:
         run: git config --global --add safe.directory /__w/ccfdns/ccfdns
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
+        uses: github/codeql-action/init@42947a340483f03ba47bb1a039b2c519aab3df85 # v3.37.8
         with:
           languages: ${{ matrix.language }}
           queries: security-extended
 
-      - uses: robinraju/release-downloader@v1
+      - uses: robinraju/release-downloader@28fc21f50d76778e7023361aa1f863e717d3d56f # v1.13
         with:
           repository: "microsoft/CCF"
           tag: "ccf-6.0.14"
@@ -75,4 +75,4 @@ jobs:
           make -j16
 
       - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v3
+        uses: github/codeql-action/analyze@42947a340483f03ba47bb1a039b2c519aab3df85 # v3.37.8
