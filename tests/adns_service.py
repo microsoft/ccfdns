@@ -12,7 +12,6 @@ from infra.interfaces import (
     PRIMARY_RPC_INTERFACE,
 )
 
-
 AUTH_POLICY_ALLOW_ALL = """
 package policy
 default allow := true

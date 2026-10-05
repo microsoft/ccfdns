@@ -8,7 +8,6 @@ import os
 import shutil
 from tools.attestation import verify_snp_attestation, pack_tcb
 
-
 PLATFORM_POLICY = """
     package policy
     default allow := false
