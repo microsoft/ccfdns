@@ -1,34 +1,40 @@
 # Copyright (c) Microsoft Corporation. All rights reserved.
 # Licensed under the Apache 2.0 License.
 
+import base64
 import glob
 import http
-import base64
-import socket
-import requests
 import json
-import infra.e2e_args  # type: ignore
 import os
-import time
+import socket
 import subprocess
+import time
+from hashlib import sha256
+
 import adns_service
-from did_utils import create_issuer
+import cbor2
 import dns
+import dns.dnssec
 import dns.message
 import dns.query
-import dns.dnssec
-import dns.rdtypes.ANY.SOA as SOA
+import infra.e2e_args  # type: ignore
+import requests
+from adns_service import aDNSConfig
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
-from hashlib import sha256
-from adns_service import aDNSConfig
-from tools.attestation import verify_snp_attestation, pack_tcb
-import cbor2
 from cwt import COSE, COSEKey
+from did_utils import create_issuer
+from dns.rdtypes.ANY import SOA
+
+from tools.attestation import pack_tcb, verify_snp_attestation
 
 rdc = dns.rdataclass
 rdt = dns.rdatatype
+
+
+class ServiceRegistrationError(Exception):
+    pass
 
 
 def get_container_group_snp_endorsements_base64():
@@ -330,7 +336,9 @@ def submit_service_registration(
     )
 
     if r.status_code != http.HTTPStatus.OK:
-        raise Exception(f"Failed to register service {name}: {r.status_code} {r.body}")
+        raise ServiceRegistrationError(
+            f"Failed to register service {name}: {r.status_code} {r.body}"
+        )
 
     return r
 
@@ -361,12 +369,10 @@ def check_record(host, port, ca, name, stype, expected_data=None):
                     rdt.NSEC,
                     rdt.NSEC3,
                 ]
-                if expected_data:
-                    if (
-                        item.rdtype != qtype
-                        or item.to_wire() == expected_data.to_wire()
-                    ):
-                        saw_expected = True
+                if expected_data and (
+                    item.rdtype != qtype or item.to_wire() == expected_data.to_wire()
+                ):
+                    saw_expected = True
             assert not expected_data or saw_expected
 
 
@@ -413,7 +419,7 @@ def get_keys(host, port, ca, origin):
 
 def extract_ksk_digest(keys, dns_name):
     bitmask = 257
-    ksk = next((k for k in keys[dns_name].items.keys() if k.flags == bitmask), None)
+    ksk = next((k for k in keys[dns_name].items if k.flags == bitmask), None)
     assert ksk is not None, "No KSK (flag 257) found in DNSKEY records"
     assert ksk.algorithm == 14, f"Expected P-384 algorithm (14), got {ksk.algorithm}"
     assert len(ksk.key) == 96, f"Expected 96 bytes for P-384 key, got {len(ksk.key)}"
@@ -495,16 +501,13 @@ def register_and_ensure(
 
 def register_successfully(*args, **kwargs):
     """Expect a function to succeed"""
-    try:
-        register_and_ensure(*args, **kwargs)
-    except Exception as e:
-        raise AssertionError(f"FAIL: {e}")
+    register_and_ensure(*args, **kwargs)
 
 
 def register_failed(with_error, *args, **kwargs):
     try:
         register_and_ensure(*args, **kwargs)
-    except Exception as e:
+    except ServiceRegistrationError as e:
         if with_error not in str(e):
             raise AssertionError(f"Expected error '{with_error}' but got: {e}")
     else:
@@ -550,7 +553,7 @@ def set_platform_definition_auth_successfully(*args, **kwargs):
 def set_platform_definition_auth_failed(with_error, *args, **kwargs):
     try:
         set_platform_definition_auth(*args, **kwargs)
-    except Exception as e:
+    except AssertionError as e:
         if with_error not in str(e):
             raise AssertionError(f"Expected error '{with_error}' but got: {e}")
     else:
@@ -581,7 +584,7 @@ def set_service_definition_auth_successfully(*args, **kwargs):
 def set_service_definition_auth_failed(with_error, *args, **kwargs):
     try:
         set_service_definition_auth(*args, **kwargs)
-    except Exception as e:
+    except AssertionError as e:
         if with_error not in str(e):
             raise AssertionError(f"Expected error '{with_error}' but got: {e}")
     else:
@@ -612,7 +615,7 @@ def set_service_definition_successfully(*args, **kwargs):
 def set_service_definition_failed(with_error, *args, **kwargs):
     try:
         set_service_definition(*args, **kwargs)
-    except Exception as e:
+    except AssertionError as e:
         if with_error not in str(e):
             raise AssertionError(f"Expected error '{with_error}' but got: {e}")
     else:
@@ -628,7 +631,7 @@ def set_platform_definition_successfully(*args, **kwargs):
 def set_platform_definition_failed(with_error, *args, **kwargs):
     try:
         set_platform_definition(*args, **kwargs)
-    except Exception as e:
+    except AssertionError as e:
         if with_error not in str(e):
             raise AssertionError(f"Expected error '{with_error}' but got: {e}")
     else:
@@ -790,7 +793,7 @@ def run(args):
     )
 
     if not adns_nw:
-        raise Exception("Failed to start aDNS network")
+        raise RuntimeError("Failed to start aDNS network")
 
     test_ksk_receipt(adns_nw, args)
     test_service_registration(adns_nw, args)

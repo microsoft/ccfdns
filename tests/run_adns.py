@@ -3,23 +3,24 @@
 
 # To be run purely by demo/adns/adns.sh. Placed here for dependecies sake.
 
-import glob
 import base64
+import glob
 import socket
-import infra.e2e_args
+from hashlib import sha256
+
 import adns_service
 import dns
+import infra.e2e_args
+from adns_service import aDNSConfig
+from dns.rdtypes.ANY import SOA
 from e2e_basic import (
     create_issuer,
     get_attestation_format,
-    set_service_definition_auth_successfully,
     set_platform_definition_auth_successfully,
-    set_service_definition_successfully,
     set_platform_definition_successfully,
+    set_service_definition_auth_successfully,
+    set_service_definition_successfully,
 )
-import dns.rdtypes.ANY.SOA as SOA
-from hashlib import sha256
-from adns_service import aDNSConfig
 
 rdc = dns.rdataclass
 rdt = dns.rdatatype
@@ -78,7 +79,7 @@ def run(args):
     )
 
     if not adns_nw:
-        raise Exception("Failed to start aDNS network")
+        raise RuntimeError("Failed to start aDNS network")
 
     set_policies(adns_nw, args)
 
@@ -90,7 +91,6 @@ def run(args):
             time.sleep(1)
     except KeyboardInterrupt:
         print("\nShutting down ADNS network...")
-        pass
 
 
 def main():

@@ -1,13 +1,12 @@
 # Copyright (c) Microsoft Corporation. All rights reserved.
 # Licensed under the Apache 2.0 License.
 
-import sys
-import cbor2
 import base64
-import os
-import shutil
-from tools.attestation import verify_snp_attestation, pack_tcb
+import sys
 
+import cbor2
+
+from tools.attestation import pack_tcb, verify_snp_attestation
 
 PLATFORM_POLICY = """
     package policy
@@ -86,11 +85,6 @@ def test_attestation(cbor_path):
     product_name, report, did, feed, svn = verify_snp_attestation(
         attestation, endorsements, attestation_cbor["uvm"]
     )
-
-    # CRLs are pulled into local "ca" dir, but only if it's non existent, so
-    # after testing Milan it won't pull different CRLs for Genoa unless deleted.
-    if os.path.exists("ca"):
-        shutil.rmtree("ca")
 
     service_policy_input = {
         "attestation": {

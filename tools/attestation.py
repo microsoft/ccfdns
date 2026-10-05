@@ -124,7 +124,7 @@ def verify_snp_attestation(attestation, endorsements, uvm_endorsements):
         attestation,
         processor_model=product_name,
         certificates=certificates,
-        certificates_path="ca",
+        certificates_path=f"ca/{product_name}",
     )
 
     check_signing_root(ark)
