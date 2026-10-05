@@ -1,12 +1,14 @@
 # Copyright (c) Microsoft Corporation. All rights reserved.
 # Licensed under the Apache 2.0 License.
 
-import sys
-import cbor2
 import base64
 import os
 import shutil
-from tools.attestation import verify_snp_attestation, pack_tcb
+import sys
+
+import cbor2
+
+from tools.attestation import pack_tcb, verify_snp_attestation
 
 PLATFORM_POLICY = """
     package policy

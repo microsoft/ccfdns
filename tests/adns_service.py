@@ -3,13 +3,14 @@
 
 import http
 import json
+
 import infra.network
 from infra.interfaces import (
-    RPCInterface,
+    PRIMARY_RPC_INTERFACE,
     Endorsement,
     EndorsementAuthority,
     HostSpec,
-    PRIMARY_RPC_INTERFACE,
+    RPCInterface,
 )
 
 AUTH_POLICY_ALLOW_ALL = """
